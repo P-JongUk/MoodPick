@@ -1,0 +1,29 @@
+#!/bin/sh
+
+msg_file="$1"
+branch="$(git rev-parse --abbrev-ref HEAD)"
+msg="$(head -n 1 "$msg_file")"
+
+case "$branch" in
+  feat/*)
+    echo "$msg" | grep -Eq '^feat(\(.+\))?: .+' || {
+      echo "[차단] feat/* 브랜치 커밋 메시지는 'feat(scope): 내용' 형식이어야 합니다."
+      exit 1
+    }
+    ;;
+  fix/*)
+    echo "$msg" | grep -Eq '^fix(\(.+\))?: .+' || {
+      echo "[차단] fix/* 브랜치 커밋 메시지는 'fix(scope): 내용' 형식이어야 합니다."
+      exit 1
+    }
+    ;;
+  main)
+    echo "[차단] main 브랜치 직접 커밋은 금지되어 있습니다."
+    exit 1
+    ;;
+  *)
+    # develop 등은 유연하게 허용
+    ;;
+esac
+
+exit 0

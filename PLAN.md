@@ -2230,7 +2230,54 @@ python -m uvicorn app.main:app --reload --port 8000
 
 ---
 
-## 10. 주요 체크리스트
+## 10. Git 브랜치 전략
+
+### `main`: 최종 배포 브랜치
+- **역할**: 오류 없이 안정적으로 구동되는 최종 완성본 코드가 유지되는 최상위 브랜치
+- **규칙**: 해당 브랜치에는 **직접 커밋(Direct Commit) 금지**. 반드시 `develop` 브랜치에서 충분한 테스트를 거친 코드만 병합(Merge)
+
+### `develop`: 통합 및 테스트 브랜치
+- **역할**: 프론트엔드, 백엔드, AI 모델링 등 각 파트에서 개발된 기능이 하나로 모이는 통합 베이스 브랜치
+- **규칙**: 모든 신규 기능 브랜치(`feat/`)는 이 브랜치에서 파생되고, 작업 완료 후에도 이 브랜치로 병합. `main`으로 넘어가기 전 전체 시스템 연동 테스트를 이 브랜치에서 수행
+
+### `feat/`: 신규 기능 개발 브랜치
+- **역할**: 개별 팀원이 새로운 기능을 개발할 때 사용하는 개인 작업 브랜치
+- **네이밍 규칙**: `feat/기능명`
+- **예시**: `feat/chat-ui`, `feat/youtube-mcp`
+
+### `fix/`: 버그 수정 브랜치
+- **역할**: `develop` 브랜치 연동 테스트 중 에러가 발생하거나 긴급 수정이 필요할 때 사용하는 브랜치
+- **네이밍 규칙**: `fix/수정내용`
+- **예시**: `fix/calendar-rendering-error`
+
+### 브랜치 전략 자동화 (로컬 스크립트)
+- **초기 1회 설정**
+  ```bash
+  powershell -ExecutionPolicy Bypass -File .\scripts\setup-git-automation.ps1 -InitializeDevelop
+  ```
+  - `.githooks`를 Git hooks 경로로 설정
+  - `develop` 브랜치가 없으면 자동 생성 및 원격 푸시
+  - `main` 직접 커밋 차단, `feat/*`/`fix/*` 커밋 메시지 규칙 적용
+
+- **기능 개발 브랜치 자동화 (`feat/*`)**
+  ```bash
+  powershell -ExecutionPolicy Bypass -File .\scripts\git-flow.ps1 -Type feat -Name chat-ui -Message "채팅 UI 구현" -Push
+  ```
+
+- **버그 수정 브랜치 자동화 (`fix/*`)**
+  ```bash
+  powershell -ExecutionPolicy Bypass -File .\scripts\git-flow.ps1 -Type fix -Name calendar-rendering-error -Message "캘린더 렌더링 오류 수정" -Push
+  ```
+
+- **커밋 메시지 형식 규칙**
+  - `feat/브랜치`에서: `feat(scope): 내용`
+  - `fix/브랜치`에서: `fix(scope): 내용`
+  - 예시: `feat(chat-ui): 채팅 UI 구현`
+  - 예시: `fix(calendar-rendering-error): 캘린더 렌더링 오류 수정`
+
+---
+
+## 11. 주요 체크리스트
 
 ### 프로젝트 시작 전
 - [ ] Supabase 프로젝트 생성
@@ -2238,6 +2285,7 @@ python -m uvicorn app.main:app --reload --port 8000
 - [ ] YouTube Data API 활성화
 - [ ] `.env` 파일 작성
 - [ ] GitHub 저장소 초기화 (선택)
+- [x] Git 브랜치 자동화 설정 (`setup-git-automation.ps1`, `.githooks`)
 
 ### 1단계 완료 기준
 - [ ] 모든 페이지가 렌더링됨
@@ -2260,7 +2308,7 @@ python -m uvicorn app.main:app --reload --port 8000
 
 ---
 
-## 11. 참고 자료 및 공식 문서
+## 12. 참고 자료 및 공식 문서
 
 ### 프론트엔드
 - [React 공식 문서](https://react.dev)
@@ -2281,7 +2329,7 @@ python -m uvicorn app.main:app --reload --port 8000
 
 ---
 
-## 12. FAQ 및 트러블슈팅
+## 13. FAQ 및 트러블슈팅
 
 ### Q: 팀원이 새로운 라이브러리를 추가하고 싶어요
 **A**: 1단계가 완료될 때까지는 절대 추가하지 마세요. 3단계부터 필요성을 함께 검토합니다.
