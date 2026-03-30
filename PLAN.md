@@ -2235,6 +2235,13 @@ python -m uvicorn app.main:app --reload --port 8000
 ### `main`: 최종 배포 브랜치
 - **역할**: 오류 없이 안정적으로 구동되는 최종 완성본 코드가 유지되는 최상위 브랜치
 - **규칙**: 해당 브랜치에는 **직접 커밋(Direct Commit) 금지**. 반드시 `develop` 브랜치에서 충분한 테스트를 거친 코드만 병합(Merge)
+- **머지 승인 정책**: `main`으로의 병합은 반드시 Pull Request 기반으로 진행하며, **작성자 본인을 제외한 팀원 1명 이상 승인(Approve) 후에만 Merge 가능**
+
+### GitHub 보호 규칙 (필수)
+- `main` 브랜치 보호(Branch protection) 활성화
+- `Require a pull request before merging` 활성화
+- `Require approvals` 값을 **1 이상**으로 설정
+- `Restrict who can push to matching branches`를 설정해 직접 푸시 제한
 
 ### `develop`: 통합 및 테스트 브랜치
 - **역할**: 프론트엔드, 백엔드, AI 모델링 등 각 파트에서 개발된 기능이 하나로 모이는 통합 베이스 브랜치
