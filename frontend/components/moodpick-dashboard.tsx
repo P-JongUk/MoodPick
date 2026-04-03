@@ -1,6 +1,13 @@
 "use client"
 
 import { useState } from "react"
+import { getSupabaseClient } from "@/lib/supabaseClient"
+import {
+  endCounselingSession,
+  saveContentFeedback,
+  saveSurveyResponse,
+  startCounselingSession,
+} from "@/lib/sessionData"
 import {
   Home,
   MessageCircle,
@@ -17,6 +24,10 @@ import {
   User,
   LogOut,
   Trash2,
+  Maximize2,
+  ThumbsUp,
+  ThumbsDown,
+  X,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -135,20 +146,65 @@ const calendarMoods: Record<number, { emoji: string; color: string }> = {
   22: { emoji: "😐", color: "bg-sky-200" },
 }
 
+// Mock data for comforting media history
+const comfortingMediaHistory = [
+  {
+    id: 1,
+    title: "우울함을 달래주는 따뜻한 장작 소리",
+    thumbnail: "fireplace",
+    duration: "45:00",
+  },
+  {
+    id: 2,
+    title: "빗소리와 함께하는 명상 음악",
+    thumbnail: "rain",
+    duration: "30:00",
+  },
+  {
+    id: 3,
+    title: "숲속 새소리 1시간",
+    thumbnail: "forest",
+    duration: "1:00:00",
+  },
+  {
+    id: 4,
+    title: "집중력을 높이는 로파이 음악",
+    thumbnail: "lofi",
+    duration: "2:00:00",
+  },
+  {
+    id: 5,
+    title: "자존감을 높이는 명상 가이드",
+    thumbnail: "meditation",
+    duration: "20:00",
+  },
+]
+
 export function MoodPickDashboard() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false)
   const [activeTab, setActiveTab] = useState<TabType>("home")
-  const [messages, setMessages] = useState<Message[]>(initialMessages)
+  const [messages, setMessages] = useState<Message[]>([])
   const [inputMessage, setInputMessage] = useState("")
   const [selectedEmotion, setSelectedEmotion] = useState<string | null>(null)
   const [isPlaying, setIsPlaying] = useState(true)
   const [currentMonth, setCurrentMonth] = useState(3)
-  const [contentFeedback, setContentFeedback] = useState<string | null>(null)
+  const [mediaFeedback, setMediaFeedback] = useState<"like" | "dislike" | null>(null)
+
+  // Session flow state
+  const [isSessionActive, setIsSessionActive] = useState(false)
+  const [showPreSurvey, setShowPreSurvey] = useState(false)
+  const [showPostSurvey, setShowPostSurvey] = useState(false)
+  const [preSurveyMood, setPreSurveyMood] = useState<string | null>(null)
+  const [postSurveyMood, setPostSurveyMood] = useState<string | null>(null)
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
+  const [syncWarningMessage, setSyncWarningMessage] = useState<string | null>(null)
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState("")
   const [loginPassword, setLoginPassword] = useState("")
+  const [isAuthLoading, setIsAuthLoading] = useState(false)
+  const [authErrorMessage, setAuthErrorMessage] = useState<string | null>(null)
 
   // Onboarding state
   const [selectedConcerns, setSelectedConcerns] = useState<string[]>([])
@@ -158,20 +214,172 @@ export function MoodPickDashboard() {
   const [autoPlayEnabled, setAutoPlayEnabled] = useState(true)
   const [mediaPreference, setMediaPreference] = useState("youtube")
 
-  const handleLogin = () => {
-    if (loginEmail && loginPassword) {
-      setIsLoggedIn(true)
+  const handleLogin = async () => {
+    if (!loginEmail || !loginPassword) {
+      setAuthErrorMessage("이메일과 비밀번호를 모두 입력해 주세요.")
+      return
     }
+
+    setIsAuthLoading(true)
+    setAuthErrorMessage(null)
+
+    let error: { message: string } | null = null
+
+    try {
+      const supabase = getSupabaseClient()
+      const response = await supabase.auth.signInWithPassword({
+        email: loginEmail,
+        password: loginPassword,
+      })
+      error = response.error
+    } catch (setupError) {
+      error = {
+        message:
+          setupError instanceof Error
+            ? setupError.message
+            : "Supabase 설정을 확인해 주세요.",
+      }
+    }
+
+    if (error) {
+      setAuthErrorMessage(error.message)
+      setIsAuthLoading(false)
+      return
+    }
+
+    setIsLoggedIn(true)
+    setIsAuthLoading(false)
   }
 
   const handleCompleteOnboarding = () => {
     setHasCompletedOnboarding(true)
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      const supabase = getSupabaseClient()
+      await supabase.auth.signOut()
+    } catch {
+      // Ignore sign-out setup failures and proceed with local UI reset.
+    }
     setIsLoggedIn(false)
     setLoginEmail("")
     setLoginPassword("")
+    setAuthErrorMessage(null)
+    setCurrentSessionId(null)
+    setSyncWarningMessage(null)
+  }
+
+  const handleSocialLogin = async (provider: "google" | "kakao") => {
+    setIsAuthLoading(true)
+    setAuthErrorMessage(null)
+
+    let error: { message: string } | null = null
+
+    try {
+      const supabase = getSupabaseClient()
+      const response = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo: typeof window !== "undefined" ? `${window.location.origin}` : undefined,
+        },
+      })
+      error = response.error
+    } catch (setupError) {
+      error = {
+        message:
+          setupError instanceof Error
+            ? setupError.message
+            : "Supabase 설정을 확인해 주세요.",
+      }
+    }
+
+    if (error) {
+      setAuthErrorMessage(error.message)
+    }
+
+    setIsAuthLoading(false)
+  }
+
+  const handleStartNewSession = () => {
+    setPreSurveyMood(null)
+    setSyncWarningMessage(null)
+    setShowPreSurvey(true)
+  }
+
+  const handlePreSurveyComplete = async () => {
+    if (!preSurveyMood) return
+
+    try {
+      const createdSessionId = await startCounselingSession()
+      setCurrentSessionId(createdSessionId)
+
+      if (createdSessionId) {
+        await saveSurveyResponse(createdSessionId, "pre", preSurveyMood)
+      }
+    } catch {
+      setSyncWarningMessage("세션 또는 사전 문진 저장에 실패했어요. 일단 로컬 화면 흐름으로 진행할게요.")
+    }
+
+    setShowPreSurvey(false)
+    setIsSessionActive(true)
+    setActiveTab("counseling")
+    setMessages([
+      {
+        id: 1,
+        sender: "ai",
+        text: "안녕하세요, 저는 무드픽 상담사입니다. 오늘 하루 어떠셨나요? 편하게 이야기해 주세요.",
+        timestamp: new Date().toLocaleTimeString("ko-KR", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        }),
+      },
+    ])
+  }
+
+  const handleEndSession = () => {
+    setShowPostSurvey(true)
+  }
+
+  const handlePostSurveyComplete = async () => {
+    if (!postSurveyMood) return
+
+    if (currentSessionId) {
+      try {
+        await saveSurveyResponse(currentSessionId, "post", postSurveyMood)
+        await endCounselingSession(currentSessionId)
+      } catch {
+        setSyncWarningMessage("사후 문진 또는 세션 종료 저장에 실패했어요. Supabase 설정 후 다시 확인해 주세요.")
+      }
+    }
+
+    setShowPostSurvey(false)
+    setIsSessionActive(false)
+    setCurrentSessionId(null)
+    setPostSurveyMood(null)
+    setPreSurveyMood(null)
+    setMediaFeedback(null)
+    setActiveTab("home")
+  }
+
+  const handleMediaFeedbackChange = async (feedback: "like" | "dislike") => {
+    setMediaFeedback(feedback)
+
+    if (!currentSessionId) {
+      return
+    }
+
+    try {
+      await saveContentFeedback({
+        sessionId: currentSessionId,
+        feedback,
+        contentId: "fireplace-comfort-001",
+        contentTitle: "우울함을 달래주는 따뜻한 장작 소리",
+      })
+    } catch {
+      setSyncWarningMessage("콘텐츠 피드백 저장에 실패했어요. Supabase 설정을 확인해 주세요.")
+    }
   }
 
   const handleSendMessage = () => {
@@ -242,6 +450,9 @@ export function MoodPickDashboard() {
         password={loginPassword}
         setPassword={setLoginPassword}
         onLogin={handleLogin}
+        onSocialLogin={handleSocialLogin}
+        isAuthLoading={isAuthLoading}
+        authErrorMessage={authErrorMessage}
       />
     )
   }
@@ -313,6 +524,24 @@ export function MoodPickDashboard() {
             emotions={emotions}
             selectedEmotion={selectedEmotion}
             onEmotionSelect={handleEmotionSelect}
+            onStartNewSession={handleStartNewSession}
+          />
+        )}
+        {/* Pre-Survey Overlay */}
+        {showPreSurvey && (
+          <PreSurveyOverlay
+            selectedMood={preSurveyMood}
+            setSelectedMood={setPreSurveyMood}
+            onStart={handlePreSurveyComplete}
+            onClose={() => setShowPreSurvey(false)}
+          />
+        )}
+        {/* Post-Survey Overlay */}
+        {showPostSurvey && (
+          <PostSurveyOverlay
+            selectedMood={postSurveyMood}
+            setSelectedMood={setPostSurveyMood}
+            onComplete={handlePostSurveyComplete}
           />
         )}
         {activeTab === "counseling" && (
@@ -323,8 +552,11 @@ export function MoodPickDashboard() {
             onSendMessage={handleSendMessage}
             isPlaying={isPlaying}
             setIsPlaying={setIsPlaying}
-            contentFeedback={contentFeedback}
-            setContentFeedback={setContentFeedback}
+            mediaFeedback={mediaFeedback}
+            onMediaFeedbackChange={handleMediaFeedbackChange}
+            onEndSession={handleEndSession}
+            isSessionActive={isSessionActive}
+            syncWarningMessage={syncWarningMessage}
           />
         )}
         {activeTab === "dashboard" && (
@@ -355,10 +587,12 @@ function HomeView({
   emotions,
   selectedEmotion,
   onEmotionSelect,
+  onStartNewSession,
 }: {
   emotions: Emotion[]
   selectedEmotion: string | null
   onEmotionSelect: (emoji: string) => void
+  onStartNewSession: () => void
 }) {
   return (
     <div className="p-8 max-w-4xl mx-auto">
@@ -370,6 +604,18 @@ function HomeView({
         <p className="text-muted-foreground text-lg">
           지금 느끼는 감정을 선택해 주세요
         </p>
+      </div>
+
+      {/* Start New Session Button */}
+      <div className="mb-10">
+        <Button
+          onClick={onStartNewSession}
+          size="lg"
+          className="w-full h-14 rounded-2xl text-lg font-semibold shadow-lg"
+        >
+          <MessageCircle className="w-5 h-5 mr-3" />
+          새로운 상담 시작하기
+        </Button>
       </div>
 
       {/* Emotion Selection */}
@@ -463,8 +709,11 @@ function CounselingView({
   onSendMessage,
   isPlaying,
   setIsPlaying,
-  contentFeedback,
-  setContentFeedback,
+  mediaFeedback,
+  onMediaFeedbackChange,
+  onEndSession,
+  isSessionActive,
+  syncWarningMessage,
 }: {
   messages: Message[]
   inputMessage: string
@@ -472,15 +721,12 @@ function CounselingView({
   onSendMessage: () => void
   isPlaying: boolean
   setIsPlaying: (value: boolean) => void
-  contentFeedback: string | null
-  setContentFeedback: (value: string | null) => void
+  mediaFeedback: "like" | "dislike" | null
+  onMediaFeedbackChange: (value: "like" | "dislike") => void
+  onEndSession: () => void
+  isSessionActive: boolean
+  syncWarningMessage: string | null
 }) {
-  const feedbackOptions = [
-    { emoji: "love", label: "아주 좋아요" },
-    { emoji: "good", label: "조금 나아졌어요" },
-    { emoji: "neutral", label: "그저 그래요" },
-    { emoji: "sad", label: "아쉬워요" },
-  ]
   return (
     <div className="flex h-full">
       {/* Chat Section */}
@@ -526,7 +772,7 @@ function CounselingView({
         </ScrollArea>
 
         <div className="p-4 border-t border-border bg-card">
-          <div className="flex gap-3">
+          <div className="flex gap-3 mb-3">
             <Input
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
@@ -538,6 +784,15 @@ function CounselingView({
               <Send className="w-4 h-4" />
             </Button>
           </div>
+          {isSessionActive && (
+            <Button
+              onClick={onEndSession}
+              variant="outline"
+              className="w-full rounded-xl border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground"
+            >
+              오늘의 상담 종료하기
+            </Button>
+          )}
         </div>
       </div>
 
@@ -553,6 +808,10 @@ function CounselingView({
         {/* Video Player Mockup */}
         <Card className="overflow-hidden border-0 shadow-lg">
           <div className="aspect-video bg-foreground/90 relative flex items-center justify-center">
+            {/* Fullscreen Toggle */}
+            <button className="absolute top-2 right-2 z-10 p-2 rounded-lg bg-foreground/30 hover:bg-foreground/50 transition-colors">
+              <Maximize2 className="w-4 h-4 text-primary-foreground" />
+            </button>
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="text-center text-primary-foreground">
                 <Flame className="w-16 h-16 mx-auto mb-2 opacity-80" />
@@ -608,42 +867,33 @@ function CounselingView({
           </CardContent>
         </Card>
 
-        {/* Content Feedback Section */}
-        <Card className="border-0 shadow-md mt-4 bg-secondary/30">
-          <CardContent className="p-4">
-            <p className="text-sm text-center text-muted-foreground mb-3">
-              이 콘텐츠가 감정 환기에 도움이 되었나요?
-            </p>
-            <div className="flex items-center justify-center gap-2">
-              {feedbackOptions.map((option) => (
-                <button
-                  key={option.emoji}
-                  onClick={() => setContentFeedback(option.emoji)}
-                  className={`flex flex-col items-center p-2 rounded-xl transition-all duration-200 ${
-                    contentFeedback === option.emoji
-                      ? "bg-primary/10 ring-2 ring-primary scale-105"
-                      : "hover:bg-muted"
-                  }`}
-                >
-                  <span className="text-2xl mb-1">
-                    {option.emoji === "love" && "\uD83D\uDE0D"}
-                    {option.emoji === "good" && "\uD83D\uDE42"}
-                    {option.emoji === "neutral" && "\uD83D\uDE10"}
-                    {option.emoji === "sad" && "\uD83D\uDE14"}
-                  </span>
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">
-                    {option.label}
-                  </span>
-                </button>
-              ))}
-            </div>
-            {contentFeedback && (
-              <p className="text-xs text-center text-primary mt-3 font-medium">
-                피드백을 보내주셔서 감사합니다!
-              </p>
-            )}
-          </CardContent>
-        </Card>
+        {/* Lightweight Feedback Section */}
+        <div className="mt-4 p-4 rounded-xl bg-secondary/30">
+          <p className="text-sm text-center text-muted-foreground mb-3">
+            이 콘텐츠가 도움이 되었나요?
+          </p>
+          <div className="flex items-center justify-center gap-4">
+            <Button
+              variant={mediaFeedback === "like" ? "default" : "outline"}
+              onClick={() => onMediaFeedbackChange("like")}
+              className="rounded-xl px-6"
+            >
+              <ThumbsUp className="w-4 h-4 mr-2" />
+              좋아요
+            </Button>
+            <Button
+              variant={mediaFeedback === "dislike" ? "default" : "outline"}
+              onClick={() => onMediaFeedbackChange("dislike")}
+              className="rounded-xl px-6"
+            >
+              <ThumbsDown className="w-4 h-4 mr-2" />
+              아쉬워요
+            </Button>
+          </div>
+          {syncWarningMessage && (
+            <p className="mt-3 text-xs text-center text-destructive">{syncWarningMessage}</p>
+          )}
+        </div>
 
         {/* Recommended Queue */}
         <div className="mt-6">
@@ -809,6 +1059,54 @@ function DashboardView({
         </Card>
       </div>
 
+      {/* Comforting Media History */}
+      <Card className="border-0 shadow-lg mb-8">
+        <CardHeader>
+          <CardTitle className="text-lg">내가 위로받은 콘텐츠</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex gap-4 overflow-x-auto pb-4 -mx-2 px-2">
+            {comfortingMediaHistory.map((media) => (
+              <div
+                key={media.id}
+                className="flex-shrink-0 w-48 group cursor-pointer"
+              >
+                <div className="aspect-video rounded-xl bg-muted mb-2 relative overflow-hidden">
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    {media.thumbnail === "fireplace" && (
+                      <Flame className="w-10 h-10 text-orange-400" />
+                    )}
+                    {media.thumbnail === "rain" && (
+                      <div className="text-3xl">🌧️</div>
+                    )}
+                    {media.thumbnail === "forest" && (
+                      <div className="text-3xl">🌲</div>
+                    )}
+                    {media.thumbnail === "lofi" && (
+                      <div className="text-3xl">🎵</div>
+                    )}
+                    {media.thumbnail === "meditation" && (
+                      <div className="text-3xl">🧘</div>
+                    )}
+                  </div>
+                  <div className="absolute inset-0 bg-foreground/0 group-hover:bg-foreground/30 transition-colors flex items-center justify-center">
+                    <div className="w-10 h-10 rounded-full bg-primary/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Play className="w-5 h-5 text-primary-foreground ml-0.5" />
+                    </div>
+                  </div>
+                  <span className="absolute bottom-2 right-2 px-2 py-0.5 bg-foreground/70 text-primary-foreground text-xs rounded">
+                    {media.duration}
+                  </span>
+                </div>
+                <p className="text-sm font-medium text-foreground line-clamp-2">
+                  {media.title}
+                </p>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Session History */}
       <Card className="border-0 shadow-lg">
         <CardHeader>
@@ -844,12 +1142,18 @@ function LoginScreen({
   password,
   setPassword,
   onLogin,
+  onSocialLogin,
+  isAuthLoading,
+  authErrorMessage,
 }: {
   email: string
   setEmail: (value: string) => void
   password: string
   setPassword: (value: string) => void
-  onLogin: () => void
+  onLogin: () => Promise<void>
+  onSocialLogin: (provider: "google" | "kakao") => Promise<void>
+  isAuthLoading: boolean
+  authErrorMessage: string | null
 }) {
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -910,9 +1214,14 @@ function LoginScreen({
             <Button
               onClick={onLogin}
               className="w-full h-12 rounded-xl text-base font-medium mb-6"
+              disabled={isAuthLoading}
             >
-              로그인
+              {isAuthLoading ? "로그인 중..." : "로그인"}
             </Button>
+
+            {authErrorMessage && (
+              <p className="text-sm text-destructive text-center mb-4">{authErrorMessage}</p>
+            )}
 
             {/* Divider */}
             <div className="relative mb-6">
@@ -931,6 +1240,8 @@ function LoginScreen({
               <Button
                 variant="outline"
                 className="w-full h-12 rounded-xl border-2 bg-[#FEE500] hover:bg-[#FEE500]/90 border-[#FEE500] text-[#191919] font-medium"
+                onClick={() => onSocialLogin("kakao")}
+                disabled={isAuthLoading}
               >
                 <svg
                   className="w-5 h-5 mr-2"
@@ -944,6 +1255,8 @@ function LoginScreen({
               <Button
                 variant="outline"
                 className="w-full h-12 rounded-xl border-2 hover:bg-muted font-medium"
+                onClick={() => onSocialLogin("google")}
+                disabled={isAuthLoading}
               >
                 <svg
                   className="w-5 h-5 mr-2"
@@ -1264,6 +1577,148 @@ function MyPageView({
         <LogOut className="w-4 h-4 mr-2" />
         로그아웃
       </Button>
+    </div>
+  )
+}
+
+const surveyMoodOptions = [
+  { emoji: "😊", label: "아주 좋아요", value: "great" },
+  { emoji: "🙂", label: "괜찮아요", value: "good" },
+  { emoji: "😐", label: "그저 그래요", value: "neutral" },
+  { emoji: "😔", label: "조금 힘들어요", value: "low" },
+  { emoji: "😢", label: "많이 힘들어요", value: "bad" },
+]
+
+function PreSurveyOverlay({
+  selectedMood,
+  setSelectedMood,
+  onStart,
+  onClose,
+}: {
+  selectedMood: string | null
+  setSelectedMood: (value: string | null) => void
+  onStart: () => void
+  onClose: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex items-center justify-center p-4">
+      <Card className="w-full max-w-lg border-0 shadow-2xl">
+        <CardContent className="p-8">
+          {/* Close Button */}
+          <button
+            onClick={onClose}
+            className="absolute top-4 right-4 p-2 rounded-full hover:bg-muted transition-colors"
+          >
+            <X className="w-5 h-5 text-muted-foreground" />
+          </button>
+
+          {/* Logo */}
+          <div className="text-center mb-8">
+            <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4">
+              <Heart className="w-7 h-7 text-primary-foreground" />
+            </div>
+            <h2 className="text-2xl font-bold text-foreground mb-2">사전 문진</h2>
+            <p className="text-muted-foreground">상담 시작 전, 지금의 마음 상태를 알려주세요</p>
+          </div>
+
+          {/* Question */}
+          <div className="mb-8">
+            <h3 className="text-lg font-semibold text-center text-foreground mb-6">
+              지금 마음의 온도는 어떤가요?
+            </h3>
+            <div className="flex flex-wrap justify-center gap-3">
+              {surveyMoodOptions.map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => setSelectedMood(option.value)}
+                  className={`flex flex-col items-center p-4 rounded-2xl transition-all duration-200 min-w-[90px] ${
+                    selectedMood === option.value
+                      ? "bg-primary/10 ring-2 ring-primary scale-105"
+                      : "bg-muted hover:bg-muted/80"
+                  }`}
+                >
+                  <span className="text-3xl mb-2">{option.emoji}</span>
+                  <span className="text-xs text-foreground font-medium whitespace-nowrap">
+                    {option.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Start Button */}
+          <Button
+            onClick={onStart}
+            disabled={!selectedMood}
+            className="w-full h-12 rounded-xl text-base font-medium"
+          >
+            상담 시작
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function PostSurveyOverlay({
+  selectedMood,
+  setSelectedMood,
+  onComplete,
+}: {
+  selectedMood: string | null
+  setSelectedMood: (value: string | null) => void
+  onComplete: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex items-center justify-center p-4">
+      <Card className="w-full max-w-lg border-0 shadow-2xl">
+        <CardContent className="p-8">
+          {/* Logo */}
+          <div className="text-center mb-8">
+            <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4">
+              <Heart className="w-7 h-7 text-primary-foreground" />
+            </div>
+            <h2 className="text-2xl font-bold text-foreground mb-2">사후 문진</h2>
+            <p className="text-muted-foreground text-balance">
+              무드픽과 함께한 시간, 마음이 조금 편안해지셨나요?
+            </p>
+          </div>
+
+          {/* Question */}
+          <div className="mb-8">
+            <h3 className="text-lg font-semibold text-center text-foreground mb-6">
+              지금 마음의 온도는 어떤가요?
+            </h3>
+            <div className="flex flex-wrap justify-center gap-3">
+              {surveyMoodOptions.map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => setSelectedMood(option.value)}
+                  className={`flex flex-col items-center p-4 rounded-2xl transition-all duration-200 min-w-[90px] ${
+                    selectedMood === option.value
+                      ? "bg-primary/10 ring-2 ring-primary scale-105"
+                      : "bg-muted hover:bg-muted/80"
+                  }`}
+                >
+                  <span className="text-3xl mb-2">{option.emoji}</span>
+                  <span className="text-xs text-foreground font-medium whitespace-nowrap">
+                    {option.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Complete Button */}
+          <Button
+            onClick={onComplete}
+            disabled={!selectedMood}
+            className="w-full h-12 rounded-xl text-base font-medium"
+          >
+            완료 및 홈으로
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   )
 }
