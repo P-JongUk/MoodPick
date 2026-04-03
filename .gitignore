@@ -81,3 +81,6 @@ logs/
 # Local development
 .turbo/
 .cache/
+
+# Gemini
+.geminiignore
