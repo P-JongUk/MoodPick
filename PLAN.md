@@ -16,6 +16,7 @@
 - [x] 백엔드 Supabase 키 사용 전략 개선(service role 우선)
 - [x] survey/history 사용자 조회 로직 안정화
 - [x] 프론트 빌드(next build) 성공
+- [x] 비AI E2E 스모크 체크 스크립트 추가 및 실행 통과
 
 ### 다음 우선순위
 - [ ] AI 기능(Function Calling, GPT 응답 생성) 연동
