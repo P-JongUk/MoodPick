@@ -9,6 +9,8 @@
 - [x] 인증 상태 관리(AuthProvider) 및 무한 로딩 방지 처리
 - [x] 상담 세션 시작/종료, 사전/사후 문진 저장 프론트 로직 연결
 - [x] 콘텐츠 피드백(좋아요/아쉬워요) 저장 프론트 로직 연결
+- [x] 상담 종료 후 문진 Delta를 대시보드에 반영
+- [x] 사용자 통계(total sessions, watched, feedback)를 대시보드에 연동
 - [x] FastAPI 라우터 확장: session, survey, content, emotion, user
 - [x] 백엔드 OpenAPI 경로 노출 및 핵심 엔드포인트 스모크 테스트 통과
 - [x] 프론트 빌드(next build) 성공

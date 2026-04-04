@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useAuth } from "@/components/auth-provider"
 import {
   endCounselingSession,
@@ -8,7 +8,7 @@ import {
   saveSurveyResponse,
   startCounselingSession,
 } from "@/lib/sessionData"
-import { sendCounselingMessage } from "@/lib/api"
+import { getSurveyDelta, getUserStats, sendCounselingMessage } from "@/lib/api"
 import {
   Home,
   MessageCircle,
@@ -73,6 +73,20 @@ interface SessionHistory {
   date: string
   concern: string
   media: string
+}
+
+interface SurveyDeltaSummary {
+  sessionId: string
+  averageDelta: number
+  improved: boolean
+}
+
+interface UserStats {
+  total_sessions: number
+  total_content_watched: number
+  total_feedback: number
+  likes: number
+  dislikes: number
 }
 
 const emotions: Emotion[] = [
@@ -211,6 +225,8 @@ export function MoodPickDashboard() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
   const [syncWarningMessage, setSyncWarningMessage] = useState<string | null>(null)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
+  const [lastSurveyDelta, setLastSurveyDelta] = useState<SurveyDeltaSummary | null>(null)
+  const [userStats, setUserStats] = useState<UserStats | null>(null)
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState("")
@@ -224,6 +240,24 @@ export function MoodPickDashboard() {
   // My page settings state
   const [autoPlayEnabled, setAutoPlayEnabled] = useState(true)
   const [mediaPreference, setMediaPreference] = useState("youtube")
+
+  useEffect(() => {
+    const loadUserStats = async () => {
+      if (!user?.id) {
+        setUserStats(null)
+        return
+      }
+
+      try {
+        const stats = await getUserStats(user.id)
+        setUserStats(stats as UserStats)
+      } catch {
+        setUserStats(null)
+      }
+    }
+
+    void loadUserStats()
+  }, [user?.id])
 
   const handleLogin = async () => {
     if (!loginEmail || !loginPassword) {
@@ -324,10 +358,26 @@ export function MoodPickDashboard() {
   const handlePostSurveyComplete = async () => {
     if (!postSurveyMood) return
 
+    const endedSessionId = currentSessionId
+
     if (currentSessionId) {
       try {
         await saveSurveyResponse(currentSessionId, "post", postSurveyMood)
         await endCounselingSession(currentSessionId)
+
+        const deltaResponse = await getSurveyDelta(currentSessionId)
+        if (deltaResponse?.delta && typeof deltaResponse.delta === "object") {
+          const values = Object.values(deltaResponse.delta) as number[]
+          const averageDelta = values.length
+            ? values.reduce((sum, value) => sum + value, 0) / values.length
+            : 0
+
+          setLastSurveyDelta({
+            sessionId: currentSessionId,
+            averageDelta,
+            improved: Boolean(deltaResponse.improved),
+          })
+        }
       } catch {
         setSyncWarningMessage("사후 문진 또는 세션 종료 저장에 실패했어요. Supabase 설정 후 다시 확인해 주세요.")
       }
@@ -339,7 +389,7 @@ export function MoodPickDashboard() {
     setPostSurveyMood(null)
     setPreSurveyMood(null)
     setMediaFeedback(null)
-    setActiveTab("home")
+    setActiveTab(endedSessionId ? "dashboard" : "home")
   }
 
   const handleMediaFeedbackChange = async (feedback: "like" | "dislike") => {
@@ -585,6 +635,8 @@ export function MoodPickDashboard() {
             calendarMoods={calendarMoods}
             emotionData={emotionData}
             sessionHistory={sessionHistory}
+            lastSurveyDelta={lastSurveyDelta}
+            userStats={userStats}
           />
         )}
         {activeTab === "mypage" && (
@@ -949,6 +1001,8 @@ function DashboardView({
   calendarMoods,
   emotionData,
   sessionHistory,
+  lastSurveyDelta,
+  userStats,
 }: {
   currentMonth: number
   setCurrentMonth: (value: number) => void
@@ -956,6 +1010,8 @@ function DashboardView({
   calendarMoods: Record<number, { emoji: string; color: string }>
   emotionData: { date: string; score: number; label: string }[]
   sessionHistory: SessionHistory[]
+  lastSurveyDelta: SurveyDeltaSummary | null
+  userStats: UserStats | null
 }) {
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -964,6 +1020,43 @@ function DashboardView({
         <p className="text-muted-foreground">
           당신의 감정 여정을 한눈에 확인하세요
         </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <Card className="border-0 bg-secondary/40">
+          <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground">총 상담 세션</p>
+            <p className="text-2xl font-bold text-foreground">{userStats?.total_sessions ?? 0}</p>
+          </CardContent>
+        </Card>
+        <Card className="border-0 bg-secondary/40">
+          <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground">시청 콘텐츠</p>
+            <p className="text-2xl font-bold text-foreground">{userStats?.total_content_watched ?? 0}</p>
+          </CardContent>
+        </Card>
+        <Card className="border-0 bg-secondary/40">
+          <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground">좋아요 비율</p>
+            <p className="text-2xl font-bold text-foreground">
+              {userStats?.total_feedback
+                ? `${Math.round((userStats.likes / userStats.total_feedback) * 100)}%`
+                : "0%"}
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="border-0 bg-secondary/40">
+          <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground">최근 세션 변화</p>
+            <p
+              className={`text-2xl font-bold ${
+                lastSurveyDelta?.improved ? "text-emerald-600" : "text-muted-foreground"
+              }`}
+            >
+              {lastSurveyDelta ? `${lastSurveyDelta.averageDelta >= 0 ? "+" : ""}${lastSurveyDelta.averageDelta.toFixed(1)}` : "-"}
+            </p>
+          </CardContent>
+        </Card>
       </div>
 
       <div className="grid grid-cols-2 gap-6 mb-8">
