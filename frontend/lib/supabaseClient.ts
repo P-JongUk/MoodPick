@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js"
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-let supabaseSingleton: ReturnType<typeof createClient> | null = null
+let supabaseSingleton: any = null
 
 export function getSupabaseClient() {
   if (!supabaseUrl || !supabaseAnonKey) {
@@ -13,7 +13,7 @@ export function getSupabaseClient() {
   }
 
   if (!supabaseSingleton) {
-    supabaseSingleton = createClient(supabaseUrl, supabaseAnonKey)
+    supabaseSingleton = createClient<any>(supabaseUrl, supabaseAnonKey)
   }
 
   return supabaseSingleton
