@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js'
 import { getSupabaseClient } from '@/lib/supabaseClient'
+import { upsertUserProfile } from '@/lib/api'
 
 type AuthProviderProps = {
   children: React.ReactNode
@@ -15,7 +16,7 @@ type AuthProviderValue = {
   isAuthLoading: boolean
   authErrorMessage: string | null
   setAuthErrorMessage: (message: string | null) => void
-  signUpWithPassword: (email: string, password: string) => Promise<void>
+  signUpWithPassword: (email: string, password: string, displayName: string) => Promise<void>
   signInWithPassword: (email: string, password: string) => Promise<void>
   signInWithOAuth: (provider: 'google' | 'kakao') => Promise<void>
   signOut: () => Promise<void>
@@ -124,20 +125,35 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setIsAuthLoading(false)
   }
 
-  const signUpWithPassword = async (email: string, password: string) => {
+  const signUpWithPassword = async (email: string, password: string, displayName: string) => {
     const supabase = getSupabaseClient()
     setIsAuthLoading(true)
     setAuthErrorMessage(null)
 
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        data: {
+          display_name: displayName,
+          onboarding_completed: false,
+          onboarding_profile: null,
+        },
+      },
     })
 
     if (error) {
       setAuthErrorMessage(error.message)
       setIsAuthLoading(false)
       throw error
+    }
+
+    if (data.user?.id) {
+      try {
+        await upsertUserProfile(data.user.id, displayName)
+      } catch {
+        // Profile sync failure should not block signup.
+      }
     }
 
     setIsAuthLoading(false)

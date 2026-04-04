@@ -258,6 +258,23 @@ export async function getUserProfile(userId: string): Promise<any> {
   return response.json()
 }
 
+export async function upsertUserProfile(userId: string, displayName: string): Promise<any> {
+  const response = await fetch(`${API_BASE_URL}/user/profile`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      user_id: userId,
+      display_name: displayName,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Upsert user profile failed: ${response.statusText}`)
+  }
+
+  return response.json()
+}
+
 export async function getUserSessions(userId: string, limit = 10): Promise<any> {
   const response = await fetch(`${API_BASE_URL}/user/sessions/${userId}?limit=${limit}`, {
     method: "GET",
@@ -284,18 +301,66 @@ export async function getUserStats(userId: string): Promise<any> {
 
 // ============ Counseling API ============
 
-export async function sendCounselingMessage(userId: string, message: string): Promise<any> {
+export async function sendCounselingMessage(userId: string, message: string, sessionId?: string): Promise<any> {
   const response = await fetch(`${API_BASE_URL}/counseling/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       user_id: userId,
       message,
+      session_id: sessionId,
     }),
   })
 
   if (!response.ok) {
     throw new Error(`Send counseling message failed: ${response.statusText}`)
+  }
+
+  return response.json()
+}
+
+export async function getInitialCounselingMessage(sessionId: string): Promise<any> {
+  const response = await fetch(`${API_BASE_URL}/counseling/initial-message/${sessionId}`, {
+    method: "GET",
+  })
+
+  if (!response.ok) {
+    throw new Error(`Get initial counseling message failed: ${response.statusText}`)
+  }
+
+  return response.json()
+}
+
+// ============ Reminder API ============
+
+export interface ReminderPreferencePayload {
+  user_id: string
+  enabled: boolean
+  reminder_time: string
+  timezone: string
+}
+
+export async function getReminderPreference(userId: string): Promise<any> {
+  const response = await fetch(`${API_BASE_URL}/reminder/preferences/${userId}`, {
+    method: "GET",
+  })
+
+  if (!response.ok) {
+    throw new Error(`Get reminder preference failed: ${response.statusText}`)
+  }
+
+  return response.json()
+}
+
+export async function upsertReminderPreference(payload: ReminderPreferencePayload): Promise<any> {
+  const response = await fetch(`${API_BASE_URL}/reminder/preferences`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Upsert reminder preference failed: ${response.statusText}`)
   }
 
   return response.json()

@@ -87,26 +87,34 @@ async def get_emotion_records(
 ):
     """사용자의 감정 기록 조회 (최근 N일)"""
     try:
-        # survey_responses 테이블에서 감정 관련 기록 조회
-        # (추후 dedicated emotion_records 테이블로 변경 가능)
         days_ago = datetime.utcnow() - timedelta(days=days)
-        
-        result = supabase.table("survey_responses").select(
-            "*, counseling_sessions(id, user_id, started_at)"
-        ).eq("counseling_sessions.user_id", user_id).filter(
-            "created_at", "gte", days_ago.isoformat()
-        ).order("created_at", desc=True).execute()
 
-        if result.data:
-            # 데이터 처리
+        sessions_result = supabase.table("counseling_sessions").select("id").eq(
+            "user_id", user_id
+        ).execute()
+
+        session_rows = sessions_result.data or []
+        if not session_rows:
+            return []
+
+        session_ids = [row["id"] for row in session_rows]
+
+        responses_result = supabase.table("survey_responses").select("*").in_(
+            "session_id", session_ids
+        ).filter("created_at", "gte", days_ago.isoformat()).order(
+            "created_at", desc=True
+        ).execute()
+
+        if responses_result.data:
             emotions = []
-            for record in result.data:
+            for record in responses_result.data:
                 emotions.append({
                     "question": record["question_key"],
                     "emoji": record["emoji_value"],
                     "score": record["score"],
+                    "phase": record.get("phase"),
                     "recorded_at": record["created_at"],
-                    "session_id": record["counseling_sessions"]["id"],
+                    "session_id": record["session_id"],
                 })
             return emotions
         return []
@@ -126,14 +134,13 @@ async def get_emotion_summary(
     """사용자의 감정 요약 (최근 N일 평균)"""
     try:
         days_ago = datetime.utcnow() - timedelta(days=days)
-        
-        result = supabase.table("survey_responses").select(
-            "score, counseling_sessions(user_id)"
-        ).eq("counseling_sessions.user_id", user_id).filter(
-            "created_at", "gte", days_ago.isoformat()
+
+        sessions_result = supabase.table("counseling_sessions").select("id").eq(
+            "user_id", user_id
         ).execute()
 
-        if not result.data:
+        session_rows = sessions_result.data or []
+        if not session_rows:
             return {
                 "user_id": user_id,
                 "average_score": 3.0,
@@ -141,7 +148,25 @@ async def get_emotion_summary(
                 "total_sessions": 0
             }
 
-        scores = [r["score"] for r in result.data]
+        session_ids = [row["id"] for row in session_rows]
+
+        responses_result = supabase.table("survey_responses").select("score").in_(
+            "session_id", session_ids
+        ).filter("created_at", "gte", days_ago.isoformat()).order(
+            "created_at", desc=True
+        ).execute()
+
+        if not responses_result.data:
+            return {
+                "user_id": user_id,
+                "average_score": 3.0,
+                "trend": "stable",
+                "total_sessions": len(session_ids),
+                "total_responses": 0,
+                "days_range": days
+            }
+
+        scores = [r["score"] for r in responses_result.data]
         avg_score = sum(scores) / len(scores) if scores else 3.0
 
         # 추이 판단 (최근 3개 vs 그 이전 3개)
@@ -161,6 +186,7 @@ async def get_emotion_summary(
             "user_id": user_id,
             "average_score": round(avg_score, 2),
             "trend": trend,
+            "total_sessions": len(session_ids),
             "total_responses": len(scores),
             "days_range": days
         }

@@ -16,6 +16,11 @@ class UserProfileResponse(BaseModel):
     created_at: str
 
 
+class UserProfileUpsertRequest(BaseModel):
+    user_id: str
+    display_name: str
+
+
 @router.get("/profile/{user_id}", response_model=UserProfileResponse)
 async def get_user_profile(
     user_id: str,
@@ -23,31 +28,84 @@ async def get_user_profile(
 ):
     """사용자 프로필 조회"""
     try:
-        # Supabase auth.users 에서 직접 조회하거나,
-        # custom user table이 있으면 그곳에서 조회
-        # 지금은 session 기반으로 간단하게 구현
-        
-        result = supabase.table("counseling_sessions").select(
-            "user_id, created_at"
+        profile_result = supabase.table("user_profiles").select(
+            "display_name, created_at"
         ).eq("user_id", user_id).limit(1).execute()
 
-        if result.data and len(result.data) > 0:
+        if profile_result.data and len(profile_result.data) > 0:
+            profile = profile_result.data[0]
             return {
                 "id": user_id,
                 "email": f"user_{user_id[:8]}@moodpick.local",  # 임시
-                "name": f"User {user_id[:4]}",  # 임시
+                "name": profile.get("display_name") or f"User {user_id[:4]}",
                 "avatar_url": None,
-                "created_at": result.data[0]["created_at"]
+                "created_at": profile["created_at"],
             }
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
+
+        session_result = supabase.table("counseling_sessions").select(
+            "created_at"
+        ).eq("user_id", user_id).order("created_at", desc=False).limit(1).execute()
+
+        created_at = (
+            session_result.data[0]["created_at"]
+            if session_result.data and len(session_result.data) > 0
+            else "1970-01-01T00:00:00+00:00"
+        )
+
+        return {
+            "id": user_id,
+            "email": f"user_{user_id[:8]}@moodpick.local",
+            "name": f"User {user_id[:4]}",
+            "avatar_url": None,
+            "created_at": created_at,
+        }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
+        )
+
+
+@router.put("/profile")
+async def upsert_user_profile(
+    payload: UserProfileUpsertRequest,
+    supabase: Client = Depends(get_supabase_client),
+):
+    """사용자 프로필 이름 저장/수정"""
+    try:
+        display_name = payload.display_name.strip()
+        if not display_name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="display_name is required",
+            )
+
+        result = supabase.table("user_profiles").upsert(
+            {
+                "user_id": payload.user_id,
+                "display_name": display_name,
+            },
+            on_conflict="user_id",
+        ).execute()
+
+        if result.data and len(result.data) > 0:
+            row = result.data[0]
+            return {
+                "status": "success",
+                "user_id": row["user_id"],
+                "display_name": row["display_name"],
+            }
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to upsert user profile",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
         )
 
 

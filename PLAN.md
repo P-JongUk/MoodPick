@@ -18,6 +18,8 @@
 - [x] 프론트 빌드(next build) 성공
 - [x] 비AI E2E 스모크 체크 스크립트 추가 및 실행 통과
 - [x] 비AI 사용자 전체 시나리오 리허설 통과(회원가입→세션→문진→피드백→종료)
+- [x] 세션 기반 채팅 초기 안내 메시지(`/counseling/initial-message/{session_id}`) 연동
+- [x] 22시 데일리 리마인더 기본 설정 API/DB 스키마 추가(`/reminder/*`)
 
 ### 다음 우선순위
 - [ ] AI 기능(Function Calling, GPT 응답 생성) 연동
@@ -25,15 +27,90 @@
 - [ ] OAuth(카카오/구글) 운영 설정 및 리다이렉트 검증
 - [ ] E2E 리그레션 테스트 자동화(CI에서 주기 실행)
 
+### 서비스 정체성(명확화)
+- MoodPick은 채팅 텍스트 기반 감정 분석을 수행합니다.
+- RAG 기반 상담 매뉴얼 + 사용자 개인 데이터(온보딩, 히스토리, 피드백)를 결합해 상담/위로 응답을 생성합니다.
+- AI가 맞춤 콘텐츠를 추천하고, 사용자 피드백(좋아요/아쉬워요)을 다음 추천에 반영해 개인화를 강화합니다.
+
+### AI 실행 방식(Function Calling) 계획
+- 단일 LLM이 `tool_choice=auto`로 필요한 함수를 선택합니다.
+- 백엔드는 선택된 tool을 실행하고 결과를 다시 LLM에 전달해 최종 응답을 생성합니다.
+- 기본 tool 후보:
+  - `analyze_text_emotion`
+  - `search_rag_context`
+  - `get_user_profile_and_history`
+  - `recommend_contents`
+  - `save_feedback`
+- 실패 시 비AI fallback 응답을 제공해 대화 단절을 방지합니다.
+
+### 단계별 실행 체크리스트 (AI/MCP/문진 포함)
+
+1단계. AI 연결
+- [ ] `/counseling/message`를 GPT 호출 구조로 전환
+- [ ] 모델/타임아웃/재시도 정책 환경변수화
+- [ ] Function Calling schema/실행기 구현
+
+2단계. 프롬프트
+- [ ] 시스템 프롬프트(공감 톤/금지 표현/한계 고지) 확정
+- [ ] 위험 상황(자해/타해/응급) 전용 프롬프트 분리
+- [ ] 프롬프트 버전 관리 및 평가 로그 구축
+
+3단계. RAG
+- [ ] 상담 매뉴얼 수집 및 청크/임베딩 적재 파이프라인 구축
+- [ ] threshold/top_k/재랭킹 규칙 확정
+- [ ] 응답에 근거(citation) 포함
+
+4단계. 개인화 추천
+- [ ] 온보딩 + 히스토리 + 피드백 결합 추천 로직 적용
+- [ ] 콜드스타트 fallback 추천 정책 확정
+
+5단계. 문진 고도화
+- [ ] 공개 검증 문항 리서치(WHO-5, PHQ-2/9, GAD-2/7 등)
+- [ ] 문항 업데이트 및 기존 키 매핑 정책(`mood_general` 등) 수립
+- [ ] 문진 변경 후 Delta/대시보드 회귀 검증
+
+6단계. MCP 전환(선택)
+- [ ] 조회성 기능부터 MCP tool로 노출
+- [ ] 쓰기 기능은 안정화 후 2차 전환
+- [ ] 보안/장애/성능 기준 충족 시 점진 확대
+
+7단계. 검증/운영
+- [ ] AI/비AI 통합 E2E 자동화
+- [ ] 운영 지표/알람 구축
+- [ ] 릴리즈 게이트 충족 후 배포
+
+### MCP 전환(필요 시)
+- [ ] MCP 서버 전환 여부 최종 결정 (AI/RAG 품질 검증 후)
+- [ ] 전환 조건 충족 시, FastAPI 서비스 레이어를 재사용하는 MCP 어댑터 추가
+- [ ] 1차 전환 범위: 조회성 기능(RAG 검색, 세션 요약)부터 MCP tool로 노출
+- [ ] 2차 전환 범위: 쓰기 기능(피드백 저장, 세션 종료)은 안정화 후 점진 이관
+
+전환 판단 기준
+- 현재 FastAPI + Function Calling + RAG 구조에서 핵심 유저 플로우가 안정적으로 통과할 것
+- E2E 리그레션 테스트가 자동화되어 회귀를 빠르게 탐지할 수 있을 것
+- MCP 도입의 이점(재사용성/다중 에이전트 연동)이 운영 복잡도 증가보다 클 것
+
 ### 백엔드 실데이터 치환 필요 항목 (프론트 더미 정리)
-- [ ] 감정 캘린더(`calendarMoods`)를 사용자별 감정 기록 API 기반으로 렌더링
-- [ ] 감정 변화 그래프(`emotionData`)를 `/emotion/records` 또는 집계 API로 대체
-- [ ] 상담 히스토리 카드(`sessionHistory`)를 `/user/sessions` 기반으로 대체
-- [ ] 위로받은 콘텐츠 목록(`comfortingMediaHistory`)을 `/content/history` 기반으로 대체
-- [ ] 홈 화면 오늘의 맞춤 콘텐츠 카드 더미 텍스트/이미지를 백엔드 추천 결과로 대체
+- [x] 감정 캘린더(`calendarMoods`)를 사용자별 감정 기록 API 기반으로 렌더링
+- [x] 감정 변화 그래프(`emotionData`)를 `/emotion/records` 또는 집계 API로 대체
+- [x] 상담 히스토리 카드(`sessionHistory`)를 `/user/sessions` 기반으로 대체
+- [x] 위로받은 콘텐츠 목록(`comfortingMediaHistory`)을 `/content/history` 기반으로 대체
+- [x] 홈 화면 오늘의 맞춤 콘텐츠 카드 더미 텍스트/이미지를 사용자 실데이터(`content/history`) 기반으로 대체
 - [ ] 추천 큐(우측 패널 하단)를 백엔드 추천 목록(비AI 임시 규칙 또는 고정 seed API)으로 대체
-- [ ] 채팅 초기 더미 메시지(`initialMessages`)를 세션 상태 기반 초기 메시지 생성 로직으로 대체
-- [ ] 마이페이지 요약 수치(총 상담 횟수 등)를 `/user/stats` 값과 완전히 동기화
+- [x] 채팅 초기 더미 메시지(`initialMessages`)를 세션 상태 기반 초기 메시지 생성 로직으로 대체
+- [x] 마이페이지 요약 수치(총 상담 횟수 등)를 `/user/stats` 값과 동기화
+
+### 운영 자동화(비AI)
+- [x] 사용자별 리마인더 설정 저장/조회 API 추가 (`/reminder/preferences`)
+- [x] 현재 시각 기준 발송 대상 조회 API 추가 (`/reminder/due`)
+- [x] 발송 완료 마킹 API 추가 (`/reminder/mark-sent`)
+- [x] 실제 발송 워커(앱 내 스케줄러 루프) 연결 및 자동 주기 실행
+
+리마인더 워커 동작 메모
+- 기본값은 스케줄러 비활성 (`REMINDER_SCHEDULER_ENABLED=False`)로 운영해 API 서버 부하를 최소화
+- 자동 워커 사용 시 권장 주기는 300초 (`REMINDER_SCHEDULER_INTERVAL_SECONDS=300`)
+- 즉시 실행이 필요하면 수동 트리거(`/reminder/dispatch`) 또는 외부 크론에서 호출
+- 현재는 채널 연동 전 단계로 dispatch log 저장 + `last_sent_at` 갱신까지 자동 수행
 
 **MoodPick(무드픽)**은 AI 기반의 실시간 정서 상태 분석과 심리 상담을 제공하고, 사용자의 감정에 맞는 맞춤형 미디어(YouTube 영상)를 자동으로 재생해주는 웹 서비스입니다.
 
@@ -103,7 +180,8 @@ MoodPick/
 │   ├── migrations/              # 마이그레이션 파일
 │   │   ├── 001_initial_schema.sql
 │   │   ├── 002_vector_tables.sql
-│   │   └── 003_indexes.sql
+│   │   ├── 003_reminder_preferences.sql
+│   │   └── 004_reminder_dispatch_logs.sql
 │   ├── seed_data/               # 초기 데이터
 │   │   └── seed.sql
 │   ├── functions/               # Supabase Edge Functions (선택사항)
@@ -119,11 +197,11 @@ MoodPick/
 | Phase | 이름 | 권장 기간 | 목표 | 산출물 |
 |-------|------|-----------|------|--------|
 | **Phase 0** | 프로젝트 초기화 | 즉시 | 폴더 구조, Git, 환경 변수 정리 | 실행 가능한 기본 프로젝트 |
-| **🟢 Phase 1** | 프론트엔드 기본 구축 | 4/4-4/14 | 핵심 UI/UX 및 로그인/세션 흐름 고정 | 데모 가능한 화면 흐름 |
-| **🟡 Phase 2** | 백엔드 기본 구축 | 4/10-4/20 | FastAPI + Supabase CRUD/API 안정화 | 핵심 API 동작 |
-| **🟠 Phase 3** | AI 통합 & Function Calling | 4/18-4/28 | GPT-4o-mini 단일 라우팅 + 상담 응답 안정화 | 실제 상담 응답 가능 |
-| **🔴 Phase 4** | 프론트↔백 통합 & 인증 | 4/25-5/6 | 세션/문진/피드백/기록 실데이터 연동 | end-to-end 동작 |
-| **🟣 Phase 5** | 안정화 & 배포 | 5/7-5/13 | 오류 수정, 성능/보안 점검, 프로토타입 배포 | **5/13 완성 프로토타입** |
+| **🟢 Phase 1** | 프론트엔드 기본 구축 | 핵심 UI/UX 및 로그인/세션 흐름 고정 | 데모 가능한 화면 흐름 |
+| **🟡 Phase 2** | 백엔드 기본 구축 | FastAPI + Supabase CRUD/API 안정화 | 핵심 API 동작 |
+| **🟠 Phase 3** | AI 통합 & Function Calling | GPT-4o-mini 단일 라우팅 + 상담 응답 안정화 | 실제 상담 응답 가능 |
+| **🔴 Phase 4** | 프론트↔백 통합 & 인증 | 세션/문진/피드백/기록 실데이터 연동 | end-to-end 동작 |
+| **🟣 Phase 5** | 안정화 & 배포 | 오류 수정, 성능/보안 점검, 프로토타입 배포 | **5/13 완성 프로토타입** |
 | **⚪ Phase 6** | 베타 테스트 (후속) | 5/14 이후 | 외부 사용자 피드백 수집/개선 반복 | 베타 리포트, 개선 백로그 |
 
 **중요 원칙**
@@ -2445,13 +2523,6 @@ pip install -r requirements.txt
 python -m uvicorn app.main:app --reload --port 8000
 ```
 
-### Supabase 설정
-
-1. [Supabase](https://supabase.com) 접속
-2. 새 프로젝트 생성
-3. 프로젝트 URL과 키 복사
-4. `backend/.env`에 저장
-
 ### OpenAI API 및 YouTube API
 
 1. [OpenAI](https://openai.com/api) 및 [Google Cloud Console](https://console.cloud.google.com)에서 API 키 발급
@@ -2648,11 +2719,8 @@ python -m uvicorn app.main:app --reload --port 8000
 ### Q: API 응답이 너무 느려요
 **A**: 캐싱, 데이터베이스 쿼리 최적화, 백그라운드 작업 처리 등을 검토하세요.
 
-### Q: Supabase 비용이 걱정돼요
-**A**: 무료 티어에서 충분히 테스트 가능합니다. 프로덕션 배포 시 비용 확인하세요.
-
 ---
 
-**문서 작성일**: 2024년 3월 31일  
+**문서 작성일**: 2026년 3월 31일  
 **담당팀**: MoodPick 개발팀  
 **버전**: 1.0

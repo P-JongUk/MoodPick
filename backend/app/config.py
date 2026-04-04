@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     server_host: str = "0.0.0.0"
     server_port: int = 8000
     debug: bool = True
+    reminder_scheduler_enabled: bool = False
+    reminder_scheduler_interval_seconds: int = 300
 
     model_config = SettingsConfigDict(
         env_file=".env.local",
