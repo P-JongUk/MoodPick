@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { getSupabaseClient } from "@/lib/supabaseClient"
+import { useAuth } from "@/components/auth-provider"
 import {
   endCounselingSession,
   saveContentFeedback,
@@ -181,7 +181,15 @@ const comfortingMediaHistory = [
 ]
 
 export function MoodPickDashboard() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const {
+    isLoggedIn,
+    isAuthLoading,
+    authErrorMessage,
+    setAuthErrorMessage,
+    signInWithPassword,
+    signInWithOAuth,
+    signOut,
+  } = useAuth()
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false)
   const [activeTab, setActiveTab] = useState<TabType>("home")
   const [messages, setMessages] = useState<Message[]>([])
@@ -203,8 +211,6 @@ export function MoodPickDashboard() {
   // Login form state
   const [loginEmail, setLoginEmail] = useState("")
   const [loginPassword, setLoginPassword] = useState("")
-  const [isAuthLoading, setIsAuthLoading] = useState(false)
-  const [authErrorMessage, setAuthErrorMessage] = useState<string | null>(null)
 
   // Onboarding state
   const [selectedConcerns, setSelectedConcerns] = useState<string[]>([])
@@ -220,35 +226,11 @@ export function MoodPickDashboard() {
       return
     }
 
-    setIsAuthLoading(true)
-    setAuthErrorMessage(null)
-
-    let error: { message: string } | null = null
-
     try {
-      const supabase = getSupabaseClient()
-      const response = await supabase.auth.signInWithPassword({
-        email: loginEmail,
-        password: loginPassword,
-      })
-      error = response.error
-    } catch (setupError) {
-      error = {
-        message:
-          setupError instanceof Error
-            ? setupError.message
-            : "Supabase 설정을 확인해 주세요.",
-      }
-    }
-
-    if (error) {
-      setAuthErrorMessage(error.message)
-      setIsAuthLoading(false)
+      await signInWithPassword(loginEmail, loginPassword)
+    } catch {
       return
     }
-
-    setIsLoggedIn(true)
-    setIsAuthLoading(false)
   }
 
   const handleCompleteOnboarding = () => {
@@ -256,49 +238,19 @@ export function MoodPickDashboard() {
   }
 
   const handleLogout = async () => {
-    try {
-      const supabase = getSupabaseClient()
-      await supabase.auth.signOut()
-    } catch {
-      // Ignore sign-out setup failures and proceed with local UI reset.
-    }
-    setIsLoggedIn(false)
+    await signOut()
     setLoginEmail("")
     setLoginPassword("")
-    setAuthErrorMessage(null)
     setCurrentSessionId(null)
     setSyncWarningMessage(null)
   }
 
   const handleSocialLogin = async (provider: "google" | "kakao") => {
-    setIsAuthLoading(true)
-    setAuthErrorMessage(null)
-
-    let error: { message: string } | null = null
-
     try {
-      const supabase = getSupabaseClient()
-      const response = await supabase.auth.signInWithOAuth({
-        provider,
-        options: {
-          redirectTo: typeof window !== "undefined" ? `${window.location.origin}` : undefined,
-        },
-      })
-      error = response.error
-    } catch (setupError) {
-      error = {
-        message:
-          setupError instanceof Error
-            ? setupError.message
-            : "Supabase 설정을 확인해 주세요.",
-      }
+      await signInWithOAuth(provider)
+    } catch {
+      return
     }
-
-    if (error) {
-      setAuthErrorMessage(error.message)
-    }
-
-    setIsAuthLoading(false)
   }
 
   const handleStartNewSession = () => {
@@ -440,6 +392,17 @@ export function MoodPickDashboard() {
     { id: "dashboard" as TabType, label: "나의 감정 기록", icon: BarChart3 },
     { id: "mypage" as TabType, label: "마이페이지", icon: User },
   ]
+
+  if (isAuthLoading && !isLoggedIn) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
+        <div className="text-center space-y-3">
+          <div className="mx-auto h-10 w-10 animate-pulse rounded-full bg-primary/20" />
+          <p className="text-sm">로그인 상태를 확인하는 중입니다...</p>
+        </div>
+      </div>
+    )
+  }
 
   // Show login screen if not logged in
   if (!isLoggedIn) {
