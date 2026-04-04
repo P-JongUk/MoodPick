@@ -2,8 +2,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers.auth import router as auth_router
+from app.routers.session import router as session_router
 from app.routers.counseling import router as counseling_router
 from app.routers.emotion import router as emotion_router
+from app.routers.survey import router as survey_router
+from app.routers.content import router as content_router
 from app.routers.user import router as user_router
 
 
@@ -18,8 +21,11 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(session_router)
 app.include_router(counseling_router)
 app.include_router(emotion_router)
+app.include_router(survey_router)
+app.include_router(content_router)
 app.include_router(user_router)
 
 

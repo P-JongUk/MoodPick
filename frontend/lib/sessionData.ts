@@ -1,4 +1,10 @@
-import { getSupabaseClient } from "@/lib/supabaseClient"
+import {
+  createSession,
+  endSession,
+  submitSurveyResponse,
+  submitContentFeedback,
+  recordWatchedContent,
+} from "./api"
 
 export type SurveyPhase = "pre" | "post"
 export type ContentFeedbackType = "like" | "dislike"
@@ -11,109 +17,89 @@ const moodScoreMap: Record<string, number> = {
   bad: 1,
 }
 
+// Get userId from Supabase auth
 async function getCurrentUserId() {
+  // 이 함수는 프론트엔드에서 auth context에서 가져올 수 있음
+  // 임시로 localStorage에서 가져오거나, useAuth hook 사용
+  const stored = localStorage.getItem("__moodpick_user_id")
+  if (stored) return stored
+  
+  // fallback: Supabase auth에서 가져오기
+  const { getSupabaseClient } = await import("./supabaseClient")
   const supabase = getSupabaseClient()
   const { data, error } = await supabase.auth.getUser()
-
-  if (error) {
-    throw error
+  
+  if (error || !data.user) {
+    throw new Error("User not authenticated")
   }
-
-  return data.user?.id ?? null
+  
+  return data.user.id
 }
 
-export async function startCounselingSession() {
-  const supabase = getSupabaseClient()
+/**
+ * 새 상담 세션 시작
+ * @param context 상담 맥락 (선택사항)
+ * @returns 세션 ID
+ */
+export async function startCounselingSession(context?: string): Promise<string> {
   const userId = await getCurrentUserId()
-
-  if (!userId) {
-    return null
-  }
-
-  const { data, error } = await supabase
-    .from("counseling_sessions")
-    .insert({
-      user_id: userId,
-      status: "active",
-    })
-    .select("id")
-    .single()
-
-  if (error) {
-    throw error
-  }
-
-  return data.id as string
+  
+  const response = await createSession(userId, context)
+  return response.id
 }
 
-export async function endCounselingSession(sessionId: string) {
-  const supabase = getSupabaseClient()
-
-  const { error } = await supabase
-    .from("counseling_sessions")
-    .update({
-      status: "ended",
-      ended_at: new Date().toISOString(),
-    })
-    .eq("id", sessionId)
-
-  if (error) {
-    throw error
-  }
+/**
+ * 상담 세션 종료
+ * @param sessionId 종료할 세션 ID
+ */
+export async function endCounselingSession(sessionId: string): Promise<void> {
+  await endSession(sessionId)
 }
 
+/**
+ * 문진 응답 저장
+ * @param sessionId 세션 ID
+ * @param phase "pre" 또는 "post"
+ * @param moodValue 감정 이모지 ("great", "good", "neutral", "low", "bad")
+ */
 export async function saveSurveyResponse(
   sessionId: string,
   phase: SurveyPhase,
-  moodValue: string,
-) {
-  const supabase = getSupabaseClient()
-
-  const { error } = await supabase.from("survey_responses").insert({
-    session_id: sessionId,
-    phase,
-    question_key: "current_mood",
-    emoji_value: moodValue,
-    score: moodScoreMap[moodValue] ?? 0,
-  })
-
-  if (error) {
-    throw error
-  }
+  moodValue: string
+): Promise<void> {
+  // question_key는 임시로 "mood_general" 사용 (추후 다양한 문항 추가)
+  const questionKey = "mood_general"
+  
+  await submitSurveyResponse(sessionId, phase, questionKey, moodValue)
 }
 
+/**
+ * 콘텐츠 피드백 저장 및 시청 기록 기록
+ * @param params 피드백 정보
+ */
 export async function saveContentFeedback(params: {
   sessionId: string
   feedback: ContentFeedbackType
   contentId: string
   contentTitle: string
-}) {
-  const supabase = getSupabaseClient()
+  thumbnailUrl?: string
+}): Promise<void> {
   const userId = await getCurrentUserId()
 
-  if (!userId) {
-    return
-  }
+  // 1. 피드백 저장
+  await submitContentFeedback(
+    userId,
+    params.contentId,
+    params.feedback,
+    params.sessionId
+  )
 
-  const feedbackResult = await supabase.from("content_feedback").insert({
-    session_id: params.sessionId,
-    user_id: userId,
-    content_id: params.contentId,
-    feedback: params.feedback,
-  })
-
-  if (feedbackResult.error) {
-    throw feedbackResult.error
-  }
-
-  const watchedResult = await supabase.from("watched_content_records").insert({
-    user_id: userId,
-    session_id: params.sessionId,
-    content_id: params.contentId,
-    content_title: params.contentTitle,
-  })
-
-  if (watchedResult.error) {
-    throw watchedResult.error
-  }
+  // 2. 시청 기록 저장
+  await recordWatchedContent(
+    userId,
+    params.contentId,
+    params.contentTitle,
+    params.thumbnailUrl,
+    params.sessionId
+  )
 }
