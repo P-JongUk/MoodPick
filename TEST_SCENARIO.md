@@ -120,6 +120,12 @@ npm run dev
 - 백엔드 헬스: `http://127.0.0.1:8000/health`
 - OpenAPI: `http://127.0.0.1:8000/docs`
 
+### 3-4. Docker 연동 상태 (현재)
+
+- 현재 저장소에는 `Dockerfile`/`docker-compose.yml`이 아직 없습니다.
+- 따라서 로컬 검증은 당분간 `venv + npm` 실행을 기본으로 사용합니다.
+- Docker는 운영 표준화 단계(배포/관측/헬스체크 정리 시점)에 맞춰 도입 예정입니다.
+
 ## 4. DB 준비 순서
 
 아래 순서대로 Supabase SQL Editor에서 실행합니다.
@@ -476,6 +482,15 @@ return final_response
 - [ ] 관측 지표 구축(응답시간, 실패율, 검색 적중률, 추천 클릭률)
 - [ ] 릴리즈 게이트 충족 시 배포
 
+### 9-8. 8단계: Docker 연동 (배포 표준화 단계)
+
+- [ ] 백엔드 `Dockerfile` 작성(FastAPI + uvicorn)
+- [ ] 프론트 `Dockerfile` 작성(Next.js build + run)
+- [ ] 루트 `docker-compose.yml` 작성(frontend, backend, env 주입)
+- [ ] 헬스체크/재시작 정책/로그 정책 정의
+- [ ] `.env`/시크릿 주입 방식(로컬/운영) 분리
+- [ ] CI에서 이미지 빌드 및 기본 스모크 테스트 추가
+
 ## 10. 실패 상황 점검
 
 1. 백엔드 중단 후 프론트에서 로그인/세션 시작 시도
@@ -508,6 +523,7 @@ return final_response
 - [ ] 콘텐츠 피드백/기록 확인
 - [ ] 대시보드 실데이터 확인
 - [ ] 리마인더 설정/dispatch 확인
+- [ ] (선택) Docker 연동 여부/시점 팀 합의 완료
 
 ## 13. 참고 파일
 
