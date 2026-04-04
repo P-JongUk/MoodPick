@@ -161,15 +161,36 @@ async def get_survey_history(
 ):
     """사용자의 문진 기록 조회 (최근 10개)"""
     try:
-        result = supabase.table("survey_responses").select(
-            "*, counseling_sessions(id, started_at)"
-        ).eq("counseling_sessions.user_id", user_id).order(
-            "created_at", desc=True
-        ).limit(limit).execute()
+        sessions_result = supabase.table("counseling_sessions").select(
+            "id, started_at"
+        ).eq("user_id", user_id).order("started_at", desc=True).execute()
+
+        session_rows = sessions_result.data or []
+        if not session_rows:
+            return {
+                "status": "success",
+                "data": []
+            }
+
+        session_ids = [row["id"] for row in session_rows]
+        started_at_by_session = {row["id"]: row.get("started_at") for row in session_rows}
+
+        responses_result = supabase.table("survey_responses").select("*").in_(
+            "session_id", session_ids
+        ).order("created_at", desc=True).limit(limit).execute()
+
+        response_rows = responses_result.data or []
+        enriched_rows = [
+            {
+                **row,
+                "session_started_at": started_at_by_session.get(row.get("session_id")),
+            }
+            for row in response_rows
+        ]
 
         return {
             "status": "success",
-            "data": result.data or []
+            "data": enriched_rows
         }
     except Exception as e:
         raise HTTPException(

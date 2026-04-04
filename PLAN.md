@@ -13,6 +13,8 @@
 - [x] 사용자 통계(total sessions, watched, feedback)를 대시보드에 연동
 - [x] FastAPI 라우터 확장: session, survey, content, emotion, user
 - [x] 백엔드 OpenAPI 경로 노출 및 핵심 엔드포인트 스모크 테스트 통과
+- [x] 백엔드 Supabase 키 사용 전략 개선(service role 우선)
+- [x] survey/history 사용자 조회 로직 안정화
 - [x] 프론트 빌드(next build) 성공
 
 ### 다음 우선순위

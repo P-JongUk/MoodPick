@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     supabase_url: str | None = None
     supabase_key: str | None = None
+    supabase_service_role_key: str | None = None
     openai_api_key: str | None = None
     youtube_api_key: str | None = None
     server_host: str = "0.0.0.0"
