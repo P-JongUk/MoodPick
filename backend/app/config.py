@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     supabase_key: str | None = None
     supabase_service_role_key: str | None = None
     openai_api_key: str | None = None
+    rag_embedding_model: str = "text-embedding-3-small"
+    rag_embedding_dimensions: int = 1536
     youtube_api_key: str | None = None
     server_host: str = "0.0.0.0"
     server_port: int = 8000

@@ -21,6 +21,7 @@
 
 ### 다음 우선순위
 - [ ] AI 기능(Function Calling, GPT 응답 생성) 연동
+- [ ] RAG DB(pgvector) 스키마 적용 및 검색 파이프라인 연결
 - [ ] OAuth(카카오/구글) 운영 설정 및 리다이렉트 검증
 - [ ] E2E 리그레션 테스트 자동화(CI에서 주기 실행)
 
@@ -2032,6 +2033,22 @@ CREATE INDEX ON emotion_embeddings USING ivfflat (embedding vector_cosine_ops);
 - [ ] **3-10-2. 감정 분석 개선**
   - 더 정확한 감정 분석을 위해 OpenAI Embeddings 사용 (선택)
 
+#### 3-11. RAG DB 연동
+- [ ] **3-11-1. pgvector 확장 및 벡터 테이블 마이그레이션 적용**
+  - `db/migrations/002_vector_tables.sql` 적용
+
+- [ ] **3-11-2. 문서/세션 텍스트 청크 저장 파이프라인 구현**
+  - 상담 문맥 또는 참고 문서를 chunk 단위로 저장
+  - 임베딩 생성 후 `rag_chunks`에 저장
+
+- [ ] **3-11-3. 벡터 검색 API 초안 구현**
+  - 입력 텍스트 임베딩 생성
+  - 코사인 유사도 기반 상위 k개 검색
+
+- [ ] **3-11-4. 상담 응답 생성 전 컨텍스트 주입**
+  - 검색 결과를 system/context prompt에 병합
+  - 응답 품질과 환각 감소 효과 확인
+
 **Phase 3 완료 체크**:
 - [ ] AI 폴더 구조 완성
 - [ ] Function Calling 정의 및 구현 완료
@@ -2359,6 +2376,9 @@ CREATE INDEX ON emotion_embeddings USING ivfflat (embedding vector_cosine_ops);
 
 - [ ] **5-7-3. Supabase 프로덕션 설정**
   - 백업, 보안 규칙 설정
+
+- [ ] **5-7-4. Docker Compose로 로컬/배포 실행 경로 표준화**
+  - frontend, backend, env 구성을 컨테이너 기준으로 고정
 
 #### 5-8. 최종 통합 테스트
 - [ ] **5-8-1. 각 페이지 재방문하여 테스트**

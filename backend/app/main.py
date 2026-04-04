@@ -8,6 +8,7 @@ from app.routers.emotion import router as emotion_router
 from app.routers.survey import router as survey_router
 from app.routers.content import router as content_router
 from app.routers.user import router as user_router
+from app.routers.rag import router as rag_router
 
 
 app = FastAPI(title="MoodPick Backend", version="0.1.0")
@@ -27,6 +28,7 @@ app.include_router(emotion_router)
 app.include_router(survey_router)
 app.include_router(content_router)
 app.include_router(user_router)
+app.include_router(rag_router)
 
 
 @app.get("/")
