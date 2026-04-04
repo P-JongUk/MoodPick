@@ -8,6 +8,7 @@ import {
   saveSurveyResponse,
   startCounselingSession,
 } from "@/lib/sessionData"
+import { sendCounselingMessage } from "@/lib/api"
 import {
   Home,
   MessageCircle,
@@ -182,10 +183,12 @@ const comfortingMediaHistory = [
 
 export function MoodPickDashboard() {
   const {
+    user,
     isLoggedIn,
     isAuthLoading,
     authErrorMessage,
     setAuthErrorMessage,
+    signUpWithPassword,
     signInWithPassword,
     signInWithOAuth,
     signOut,
@@ -207,10 +210,12 @@ export function MoodPickDashboard() {
   const [postSurveyMood, setPostSurveyMood] = useState<string | null>(null)
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
   const [syncWarningMessage, setSyncWarningMessage] = useState<string | null>(null)
+  const [isSendingMessage, setIsSendingMessage] = useState(false)
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState("")
   const [loginPassword, setLoginPassword] = useState("")
+  const [authSuccessMessage, setAuthSuccessMessage] = useState<string | null>(null)
 
   // Onboarding state
   const [selectedConcerns, setSelectedConcerns] = useState<string[]>([])
@@ -226,8 +231,30 @@ export function MoodPickDashboard() {
       return
     }
 
+    setAuthSuccessMessage(null)
+
     try {
       await signInWithPassword(loginEmail, loginPassword)
+    } catch {
+      return
+    }
+  }
+
+  const handleSignUp = async () => {
+    if (!loginEmail || !loginPassword) {
+      setAuthErrorMessage("이메일과 비밀번호를 모두 입력해 주세요.")
+      return
+    }
+
+    if (loginPassword.length < 6) {
+      setAuthErrorMessage("비밀번호는 6자 이상이어야 합니다.")
+      return
+    }
+
+    try {
+      await signUpWithPassword(loginEmail, loginPassword)
+      setAuthSuccessMessage("회원가입이 완료되었습니다. 이제 같은 계정으로 로그인해 주세요.")
+      setAuthErrorMessage(null)
     } catch {
       return
     }
@@ -334,13 +361,14 @@ export function MoodPickDashboard() {
     }
   }
 
-  const handleSendMessage = () => {
-    if (!inputMessage.trim()) return
+  const handleSendMessage = async () => {
+    const trimmedMessage = inputMessage.trim()
+    if (!trimmedMessage || isSendingMessage) return
 
     const newMessage: Message = {
-      id: messages.length + 1,
+      id: Date.now(),
       sender: "user",
-      text: inputMessage,
+      text: trimmedMessage,
       timestamp: new Date().toLocaleTimeString("ko-KR", {
         hour: "numeric",
         minute: "2-digit",
@@ -348,22 +376,46 @@ export function MoodPickDashboard() {
       }),
     }
 
-    setMessages([...messages, newMessage])
+    setMessages((prev) => [...prev, newMessage])
     setInputMessage("")
+    setIsSendingMessage(true)
 
-    setTimeout(() => {
+    try {
+      const response = user
+        ? await sendCounselingMessage(user.id, trimmedMessage)
+        : null
+
       const aiResponse: Message = {
-        id: messages.length + 2,
+        id: Date.now() + 1,
         sender: "ai",
-        text: "말씀해 주셔서 감사해요. 그런 감정을 느끼시는 게 충분히 이해가 돼요. 잠시 마음을 진정시킬 수 있는 영상을 추천해 드릴게요.",
+        text:
+          response?.message ??
+          "메시지를 받았어요. 현재는 AI 연동 전 단계라 기본 상담 응답으로 안내해드리고 있어요.",
         timestamp: new Date().toLocaleTimeString("ko-KR", {
           hour: "numeric",
           minute: "2-digit",
           hour12: true,
         }),
       }
+
       setMessages((prev) => [...prev, aiResponse])
-    }, 1500)
+    } catch {
+      setSyncWarningMessage("상담 메시지 전송에 실패했어요. 백엔드 연결 상태를 확인해 주세요.")
+
+      const fallbackResponse: Message = {
+        id: Date.now() + 1,
+        sender: "ai",
+        text: "현재 서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.",
+        timestamp: new Date().toLocaleTimeString("ko-KR", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        }),
+      }
+      setMessages((prev) => [...prev, fallbackResponse])
+    } finally {
+      setIsSendingMessage(false)
+    }
   }
 
   const handleEmotionSelect = (emoji: string) => {
@@ -413,9 +465,11 @@ export function MoodPickDashboard() {
         password={loginPassword}
         setPassword={setLoginPassword}
         onLogin={handleLogin}
+        onSignUp={handleSignUp}
         onSocialLogin={handleSocialLogin}
         isAuthLoading={isAuthLoading}
         authErrorMessage={authErrorMessage}
+        authSuccessMessage={authSuccessMessage}
       />
     )
   }
@@ -513,6 +567,7 @@ export function MoodPickDashboard() {
             inputMessage={inputMessage}
             setInputMessage={setInputMessage}
             onSendMessage={handleSendMessage}
+            isSendingMessage={isSendingMessage}
             isPlaying={isPlaying}
             setIsPlaying={setIsPlaying}
             mediaFeedback={mediaFeedback}
@@ -670,6 +725,7 @@ function CounselingView({
   inputMessage,
   setInputMessage,
   onSendMessage,
+  isSendingMessage,
   isPlaying,
   setIsPlaying,
   mediaFeedback,
@@ -681,7 +737,8 @@ function CounselingView({
   messages: Message[]
   inputMessage: string
   setInputMessage: (value: string) => void
-  onSendMessage: () => void
+  onSendMessage: () => Promise<void>
+  isSendingMessage: boolean
   isPlaying: boolean
   setIsPlaying: (value: boolean) => void
   mediaFeedback: "like" | "dislike" | null
@@ -741,10 +798,10 @@ function CounselingView({
               onChange={(e) => setInputMessage(e.target.value)}
               placeholder="메시지를 입력하세요..."
               className="flex-1 rounded-xl bg-muted border-0"
-              onKeyDown={(e) => e.key === "Enter" && onSendMessage()}
+              onKeyDown={(e) => e.key === "Enter" && void onSendMessage()}
             />
-            <Button onClick={onSendMessage} size="icon" className="rounded-xl">
-              <Send className="w-4 h-4" />
+            <Button onClick={() => void onSendMessage()} size="icon" className="rounded-xl" disabled={isSendingMessage}>
+              <Send className={`w-4 h-4 ${isSendingMessage ? "opacity-50" : ""}`} />
             </Button>
           </div>
           {isSessionActive && (
@@ -1105,19 +1162,43 @@ function LoginScreen({
   password,
   setPassword,
   onLogin,
+  onSignUp,
   onSocialLogin,
   isAuthLoading,
   authErrorMessage,
+  authSuccessMessage,
 }: {
   email: string
   setEmail: (value: string) => void
   password: string
   setPassword: (value: string) => void
   onLogin: () => Promise<void>
+  onSignUp: () => Promise<void>
   onSocialLogin: (provider: "google" | "kakao") => Promise<void>
   isAuthLoading: boolean
   authErrorMessage: string | null
+  authSuccessMessage: string | null
 }) {
+  const [isSignUpMode, setIsSignUpMode] = useState(false)
+  const [confirmPassword, setConfirmPassword] = useState("")
+
+  const handleAuthSubmit = async () => {
+    if (!isSignUpMode) {
+      await onLogin()
+      return
+    }
+
+    if (!confirmPassword) {
+      return
+    }
+
+    if (password !== confirmPassword) {
+      return
+    }
+
+    await onSignUp()
+  }
+
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-md">
@@ -1168,22 +1249,45 @@ function LoginScreen({
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="mt-1.5 rounded-xl bg-muted border-0 h-12"
-                  onKeyDown={(e) => e.key === "Enter" && onLogin()}
+                  onKeyDown={(e) => e.key === "Enter" && handleAuthSubmit()}
                 />
               </div>
+              {isSignUpMode && (
+                <div>
+                  <Label htmlFor="confirm-password" className="text-sm text-muted-foreground">
+                    비밀번호 확인
+                  </Label>
+                  <Input
+                    id="confirm-password"
+                    type="password"
+                    placeholder="비밀번호를 다시 입력하세요"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="mt-1.5 rounded-xl bg-muted border-0 h-12"
+                    onKeyDown={(e) => e.key === "Enter" && handleAuthSubmit()}
+                  />
+                  {confirmPassword && password !== confirmPassword && (
+                    <p className="mt-2 text-xs text-destructive">비밀번호가 일치하지 않습니다.</p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Login Button */}
             <Button
-              onClick={onLogin}
+              onClick={handleAuthSubmit}
               className="w-full h-12 rounded-xl text-base font-medium mb-6"
               disabled={isAuthLoading}
             >
-              {isAuthLoading ? "로그인 중..." : "로그인"}
+              {isAuthLoading ? (isSignUpMode ? "회원가입 중..." : "로그인 중...") : (isSignUpMode ? "회원가입" : "로그인")}
             </Button>
 
             {authErrorMessage && (
               <p className="text-sm text-destructive text-center mb-4">{authErrorMessage}</p>
+            )}
+
+            {authSuccessMessage && (
+              <p className="text-sm text-emerald-600 text-center mb-4">{authSuccessMessage}</p>
             )}
 
             {/* Divider */}
@@ -1248,9 +1352,15 @@ function LoginScreen({
 
             {/* Sign Up Link */}
             <p className="text-center text-sm text-muted-foreground mt-6">
-              계정이 없으신가요?{" "}
-              <button className="text-primary font-medium hover:underline">
-                회원가입
+              {isSignUpMode ? "이미 계정이 있으신가요? " : "계정이 없으신가요? "}
+              <button
+                className="text-primary font-medium hover:underline"
+                onClick={() => {
+                  setIsSignUpMode((prev) => !prev)
+                  setConfirmPassword("")
+                }}
+              >
+                {isSignUpMode ? "로그인" : "회원가입"}
               </button>
             </p>
           </CardContent>

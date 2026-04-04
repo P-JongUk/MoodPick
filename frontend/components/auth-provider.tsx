@@ -15,6 +15,7 @@ type AuthProviderValue = {
   isAuthLoading: boolean
   authErrorMessage: string | null
   setAuthErrorMessage: (message: string | null) => void
+  signUpWithPassword: (email: string, password: string) => Promise<void>
   signInWithPassword: (email: string, password: string) => Promise<void>
   signInWithOAuth: (provider: 'google' | 'kakao') => Promise<void>
   signOut: () => Promise<void>
@@ -25,44 +26,82 @@ const AuthContext = createContext<AuthProviderValue | null>(null)
 export function AuthProvider({ children }: AuthProviderProps) {
   const [session, setSession] = useState<Session | null>(null)
   const [user, setUser] = useState<User | null>(null)
-  const [isAuthLoading, setIsAuthLoading] = useState(true)
+  const [isAuthLoading, setIsAuthLoading] = useState(false)
   const [authErrorMessage, setAuthErrorMessage] = useState<string | null>(null)
 
   useEffect(() => {
     let isMounted = true
-    const supabase = getSupabaseClient()
+    let authTimeout: ReturnType<typeof setTimeout> | null = null
+    let authListener: { subscription: { unsubscribe: () => void } } | null = null
+
+    setIsAuthLoading(true)
 
     const initializeSession = async () => {
-      const { data, error } = await supabase.auth.getSession()
+      try {
+        const supabase = getSupabaseClient()
+        const { data, error } = await supabase.auth.getSession()
 
-      if (!isMounted) {
-        return
+        if (!isMounted) {
+          return
+        }
+
+        if (error) {
+          setAuthErrorMessage(error.message)
+        }
+
+        setSession(data.session ?? null)
+        setUser(data.session?.user ?? null)
+
+        const { data: listener } = supabase.auth.onAuthStateChange(
+          (_event: AuthChangeEvent, nextSession: Session | null) => {
+            if (!isMounted) {
+              return
+            }
+
+            setSession(nextSession)
+            setUser(nextSession?.user ?? null)
+            setIsAuthLoading(false)
+          },
+        )
+
+        authListener = listener
+      } catch (error) {
+        if (!isMounted) {
+          return
+        }
+
+        const message = error instanceof Error ? error.message : '인증 초기화 중 오류가 발생했습니다.'
+        setAuthErrorMessage(message)
+        setSession(null)
+        setUser(null)
+      } finally {
+        if (isMounted) {
+          setIsAuthLoading(false)
+        }
       }
-
-      if (error) {
-        setAuthErrorMessage(error.message)
-      }
-
-      setSession(data.session ?? null)
-      setUser(data.session?.user ?? null)
-      setIsAuthLoading(false)
     }
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, nextSession: Session | null) => {
+    authTimeout = setTimeout(() => {
       if (!isMounted) {
         return
       }
 
-      setSession(nextSession)
-      setUser(nextSession?.user ?? null)
       setIsAuthLoading(false)
-    })
+      setAuthErrorMessage((prev) => prev ?? '인증 확인이 지연되어 로그인 화면으로 이동합니다.')
+    }, 7000)
 
     void initializeSession()
 
     return () => {
       isMounted = false
-      authListener.subscription.unsubscribe()
+
+      if (authTimeout) {
+        clearTimeout(authTimeout)
+      }
+
+      if (authListener) {
+        authListener.subscription.unsubscribe()
+      }
     }
   }, [])
 
@@ -72,6 +111,25 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setAuthErrorMessage(null)
 
     const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
+
+    if (error) {
+      setAuthErrorMessage(error.message)
+      setIsAuthLoading(false)
+      throw error
+    }
+
+    setIsAuthLoading(false)
+  }
+
+  const signUpWithPassword = async (email: string, password: string) => {
+    const supabase = getSupabaseClient()
+    setIsAuthLoading(true)
+    setAuthErrorMessage(null)
+
+    const { error } = await supabase.auth.signUp({
       email,
       password,
     })
@@ -124,6 +182,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     isAuthLoading,
     authErrorMessage,
     setAuthErrorMessage,
+    signUpWithPassword,
     signInWithPassword,
     signInWithOAuth,
     signOut,
