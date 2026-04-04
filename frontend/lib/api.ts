@@ -3,7 +3,10 @@
  * 모든 API 호출의 중앙 집중식 관리
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000"
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  "http://localhost:8000"
 
 // ============ Session API ============
 
