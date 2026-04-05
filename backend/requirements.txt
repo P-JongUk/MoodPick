@@ -1,18 +1,12 @@
-# 웹 서버 (FastAPI)
-fastapi==0.111.0
-uvicorn==0.30.1
-pydantic==2.7.4
-pydantic-settings==2.3.3
-
-# 데이터베이스 (Supabase)
-supabase==2.5.0
-
-# 에이전트 & AI (LangGraph & OpenAI)
-openai==1.35.3
-langchain==0.2.6
-langchain-openai==0.1.9
-langgraph==0.0.69
-
-# 공통 유틸리티
+fastapi==0.115.8
+uvicorn==0.34.0
+pydantic==2.10.6
+pydantic-settings==2.8.0
 python-dotenv==1.0.1
-python-multipart==0.0.9
+supabase==2.13.0
+python-jose==3.4.0
+passlib==1.7.4
+python-multipart==0.0.20
+openai==1.61.1
+google-api-python-client==2.159.0
+email-validator==2.2.0
