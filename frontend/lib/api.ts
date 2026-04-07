@@ -123,6 +123,45 @@ export async function getSurveyDelta(sessionId: string) {
   return response.json()
 }
 
+export interface DailySummaryContent {
+  id: string
+  content_id: string
+  content_title: string
+  thumbnail_url?: string | null
+  watched_at: string
+  session_id?: string | null
+}
+
+export interface DailySummary {
+  date: string
+  timezone: string
+  sessions: Array<{ id: string; started_at: string; ended_at?: string | null; status: string }>
+  pre_mood_general: string | null
+  post_mood_general: string | null
+  improved: boolean | null
+  delta_average: number | null
+  contents: DailySummaryContent[]
+  counseling_summary: string
+}
+
+export async function getDailySummary(
+  userId: string,
+  date: string,
+  timezone: string = "Asia/Seoul"
+): Promise<DailySummary> {
+  const params = new URLSearchParams({ date, timezone })
+  const response = await fetch(
+    `${API_BASE_URL}/user/daily-summary/${userId}?${params.toString()}`,
+    { method: "GET" }
+  )
+
+  if (!response.ok) {
+    throw new Error(`Get daily summary failed: ${response.statusText}`)
+  }
+
+  return response.json()
+}
+
 // ============ Content API ============
 
 export async function submitContentFeedback(
@@ -154,7 +193,9 @@ export async function recordWatchedContent(
   contentId: string,
   contentTitle: string,
   thumbnailUrl?: string,
-  sessionId?: string
+  sessionId?: string,
+  mediaProvider?: "youtube" | "spotify" | null,
+  mediaUrl?: string | null
 ): Promise<any> {
   const response = await fetch(`${API_BASE_URL}/content/watched`, {
     method: "POST",
@@ -165,6 +206,8 @@ export async function recordWatchedContent(
       content_id: contentId,
       content_title: contentTitle,
       thumbnail_url: thumbnailUrl,
+      ...(mediaProvider != null ? { media_provider: mediaProvider } : {}),
+      ...(mediaUrl != null && mediaUrl !== "" ? { media_url: mediaUrl } : {}),
     }),
   })
 
@@ -173,6 +216,27 @@ export async function recordWatchedContent(
   }
 
   return response.json()
+}
+
+export type ContentMediaPreferenceQuery = "all" | "youtube" | "spotify"
+
+export async function getContentRecommendations(
+  userId: string,
+  options?: { limit?: number; media?: ContentMediaPreferenceQuery }
+): Promise<any[]> {
+  const limit = options?.limit ?? 8
+  const media = options?.media ?? "all"
+  const response = await fetch(
+    `${API_BASE_URL}/content/recommendations/${userId}?limit=${limit}&media=${media}`,
+    { method: "GET" }
+  )
+
+  if (!response.ok) {
+    throw new Error(`Get content recommendations failed: ${response.statusText}`)
+  }
+
+  const data = await response.json()
+  return data || []
 }
 
 export async function getContentHistory(userId: string, limit = 20): Promise<any[]> {
