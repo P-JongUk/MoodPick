@@ -32,15 +32,12 @@
 - RAG 기반 상담 매뉴얼 + 사용자 개인 데이터(온보딩, 히스토리, 피드백)를 결합해 상담/위로 응답을 생성합니다.
 - AI가 맞춤 콘텐츠를 추천하고, 사용자 피드백(좋아요/아쉬워요)을 다음 추천에 반영해 개인화를 강화합니다.
 
-### AI 실행 방식(Function Calling) 계획
-- 단일 LLM이 `tool_choice=auto`로 필요한 함수를 선택합니다.
-- 백엔드는 선택된 tool을 실행하고 결과를 다시 LLM에 전달해 최종 응답을 생성합니다.
-- 기본 tool 후보:
-  - `analyze_text_emotion`
-  - `search_rag_context`
-  - `get_user_profile_and_history`
-  - `recommend_contents`
-  - `save_feedback`
+### AI 실행 방식(3-에이전트 구조) 계획
+- **Orchestrator Agent**: 위기 감지, 의도 분류("상담"/"추천"/"잡담"), 라우팅
+- **Counselor Agent**: RAG 검색 + 유저 프로필 조회 + 공감 응답 생성 + 감정 기록 저장 (멀티턴)
+- **Content Recommender Agent**: 감정/선호도 기반 검색 쿼리 생성 → FastMCP YouTube 서버 호출 → 최종 영상 선정
+- **FastMCP YouTube 서버** (`mcp_servers/youtube/server.py`): YouTube Data API v3 호출 + watched_ids 필터링만 담당 (개인화 판단 없음)
+- 공유 상태: `CounselingState` (Pydantic BaseModel) — 에이전트 간 데이터 전달
 - 실패 시 비AI fallback 응답을 제공해 대화 단절을 방지합니다.
 
 ### 단계별 실행 체크리스트 (AI/MCP/문진 포함)
@@ -165,16 +162,32 @@ MoodPick/
 │   ├── requirements.txt
 │   └── .env.example
 │
-├── ai/                          # AI 프롬프트 및 Function Calling 정의
+├── ai/                          # AI 에이전트 모듈 (3-에이전트 구조)
+│   ├── agents/
+│   │   ├── orchestrator.py      # ① Orchestrator Agent
+│   │   ├── counselor.py         # ② Counselor Agent (분석 + 응답)
+│   │   └── content_recommender.py # ③ Content Recommender Agent
 │   ├── prompts/
-│   │   ├── system_prompt.md     # GPT-4o-mini 시스템 프롬프트
-│   │   ├── counseling_prompt.txt # 상담 프롬프트
-│   │   └── analysis_prompt.txt   # 감정 분석 프롬프트
-│   ├── function_definitions.py  # Function Calling 도구 정의
+│   │   ├── system_prompt.md        # 상담 페르소나 및 행동 규칙
+│   │   ├── orchestrator_prompt.md  # Orchestrator 판단 기준
+│   │   ├── content_recommender_prompt.md # 추천 쿼리 생성 프롬프트
+│   │   └── crisis_response.md      # 위기 대응 안전 응답
 │   ├── tools/
-│   │   ├── youtube_search.py    # YouTube API 통합
-│   │   └── emotion_mapper.py    # 감정 매핑 로직
+│   │   ├── rag_search.py        # RAG 벡터 검색
+│   │   ├── user_profile.py      # 온보딩 + 감정 이력 조회
+│   │   ├── content_history.py   # 시청 기록 + 피드백 조회
+│   │   └── emotion_record.py    # 감정 기록 저장
+│   ├── state.py                 # CounselingState (Pydantic BaseModel)
+│   ├── config.py                # 환경변수 로딩 (backend/.env.local 참조)
+│   ├── utils.py                 # 프롬프트 로딩 유틸리티
+│   ├── pipeline.py              # 3-에이전트 실행 파이프라인
 │   └── README.md                # AI 모듈 사용 가이드
+│
+├── mcp_servers/                 # FastMCP 서버
+│   └── youtube/
+│       ├── server.py            # FastMCP YouTube 서버
+│       ├── .env                 # YOUTUBE_API_KEY (gitignore)
+│       └── requirements.txt
 │
 ├── db/                          # Supabase 데이터베이스 관리
 │   ├── migrations/              # 마이그레이션 파일
@@ -380,8 +393,9 @@ python-multipart==0.0.6
 ### AI/LLM
 | 기술 | 용도 | 선택 이유 |
 |-----|-----|----------|
-| **GPT-4o-mini** | 상담 및 감정 분석 | 한국어 이해도 높음, 저비용 |
-| **Function Calling** | 도구 호출 | AI가 적절히 YouTube 검색, 감정 분석 등을 수행 |
+| **GPT-4o-mini** | Orchestrator/Counselor/Recommender 모델 | 한국어 이해도 높음, 저비용 |
+| **Function Calling** | Counselor 도구 호출 (RAG, 프로필, 감정 저장) | 자율 도구 선택, 멀티턴 지원 |
+| **FastMCP** | YouTube 검색 서버 | MCP 표준 프로토콜, 에이전트-서버 역할 분리 |
 
 ---
 
@@ -402,29 +416,32 @@ python-multipart==0.0.6
                     ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                       백엔드 (FastAPI)                           │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  라우트: /auth, /session, /counseling, /emotion, /user    │   │
-│  │  서비스: 세션 관리, 문진 비교, AI, 추천, 알림 스케줄러     │   │
-│  │  검증: Pydantic 스키마                                    │   │
-│  └──────────────────────────────────────────────────────────┘   │
+│  POST /counseling/message → ai_service.py → run_counseling_pipeline│
+│                                                                 │
+│  ① Orchestrator Agent  →  위기 감지 / 의도 분류 / 라우팅        │
+│         ↓ (위기 아님)                                           │
+│  ② Counselor Agent     →  RAG + 프로필 조회 + 공감 응답 생성    │
+│         ↓ (needs_recommendation=True)                           │
+│  ③ Content Recommender →  검색 쿼리 생성 → FastMCP 호출 → 선정  │
 └────────────┬──────────────────────────────┬────────────────────┘
          │                              │
          ▼                              ▼
    ┌─────────────────┐          ┌──────────────────────┐
    │  Supabase       │          │  OpenAI API          │
    │  (PostgreSQL)   │          │  (GPT-4o-mini)       │
-   │  - 사용자       │◄────────►│  Function Calling:   │
-   │  - 세션         │          │  - 감정 분석         │
-   │  - 문진 응답    │          │  - YouTube 검색      │
-   │  - 상담 기록    │          │  - 세션 요약         │
-   │  - 시청 기록    │          │  - 콘텐츠 피드백     │
-   └─────────────────┘          └──────────────────────┘
-                            │
-                            ▼
-                       ┌──────────────────────┐
-                       │  YouTube Data API v3 │
-                       │  (영상 검색)         │
-                       └──────────────────────┘
+   │  - rag_chunks   │◄────────►│  - Orchestrator      │
+   │  - user_profiles│          │  - Counselor         │
+   │  - counseling_  │          │  - Recommender       │
+   │    history      │          └──────────────────────┘
+   │  - emotion_     │
+   │    records      │          ┌──────────────────────┐
+   │  - watched_     │          │  FastMCP YouTube     │
+   │    content_     │          │  서버                │
+   │    records      │          │  (mcp_servers/       │
+   └─────────────────┘          │   youtube/server.py) │
+                                │  → YouTube API v3    │
+                                │  → watched_ids 필터  │
+                                └──────────────────────┘
 ```
 
 ### 데이터 흐름
@@ -1774,369 +1791,138 @@ CREATE INDEX ON emotion_embeddings USING ivfflat (embedding vector_cosine_ops);
 
 ---
 
-## 🟠 Phase 3: AI 통합 및 Function Calling 구현
+## 🟠 Phase 3: AI 통합 — 3-에이전트 + FastMCP 구현
 
-**목표**: GPT-4o-mini 완전 연동, Function Calling 도구 정의, YouTube 검색 통합  
-**소요 시간**: 약 4-6시간  
+**목표**: Orchestrator / Counselor / Content Recommender 3-에이전트 구조 + FastMCP YouTube 서버 완전 연동  
+**소요 시간**: 약 6-8시간  
 **선행 조건**: Phase 2 완료
+
+> **구현 원칙**
+> - `ai/tools/`는 `backend/app/`을 임포트하지 않는다 (자체 완결 모듈)
+> - `ai/config.py`가 `backend/.env.local`을 직접 읽어 환경변수를 공급한다
+> - FastMCP YouTube 서버는 "어떤 콘텐츠가 맞는가"를 판단하지 않고 "영상 검색"만 담당한다
 
 ### Phase 3 세부 체크리스트
 
-#### 3-1. AI 폴더 구조 생성
-- [ ] **3-1-1. ai/ 하위 폴더 생성**
-  ```
-  ai/
-  ├── prompts/
-  │   ├── system_prompt.md
-  │   ├── counseling_prompt.txt
-  │   └── analysis_prompt.txt
-  ├── function_definitions.py
-  ├── tools/
-  │   ├── __init__.py
-  │   ├── youtube_search.py
-  │   └── emotion_mapper.py
-  ├── __init__.py
-  └── README.md
-  ```
-
-#### 3-2. 시스템 프롬프트 작성
-- [ ] **3-2-1. ai/prompts/system_prompt.md 작성**
-  ```
-  당신은 MoodPick이라는 AI 심리 상담 서비스의 상담사입니다.
-  
-  역할:
-  - 사용자의 감정 상태를 공감하고 세심하게 들어주기
-  - 심리학 기반의 따뜻한 조언 제공
-  - 감정 분석과 맞춤 추천 제공
-  
-  행동 규칙:
-  1. 사용자의 입력을 공감으로 시작하기
-  2. 상황을 정확히 이해하도록 요약해 주기
-  3. analyze_emotion() 함수로 감정을 정확히 파악하기
-  4. search_youtube_video() 호출로 추천 콘텐츠 제공하기
-  5. 필요시 get_session_summary()로 맥락 파악하기
-  
-  응답 형식:
-  - 항상 따뜻하고 인간적인 톤 유지
-  - 공감 + 조언 + 추천의 구조
-  ```
-
-#### 3-3. Function Definitions 작성
-- [ ] **3-3-1. ai/function_definitions.py 작성**
+#### 3-0. backend/app/main.py 수정 (선행)
+- [ ] **3-0-1. sys.path에 프로젝트 루트 추가**
   ```python
-  FUNCTION_DEFINITIONS = [
-    {
-      "name": "analyze_emotion",
-      "description": "사용자의 텍스트 입력에서 감정을 분석하고 강도를 평가합니다",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "text": {
-            "type": "string",
-            "description": "분석할 텍스트"
-          }
-        },
-        "required": ["text"]
-      }
-    },
-    {
-      "name": "search_youtube_video",
-      "description": "사용자의 감정과 기분에 맞는 유튜브 영상을 검색합니다",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "query": {
-            "type": "string",
-            "description": "검색 키워드"
-          },
-          "emotion": {
-            "type": "string",
-            "description": "현재 사용자의 감정"
-          }
-        },
-        "required": ["query"]
-      }
-    },
-    {
-      "name": "get_session_summary",
-      "description": "세션의 상담 기록과 사전/사후 문진 변화를 조회합니다",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "session_id": {
-            "type": "string",
-            "description": "세션 ID"
-          },
-          "days": {
-            "type": "integer",
-            "description": "조회할 기간 (일 단위, 기본값: 7)"
-          }
-        },
-        "required": ["session_id"]
-      }
-    },
-    {
-      "name": "record_content_feedback",
-      "description": "추천 영상에 대한 좋아요/싫어요 피드백을 저장합니다",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "content_id": {
-            "type": "string",
-            "description": "유튜브 콘텐츠 ID"
-          },
-          "feedback": {
-            "type": "string",
-            "description": "좋아요 또는 싫어요"
-          }
-        },
-        "required": ["content_id", "feedback"]
-      }
-    }
-  ]
-
-  def 함수_가져오기():
-    return FUNCTION_DEFINITIONS
+  # backend/app/main.py 상단에 추가
+  import sys
+  from pathlib import Path
+  PROJECT_ROOT = Path(__file__).parent.parent.parent  # main.py → app → backend → MoodPick
+  if str(PROJECT_ROOT) not in sys.path:
+      sys.path.insert(0, str(PROJECT_ROOT))
   ```
+  > 기존 실행 방법(`uvicorn app.main:app --reload`) 변경 없음
 
-#### 3-4. YouTube API 통합
-- [ ] **3-4-1. ai/tools/youtube_search.py 작성**
+#### 3-1. 공유 상태 정의
+- [ ] **3-1-1. `ai/state.py` 작성** — Pydantic BaseModel 기반 CounselingState
   ```python
-  from googleapiclient.discovery import build
-  
-  def 유튜브영상검색(query: str, api_key: str, max_results: int = 3):
-      """
-      YouTube Data API v3를 사용하여 영상 검색
-      """
-      youtube = build("youtube", "v3", developerKey=api_key)
-      request = youtube.search().list(
-          part="snippet",
-          q=query,
-          maxResults=max_results,
-          type="video",
-          order="relevance"
-      )
-      results = request.execute()
-      
-      video_list = []
-      for item in results.get("items", []):
-          video_list.append({
-              "id": item["id"]["videoId"],
-              "title": item["snippet"]["title"],
-              "description": item["snippet"]["description"],
-              "thumbnail": item["snippet"]["thumbnails"]["default"]["url"]
-          })
-      
-      return video_list
+  class CounselingState(BaseModel):
+      user_id: str; session_id: str; message: str
+      messages: list[dict] = Field(default_factory=list)  # 멀티턴 히스토리
+      is_crisis: bool = False
+      intent: str = "상담"           # "상담" / "추천" / "잡담"
+      needs_recommendation: bool = False
+      rag_context: list = Field(default_factory=list)
+      emotion_score: dict = Field(default_factory=dict)   # {"emotion": "불안", "intensity": 0.7}
+      user_profile: Optional[dict] = None                 # Counselor 조회 후 저장 → Recommender 재사용
+      response: str = ""
+      recommended_content: Optional[dict] = None         # {"title", "url", "video_id", "reason"}
   ```
+  > `messages`는 `/counseling/message` 엔드포인트에서 DB의 이전 대화를 불러와 주입
 
-#### 3-5. 감정 분석 도구
-- [ ] **3-5-1. ai/tools/emotion_mapper.py 작성**
+#### 3-2. 환경변수 및 유틸리티
+- [ ] **3-2-1. `ai/config.py` 작성** — `backend/.env.local` 직접 로드
   ```python
-  def 감정분석(text: str):
-      """
-      텍스트에서 감정을 분석하고 강도를 계산
-      """
-      # 간단한 임시 구현 (실제로는 AI로 처리)
-      emotions_keywords = {
-          "행복": ["좋아", "기쁘", "행복", "즐거워"],
-          "슬픔": ["슬프", "외로워", "힘들어", "우울"],
-          "불안": ["불안", "걱정", "두려워", "긴장"],
-          "화남": ["화나", "짜증", "화나", "열받아"],
-          "스트레스": ["스트레스", "피곤", "힘들어", "압박"]
-      }
-      
-      emotion = "중립"
-      intensity = 0.5
-      
-      for emotion_name, keywords in emotions_keywords.items():
-          if any(kw in text for kw in keywords):
-              emotion = emotion_name
-              intensity = min(1.0, len([kw for kw in keywords if kw in text]) / 2)
-              break
-      
-      return {
-          "emotion": emotion,
-          "intensity": intensity,
-          "recommendations": ["명상", "음악 감상", "산책"]
-      }
+  from dotenv import load_dotenv; from pathlib import Path; import os
+  _env_path = Path(__file__).parent.parent / "backend" / ".env.local"
+  if _env_path.exists(): load_dotenv(_env_path)
+  OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+  SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+  SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
   ```
+- [ ] **3-2-2. `ai/utils.py` 작성** — `load_prompt()`, `load_crisis_response()`
 
-#### 3-6. AI Service 완전 구현
-- [ ] **3-6-1. app/services/ai_service.py 전체 작성**
+#### 3-3. Python 직접 도구 구현 (`ai/tools/`)
+- [ ] **3-3-1. `rag_search.py`** — `openai.embeddings.create()` → Supabase `match_rag_chunks` RPC
+- [ ] **3-3-2. `user_profile.py`** — `user_profiles`(concerns, comfort_style) + `survey_responses`(최근 감정) 조회
+- [ ] **3-3-3. `content_history.py`** — `watched_content_records`(watched_ids) + `content_feedback`(liked/disliked) 조회
+- [ ] **3-3-4. `emotion_record.py`** — `emotion_records` 테이블에 감정 upsert
+  > 모든 도구는 `from ai.config import OPENAI_API_KEY` 등으로 환경변수 임포트
+
+#### 3-4. FastMCP YouTube 서버
+- [ ] **3-4-1. `mcp_servers/youtube/server.py` 작성**
   ```python
-  from openai import OpenAI
-  from ai.function_definitions import FUNCTION_DEFINITIONS
-  from ai.tools.youtube_search import 유튜브영상검색
-  from ai.tools.emotion_mapper import 감정분석
-  
-  class AIService:
-      def __init__(self, api_key: str, youtube_api_key: str):
-          self.client = OpenAI(api_key=api_key)
-          self.youtube_api_key = youtube_api_key
-          self.model = "gpt-4o-mini"
-      
-      def 상담_실행(self, user_message: str, user_history: list = None):
-          """
-          사용자 메시지를 받아서 AI 상담 응답과 함수 호출 결과 반환
-          """
-          # 시스템 프롬프트 로드
-          with open("ai/prompts/system_prompt.md", "r", encoding="utf-8") as f:
-              system_prompt = f.read()
-          
-          # 이전 대화 내역 처리
-          messages = [{"role": "user", "content": user_message}]
-          if user_history:
-              messages = user_history + messages
-          
-          # Function Calling을 사용하여 GPT 호출
-          response = self.client.chat.completions.create(
-              model=self.model,
-              messages=[
-                  {"role": "system", "content": system_prompt},
-                  *messages
-              ],
-              functions=FUNCTION_DEFINITIONS,
-              function_call="auto"
-          )
-          
-          # 응답 처리
-          return self._처리_함수_응답(response)
-      
-      def _처리_함수_응답(self, response):
-          """
-          Function Calling 응답 처리
-          """
-          result = {
-              "counselor_message": "",
-              "emotion_analysis": None,
-              "recommended_video": None,
-              "functions_called": []
-          }
-          
-          if response.choices[0].finish_reason == "function_call":
-              function_call = response.choices[0].message.function_call
-              
-                if function_call.name == "analyze_emotion":
-                  emotion_result = analyze_emotion(function_call.arguments["text"])
-                  result["emotion_analysis"] = emotion_result
-                  result["functions_called"].append("analyze_emotion")
-              
-                elif function_call.name == "search_youtube_video":
-                  query = function_call.arguments["query"]
-                  videos = search_youtube_video(query, self.youtube_api_key)
-                  if videos:
-                      result["recommended_video"] = videos[0]
-                  result["functions_called"].append("search_youtube_video")
-              
-                elif function_call.name == "get_session_summary":
-                  # DB에서 조회 (별도 구현)
-                  result["functions_called"].append("get_session_summary")
-          
-          else:
-              # 일반 메시지 응답
-              result["counselor_message"] = response.choices[0].message.content
-          
-          return result
+  from fastmcp import FastMCP; mcp = FastMCP("moodpick-youtube")
+  @mcp.tool()
+  async def search_youtube(query: str, watched_ids: list[str] | None = None, max_results: int = 5) -> list[dict]:
+      """YouTube Data API v3 호출 + watched_ids 제외 → 결과 반환 (판단 없음)"""
   ```
+- [ ] **3-4-2. `mcp_servers/youtube/.env`** — `YOUTUBE_API_KEY` 저장 (gitignore 추가)
+- [ ] **3-4-3. `mcp_servers/youtube/requirements.txt`** — `fastmcp>=0.1.0`, `google-api-python-client>=2.0.0`
 
-#### 3-7. 상담 엔드포인트 완성
-- [ ] **3-7-1. app/routers/counseling.py 완전 구현**
+#### 3-5. 프롬프트 파일 작성 (`ai/prompts/`)
+- [ ] **3-5-1. `orchestrator_prompt.md`** — is_crisis / intent / needs_recommendation JSON 반환
+- [ ] **3-5-2. `system_prompt.md`** — 공감 톤, 의학적 진단 금지, 2~4문장, 한국어, 히스토리 참고
+- [ ] **3-5-3. `content_recommender_prompt.md`** — emotion/concerns/comfort_style 템플릿 변수 포함
+- [ ] **3-5-4. `crisis_response.md`** — 자살예방상담전화 1393 안내 텍스트
+
+#### 3-6. 에이전트 구현 (`ai/agents/`)
+- [ ] **3-6-1. `orchestrator.py`** — GPT-4o-mini, temperature=0, max_tokens=100, JSON 응답
+- [ ] **3-6-2. `counselor.py`** — Function Calling 루프 (search_rag_context / get_user_profile_and_history / save_emotion_record), 멀티턴, temperature=0.7
+- [ ] **3-6-3. `content_recommender.py`** — 쿼리 생성 → FastMCP `search_youtube()` 호출 → liked/disliked 기반 최종 선정
+
+#### 3-7. 파이프라인 조립
+- [ ] **3-7-1. `ai/pipeline.py` 작성**
   ```python
-  from app.services.ai_service import AIService
-  
-  @router.post("/counseling/message")
-  async def 상담_메시지(
-      요청: 상담_메시지_요청,
-      ai_service: AIService = Depends(가져오기_에이아이_서비스),
-      db: SupabaseService = Depends(가져오기_수파베이스_서비스)
-  ):
-      # AI 서비스에서 상담 실행
-      ai_response = ai_service.run_counseling(요청.message)
-      
-      # DB에 기록 저장
-        db.save_counseling_history(
-          user_id=요청.user_id,
-          session_id="session-id",
-          user_msg=요청.message,
-          counselor_msg=ai_response["counselor_message"],
-          video_id=ai_response["recommended_video"]["id"] if ai_response.get("recommended_video") else None
-      )
-      
-      # 감정 분석 결과가 있으면 저장
-      if ai_response.get("emotion_analysis"):
-            db.save_emotion_record(
-              user_id=요청.user_id,
-              emotion=ai_response["emotion_analysis"]["emotion"],
-              intensity=ai_response["emotion_analysis"]["intensity"],
-              context=요청.message
-          )
-      
-      return ai_response
+  async def run_counseling_pipeline(user_id, session_id, message, messages=None) -> CounselingState:
+      # ① Orchestrator → 위기 시 즉시 반환
+      # ② Counselor
+      # ③ Content Recommender (needs_recommendation=True 시만)
   ```
 
-#### 3-8. 프론트엔드 연동 준비
-- [ ] **3-8-1. 백엔드 API 응답 형식 확인**
-  - `/counseling/message` 응답이 프론트엔드와 일치하는지 검증
+#### 3-8. 백엔드 연결
+- [ ] **3-8-1. `backend/app/services/ai_service.py` 작성** — `run_counseling_pipeline` 래핑, fallback 응답 포함
+- [ ] **3-8-2. `backend/app/routers/counseling.py` 수정**
+  - `fetch_session_messages()`: `counseling_history` 테이블에서 이전 대화 이력 조회
+  - `save_message()`: 사용자 메시지 + AI 응답 저장
+  - `/message` 엔드포인트: 이력 조회 → 파이프라인 호출 → 저장 → 반환
 
-- [ ] **3-8-2. 프론트엔드 서비스 업데이트**
-  ```typescript
-  // src/services/counselingService.ts
-  export async function sendCounselingMessage(userId: string, message: string) {
-      const response = await fetch('http://localhost:8000/counseling/message', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-              user_id: userId,
-              message: message
-          })
-      });
-      return response.json();
-  }
+#### 3-9. 추가 의존성 및 .gitignore
+- [ ] **3-9-1. `backend/requirements.txt`에 `fastmcp>=0.1.0` 추가**
+- [ ] **3-9-2. `.gitignore`에 추가**
   ```
-
-#### 3-9. Function Calling 테스트
-- [ ] **3-9-1. Swagger UI에서 /counseling/message 테스트**
-  - 요청: `{"user_id": "test-user", "message": "요새 일이 너무 많아서 스트레스받아"}`
-  - 응답 확인: 상담 메시지, 감정 분석, YouTube 추천
-
-- [ ] **3-9-2. YouTube 영상 반환 확인**
-  - 서버 응답에 영상 ID, 제목, 썸네일 포함 확인
-
-#### 3-10. AI 응답 품질 개선
-- [ ] **3-10-1. 시스템 프롬프트 재조정**
-  - 한국어 더 자연스럽게
-  - 공감 부분 강화
-
-- [ ] **3-10-2. 감정 분석 개선**
-  - 더 정확한 감정 분석을 위해 OpenAI Embeddings 사용 (선택)
-
-#### 3-11. RAG DB 연동
-- [ ] **3-11-1. pgvector 확장 및 벡터 테이블 마이그레이션 적용**
-  - `db/migrations/002_vector_tables.sql` 적용
-
-- [ ] **3-11-2. 문서/세션 텍스트 청크 저장 파이프라인 구현**
-  - 상담 문맥 또는 참고 문서를 chunk 단위로 저장
-  - 임베딩 생성 후 `rag_chunks`에 저장
-
-- [ ] **3-11-3. 벡터 검색 API 초안 구현**
-  - 입력 텍스트 임베딩 생성
-  - 코사인 유사도 기반 상위 k개 검색
-
-- [ ] **3-11-4. 상담 응답 생성 전 컨텍스트 주입**
-  - 검색 결과를 system/context prompt에 병합
-  - 응답 품질과 환각 감소 효과 확인
+  mcp_servers/youtube/.env
+  mcp_servers/spotify/.env
+  ```
 
 **Phase 3 완료 체크**:
-- [ ] AI 폴더 구조 완성
-- [ ] Function Calling 정의 및 구현 완료
-- [ ] YouTube API 통합 완료
-- [ ] 감정 분석 서비스 완료
-- [ ] 프론트엔드 ↔ 백엔드 상담 기능 작동 확인
+- [ ] 일반 메시지 → 공감 상담 응답 반환 (3~5초 이내)
+- [ ] 멀티턴 대화 → 이전 맥락을 반영한 응답
+- [ ] 위기 메시지 → 1393 안내 즉시 반환
+- [ ] 추천 요청 → 개인화된 YouTube 영상 1개 반환
+- [ ] GPT 에러 → fallback 응답 (대화 단절 없음)
+- [ ] MCP 서버 미응답 → 추천 없이 상담만 정상 반환
 
-#### Phase 3 진행 메모 (2026-04-04)
-- GPT-4o-mini 기반 백엔드 Function Calling 파이프라인은 아직 미구현
-- YouTube 검색/추천 연동 및 상담 응답 품질 검증은 Phase 2 이후 진행 예정
+#### Phase 3 스모크 테스트
+```bash
+# 백엔드 (기존 방식 그대로)
+cd backend && uvicorn app.main:app --reload
+
+# FastMCP 서버 단독 (별도 터미널)
+cd mcp_servers/youtube && python server.py
+
+# 테스트
+POST /counseling/message  {"user_id": "...", "session_id": "...", "message": "요즘 너무 힘들어요"}
+POST /counseling/message  {"user_id": "...", "session_id": "...", "message": "다 끝내고 싶어"}      # 위기 감지
+POST /counseling/message  {"user_id": "...", "session_id": "...", "message": "노래 추천해줘"}         # 추천 트리거
+```
+
+#### Phase 3 진행 메모 (2026-04-09)
+- implementation_plan.md 기준으로 3-에이전트 + FastMCP 구조로 전면 업데이트
+- 기존 Single LLM / Function Calling 단일 구조에서 변경됨
 
 ---
 

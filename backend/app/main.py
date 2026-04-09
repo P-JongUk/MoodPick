@@ -15,6 +15,13 @@ from app.routers.reminder import router as reminder_router
 from app.config import get_settings
 from app.services.reminder_scheduler import reminder_scheduler_loop
 
+import sys
+from pathlib import Path
+
+# 프로젝트 루트(MoodPick/)를 Python 경로에 추가 → ai/ 패키지 임포트 가능
+PROJECT_ROOT = Path(__file__).parent.parent.parent  # main.py → app → backend → MoodPick
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 app = FastAPI(title="MoodPick Backend", version="0.1.0")
 
