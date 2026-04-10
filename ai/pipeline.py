@@ -1,0 +1,46 @@
+"""
+ai/pipeline.py
+
+Assembles the 3-agent counseling pipeline.
+
+Flow:
+  1. Orchestrator  → crisis detection, intent classification, routing
+  2. Counselor     → empathetic response with RAG + Function Calling
+  3. Content Recommender → personalized search query (conditional)
+"""
+
+from ai.state import CounselingState
+from ai.utils import load_crisis_response
+from ai.agents.orchestrator import orchestrator_agent
+from ai.agents.counselor import counselor_agent
+from ai.agents.content_recommender import content_recommender_agent
+
+
+async def run_counseling_pipeline(
+    user_id: str,
+    session_id: str,
+    message: str,
+    messages: list[dict] | None = None,
+) -> CounselingState:
+
+    state = CounselingState(
+        user_id=user_id,
+        session_id=session_id,
+        message=message,
+        messages=messages or [],
+    )
+
+    # ① Orchestrator
+    state = await orchestrator_agent(state)
+    if state.is_crisis:
+        state.response = load_crisis_response()
+        return state
+
+    # ② Counselor
+    state = await counselor_agent(state)
+
+    # ③ Content Recommender (conditional)
+    if state.needs_recommendation:
+        state = await content_recommender_agent(state)
+
+    return state

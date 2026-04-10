@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client
 
 from app.services.supabase_service import get_supabase_client
+from app.services.ai_service import get_ai_response
 
 
 router = APIRouter(prefix="/counseling", tags=["counseling"])
@@ -61,16 +62,43 @@ async def get_initial_counseling_message(
         )
 
 
-@router.post("/message")
-async def send_counseling_message(payload: CounselingMessageRequest):
-    guidance = "지금 감정을 한 문장으로 표현해 보면 원인을 더 명확히 찾는 데 도움이 돼요."
-    if len(payload.message.strip()) < 10:
-        guidance = "좋아요. 한두 문장만 더 덧붙여 주시면 더 정확하게 정리해드릴 수 있어요."
+def _fetch_session_messages(supabase: Client, session_id: str) -> list[dict]:
+    """Fetch previous conversation history for the session."""
+    result = (
+        supabase.table("counseling_history")
+        .select("role, content")
+        .eq("session_id", session_id)
+        .order("created_at")
+        .execute()
+    )
+    return [{"role": r["role"], "content": r["content"]} for r in (result.data or [])]
 
-    return {
-        "message": guidance,
-        "user_id": payload.user_id,
-        "echo": payload.message,
-        "session_id": payload.session_id,
-        "status": "ok",
-    }
+
+def _save_message(supabase: Client, session_id: str, user_msg: str, ai_msg: str) -> None:
+    """Persist the user message and AI response to DB."""
+    supabase.table("counseling_history").insert([
+        {"session_id": session_id, "role": "user", "content": user_msg},
+        {"session_id": session_id, "role": "assistant", "content": ai_msg},
+    ]).execute()
+
+
+@router.post("/message")
+async def send_counseling_message(
+    payload: CounselingMessageRequest,
+    supabase: Client = Depends(get_supabase_client),
+):
+    # 1. Fetch conversation history
+    history = _fetch_session_messages(supabase, payload.session_id)
+
+    # 2. Run AI pipeline
+    result = await get_ai_response(
+        user_id=payload.user_id,
+        session_id=payload.session_id,
+        message=payload.message,
+        messages=history,
+    )
+
+    # 3. Save this turn to DB
+    _save_message(supabase, payload.session_id, payload.message, result["message"])
+
+    return {**result, "status": "ok"}
