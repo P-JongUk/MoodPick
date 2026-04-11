@@ -39,6 +39,7 @@ import {
   LogOut,
   Trash2,
   Maximize2,
+  ExternalLink,
   ThumbsUp,
   ThumbsDown,
   X,
@@ -68,11 +69,21 @@ import {
 
 type TabType = "home" | "counseling" | "dashboard" | "mypage"
 
+interface RecommendedContent {
+  video_id?: string
+  title?: string
+  url?: string
+  thumbnail?: string
+  reason?: string
+  search_query?: string
+}
+
 interface Message {
   id: number
   sender: "user" | "ai"
   text: string
   timestamp: string
+  recommendedContent?: RecommendedContent | null
 }
 
 interface Emotion {
@@ -599,6 +610,8 @@ export function MoodPickDashboard() {
         ? await sendCounselingMessage(user.id, trimmedMessage, currentSessionId ?? undefined)
         : null
 
+      const recommended = response?.recommended_content ?? null
+
       const aiResponse: Message = {
         id: Date.now() + 1,
         sender: "ai",
@@ -610,9 +623,23 @@ export function MoodPickDashboard() {
           minute: "2-digit",
           hour12: true,
         }),
+        recommendedContent: recommended,
       }
 
       setMessages((prev) => [...prev, aiResponse])
+
+      // Update content player if recommendation includes a video
+      if (recommended?.video_id) {
+        setCurrentContent({
+          id: recommended.video_id,
+          content_id: recommended.video_id,
+          content_title: recommended.title ?? "추천 콘텐츠",
+          thumbnail_url: recommended.thumbnail,
+          watched_at: new Date().toISOString(),
+          session_id: currentSessionId,
+        })
+        setIsPlaying(true)
+      }
     } catch {
       setSyncWarningMessage("상담 메시지 전송에 실패했어요. 백엔드 연결 상태를 확인해 주세요.")
 
@@ -1069,6 +1096,26 @@ function CounselingView({
                   }`}
                 >
                   <p className="text-sm leading-relaxed">{message.text}</p>
+                  {/* Recommended content card in chat bubble */}
+                  {message.sender === "ai" && message.recommendedContent?.video_id && (
+                    <div className="mt-3 p-3 rounded-xl bg-background/80 border">
+                      <div className="flex items-center gap-3">
+                        {message.recommendedContent.thumbnail && (
+                          <img
+                            src={message.recommendedContent.thumbnail}
+                            alt={message.recommendedContent.title ?? ""}
+                            className="w-20 h-14 rounded-lg object-cover flex-shrink-0"
+                          />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{message.recommendedContent.title}</p>
+                          {message.recommendedContent.reason && (
+                            <p className="text-xs text-muted-foreground mt-0.5">{message.recommendedContent.reason}</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <p
                     className={`text-xs mt-1 ${
                       message.sender === "user" ? "text-primary-foreground/70" : "text-muted-foreground"
@@ -1116,65 +1163,48 @@ function CounselingView({
           </p>
         </div>
 
-        {/* Video Player Mockup */}
+        {/* Video Player */}
         <Card className="overflow-hidden border-0 shadow-lg">
-          <div className="aspect-video bg-foreground/90 relative flex items-center justify-center">
-            {/* Fullscreen Toggle */}
-            <button className="absolute top-2 right-2 z-10 p-2 rounded-lg bg-foreground/30 hover:bg-foreground/50 transition-colors">
-              <Maximize2 className="w-4 h-4 text-primary-foreground" />
-            </button>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-center text-primary-foreground">
-                <Flame className="w-16 h-16 mx-auto mb-2 opacity-80" />
-                <p className="text-sm opacity-70">영상 재생 중...</p>
-              </div>
-            </div>
-            {!isPlaying && (
-              <div className="absolute inset-0 bg-foreground/50 flex items-center justify-center">
-                <Play className="w-16 h-16 text-primary-foreground" />
+          <div className="aspect-video bg-foreground/90 relative">
+            {currentContent.content_id && currentContent.content_id !== "fireplace-comfort-001" ? (
+              <iframe
+                src={`https://www.youtube.com/embed/${currentContent.content_id}?autoplay=1`}
+                title={currentContent.content_title}
+                className="absolute inset-0 w-full h-full"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              />
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="text-center text-primary-foreground">
+                  <Flame className="w-16 h-16 mx-auto mb-2 opacity-80" />
+                  <p className="text-sm opacity-70">추천 콘텐츠가 여기에 재생됩니다</p>
+                </div>
               </div>
             )}
           </div>
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-3">
               <span className="px-2 py-1 bg-primary/10 text-primary text-xs rounded-full font-medium">
-                재생 중
+                {currentContent.content_id !== "fireplace-comfort-001" ? "재생 중" : "대기 중"}
               </span>
             </div>
             <h4 className="font-medium text-foreground mb-2">
               {currentContent.content_title}
             </h4>
-            <p className="text-sm text-muted-foreground mb-4">
-              최근 사용자 반응 기반으로 우선 노출된 콘텐츠입니다.
-            </p>
 
-            {/* Progress Bar */}
-            <div className="mb-4">
-              <div className="h-1 bg-muted rounded-full overflow-hidden">
-                <div className="h-full w-1/3 bg-primary rounded-full" />
-              </div>
-              <div className="flex justify-between text-xs text-muted-foreground mt-1">
-                <span>12:34</span>
-                <span>45:00</span>
-              </div>
-            </div>
-
-            {/* Controls */}
-            <div className="flex items-center justify-center gap-4">
-              <Button variant="ghost" size="icon" className="rounded-full">
-                <Volume2 className="w-5 h-5" />
-              </Button>
-              <Button
-                onClick={() => setIsPlaying(!isPlaying)}
-                size="icon"
-                className="w-12 h-12 rounded-full"
+            {/* YouTube에서 열기 */}
+            {currentContent.content_id && currentContent.content_id !== "fireplace-comfort-001" && (
+              <a
+                href={`https://www.youtube.com/watch?v=${currentContent.content_id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline mb-4"
               >
-                {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
-              </Button>
-              <Button variant="ghost" size="icon" className="rounded-full">
-                <SkipForward className="w-5 h-5" />
-              </Button>
-            </div>
+                <ExternalLink className="w-3.5 h-3.5" />
+                YouTube에서 열기
+              </a>
+            )}
           </CardContent>
         </Card>
 

@@ -2,27 +2,27 @@
 ai/agents/content_recommender.py
 
 Generates a personalized YouTube search query based on the user's
-emotional state, preferences, and content history.
-
-Current scope:
-  - Reads user_profile from state (cached by Counselor) or fetches if missing
-  - Fetches content history (watched/liked/disliked)
-  - Generates search query via GPT with template prompt
-  - TODO: Call FastMCP YouTube server with the generated query (Phase 4)
+emotional state, preferences, and content history, then calls the
+FastMCP YouTube server to fetch actual video results.
 
 Input:  state.emotion_score, state.user_profile
 Output: state.recommended_content
 """
 
 import json
+from pathlib import Path
 
 from openai import OpenAI
+from fastmcp import Client as MCPClient
 
 from ai.config import OPENAI_API_KEY
 from ai.state import CounselingState
 from ai.utils import load_prompt
 from ai.tools.content_history import get_content_history
 from ai.tools.user_profile import get_user_profile
+
+# MCP 서버 경로
+_MCP_SERVER_PATH = str(Path(__file__).parent.parent.parent / "mcp_servers" / "server.py")
 
 _MODEL = "gpt-4o-mini"
 
@@ -82,6 +82,7 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
             {
                 "role": "user",
                 "content": (
+                    f"사용자 요청: {state.message}\n"
                     f"감정: {emotion} (강도: {intensity})\n"
                     f"고민: {concerns}\n"
                     f"위로 방식: {comfort_style}\n"
@@ -97,20 +98,36 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
     search_query = result.get("search_query", "healing music relaxing")
     reason = result.get("reason", "마음을 편안하게 해줄 콘텐츠를 추천드려요.")
 
-    # ── 5. TODO: MCP YouTube 서버 호출 (Phase 4에서 구현) ───────────────
-    # from fastmcp import Client as MCPClient
-    # async with MCPClient("mcp_servers/youtube/server.py") as mcp:
-    #     videos = await mcp.call_tool(
-    #         "search_youtube",
-    #         {"query": search_query, "watched_ids": watched_ids, "max_results": 5},
-    #     )
-    # 현재는 쿼리만 저장하고 MCP 연동은 Phase 4에서 추가
+    # ── 5. MCP YouTube 서버 호출 ──────────────────────────────────────────
+    video = None
+    try:
+        async with MCPClient(_MCP_SERVER_PATH) as mcp:
+            mcp_result = await mcp.call_tool(
+                "search_youtube",
+                {"query": search_query, "watched_ids": watched_ids, "max_results": 5},
+            )
+            videos = json.loads(mcp_result.content[0].text) if mcp_result.content else []
+
+            # Filter out errored responses
+            if videos and "error" not in videos[0]:
+                video = videos[0]  # Pick the top result
+    except Exception:
+        # MCP 서버 미응답 시 추천 없이 상담만 반환
+        video = None
 
     # ── 6. Store result ─────────────────────────────────────────────────
-    state.recommended_content = {
-        "search_query": search_query,
-        "reason": reason,
-        "watched_ids_excluded": len(watched_ids),
-    }
+    if video:
+        state.recommended_content = {
+            "video_id": video["video_id"],
+            "title": video["title"],
+            "url": video["url"],
+            "thumbnail": video.get("thumbnail", ""),
+            "reason": reason,
+        }
+    else:
+        state.recommended_content = {
+            "search_query": search_query,
+            "reason": reason,
+        }
 
     return state
