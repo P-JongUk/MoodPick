@@ -1,12 +1,48 @@
 from pydantic import BaseModel
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List, Literal, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.services.supabase_service import get_supabase_client
 from supabase import Client
 from datetime import datetime
 
 
 router = APIRouter(prefix="/content", tags=["content"])
+
+# 비AI 시드 추천 (YouTube 영상 + Spotify 트랙). 이후 검색 API·개인화로 대체 가능.
+_SEED_RECOMMENDATIONS: list[dict] = [
+    {
+        "id": "seed-rec-yt-lofi",
+        "content_id": "youtube:jfKfPfyJRdk",
+        "content_title": "잠시 쉬어가는 음악 (데모)",
+        "thumbnail_url": "https://img.youtube.com/vi/jfKfPfyJRdk/mqdefault.jpg",
+        "media_provider": "youtube",
+        "media_url": None,
+    },
+    {
+        "id": "seed-rec-sp-1",
+        "content_id": "spotify:track:4iV5W9uYEdYUVa79Axb7Rh",
+        "content_title": "클래식 힐링 플레이리스트 샘플",
+        "thumbnail_url": None,
+        "media_provider": "spotify",
+        "media_url": "https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh",
+    },
+    {
+        "id": "seed-rec-yt-nature",
+        "content_id": "youtube:LnBnm_tZrhg",
+        "content_title": "자연 속 휴식 (데모)",
+        "thumbnail_url": "https://img.youtube.com/vi/LnBnm_tZrhg/mqdefault.jpg",
+        "media_provider": "youtube",
+        "media_url": None,
+    },
+    {
+        "id": "seed-rec-sp-2",
+        "content_id": "spotify:track:3YMgCpfrgrje64XnIAgYH7",
+        "content_title": "잔잔한 재즈 샘플",
+        "thumbnail_url": None,
+        "media_provider": "spotify",
+        "media_url": "https://open.spotify.com/track/3YMgCpfrgrje64XnIAgYH7",
+    },
+]
 
 
 class ContentFeedbackRequest(BaseModel):
@@ -22,6 +58,8 @@ class WatchedContentRequest(BaseModel):
     content_id: str
     content_title: str
     thumbnail_url: Optional[str] = None
+    media_provider: Optional[Literal["youtube", "spotify"]] = None
+    media_url: Optional[str] = None
 
 
 class ContentFeedbackResponse(BaseModel):
@@ -41,6 +79,19 @@ class WatchedContentResponse(BaseModel):
     content_title: str
     thumbnail_url: Optional[str]
     watched_at: str
+    media_provider: Optional[str] = None
+    media_url: Optional[str] = None
+
+
+class ContentRecommendationItem(BaseModel):
+    id: str
+    content_id: str
+    content_title: str
+    thumbnail_url: Optional[str] = None
+    media_provider: Optional[str] = None
+    media_url: Optional[str] = None
+    watched_at: str
+    session_id: Optional[str] = None
 
 
 @router.post("/feedback")
@@ -87,14 +138,20 @@ async def record_watched_content(
 ):
     """시청한 콘텐츠 기록"""
     try:
-        result = supabase.table("watched_content_records").insert({
+        row: dict = {
             "user_id": payload.user_id,
             "session_id": payload.session_id,
             "content_id": payload.content_id,
             "content_title": payload.content_title,
             "thumbnail_url": payload.thumbnail_url,
             "watched_at": datetime.utcnow().isoformat(),
-        }).execute()
+        }
+        if payload.media_provider is not None:
+            row["media_provider"] = payload.media_provider
+        if payload.media_url is not None:
+            row["media_url"] = payload.media_url
+
+        result = supabase.table("watched_content_records").insert(row).execute()
 
         if result.data and len(result.data) > 0:
             content = result.data[0]
@@ -131,6 +188,43 @@ async def get_content_history(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
+
+
+@router.get(
+    "/recommendations/{user_id}",
+    response_model=List[ContentRecommendationItem],
+)
+async def get_content_recommendations(
+    user_id: str,
+    limit: int = Query(8, ge=1, le=30),
+    media: Literal["all", "youtube", "spotify"] = Query(
+        "all",
+        description="youtube | spotify | all (혼합)",
+    ),
+):
+    """자동 추천 콘텐츠 시드 목록. user_id는 향후 개인화 시 사용."""
+    _ = user_id
+    now = datetime.utcnow().isoformat()
+    if media == "all":
+        filtered = _SEED_RECOMMENDATIONS[:limit]
+    else:
+        filtered = [
+            x for x in _SEED_RECOMMENDATIONS if x.get("media_provider") == media
+        ][:limit]
+
+    return [
+        ContentRecommendationItem(
+            id=str(row["id"]),
+            content_id=str(row["content_id"]),
+            content_title=str(row["content_title"]),
+            thumbnail_url=row.get("thumbnail_url"),
+            media_provider=row.get("media_provider"),
+            media_url=row.get("media_url"),
+            watched_at=now,
+            session_id=None,
+        )
+        for row in filtered
+    ]
 
 
 @router.get("/feedback/{user_id}")

@@ -197,3 +197,31 @@ async def get_survey_history(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
+
+
+def _mood_general_pre_post(
+    supabase: Client, session_ids: list[str]
+) -> dict[str, tuple[Optional[str], Optional[str]]]:
+    """session_id -> (pre_emoji, post_emoji) for mood_general only."""
+    if not session_ids:
+        return {}
+    result = supabase.table("survey_responses").select(
+        "session_id, phase, emoji_value, question_key"
+    ).in_("session_id", session_ids).execute()
+    rows = result.data or []
+    out: dict[str, tuple[Optional[str], Optional[str]]] = {
+        sid: (None, None) for sid in session_ids
+    }
+    for row in rows:
+        if row.get("question_key") != "mood_general":
+            continue
+        sid = row["session_id"]
+        if sid not in out:
+            continue
+        pre, post = out[sid]
+        if row["phase"] == "pre":
+            pre = row.get("emoji_value")
+        elif row["phase"] == "post":
+            post = row.get("emoji_value")
+        out[sid] = (pre, post)
+    return out

@@ -10,7 +10,11 @@ import {
   startCounselingSession,
 } from "@/lib/sessionData"
 import {
+  analyzeEmotion,
+  endSession,
   getContentHistory,
+  getCurrentSession,
+  getDailySummary,
   getEmotionRecords,
   getEmotionSummary,
   getInitialCounselingMessage,
@@ -20,7 +24,19 @@ import {
   sendCounselingMessage,
   getReminderPreference,
   upsertReminderPreference,
+  upsertUserProfile,
+  getContentRecommendations,
+  type DailySummary,
+  type ContentMediaPreferenceQuery,
 } from "@/lib/api"
+import { cn } from "@/lib/utils"
+import {
+  resolvePlayback,
+  youtubeEmbedUrl,
+  youtubeThumbnailUrl,
+  spotifyEmbedUrl,
+  spotifyOpenUrl,
+} from "@/lib/contentPlayback"
 import {
   Home,
   MessageCircle,
@@ -39,6 +55,7 @@ import {
   LogOut,
   Trash2,
   Maximize2,
+  Minimize2,
   ExternalLink,
   ThumbsUp,
   ThumbsDown,
@@ -66,6 +83,14 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 type TabType = "home" | "counseling" | "dashboard" | "mypage"
 
@@ -118,6 +143,8 @@ interface ContentHistoryItem {
   content_id: string
   content_title: string
   thumbnail_url?: string | null
+  media_provider?: "youtube" | "spotify" | null
+  media_url?: string | null
   watched_at: string
   session_id?: string | null
 }
@@ -146,9 +173,33 @@ const emotions: Emotion[] = [
 
 const defaultContentItem: ContentHistoryItem = {
   id: "default-content",
-  content_id: "fireplace-comfort-001",
-  content_title: "우울함을 달래주는 따뜻한 장작 소리",
+  content_id: "youtube:jfKfPfyJRdk",
+  content_title: "잠시 쉬어가는 음악 (데모)",
+  thumbnail_url: "https://img.youtube.com/vi/jfKfPfyJRdk/mqdefault.jpg",
+  media_provider: "youtube",
   watched_at: new Date().toISOString(),
+}
+
+function mapContentHistoryRow(row: Record<string, unknown>): ContentHistoryItem {
+  return {
+    id: String(row.id ?? ""),
+    content_id: String(row.content_id ?? ""),
+    content_title: String(row.content_title ?? ""),
+    thumbnail_url: row.thumbnail_url != null ? String(row.thumbnail_url) : null,
+    media_provider:
+      row.media_provider === "youtube" || row.media_provider === "spotify"
+        ? row.media_provider
+        : null,
+    media_url: row.media_url != null ? String(row.media_url) : null,
+    watched_at: String(row.watched_at ?? new Date().toISOString()),
+    session_id: row.session_id != null ? String(row.session_id) : null,
+  }
+}
+
+function mediaPreferenceToQueryParam(pref: string): ContentMediaPreferenceQuery {
+  if (pref === "youtube") return "youtube"
+  if (pref === "spotify") return "spotify"
+  return "all"
 }
 
 const scoreToEmoji = (score: number) => {
@@ -171,6 +222,20 @@ const scoreToCalendarColor = (score: number) => {
   if (score >= 4) return "bg-amber-200"
   if (score >= 3) return "bg-sky-200"
   return "bg-blue-200"
+}
+
+/** 홈 감정 이모지 → 사전 문진 문항 값(great~bad) */
+const HOME_EMOJI_TO_SURVEY_MOOD: Record<string, string> = {
+  "😊": "great",
+  "😐": "neutral",
+  "😢": "low",
+  "😡": "low",
+  "😫": "low",
+}
+
+function homeEmojiToPreMood(emoji: string | null): string | null {
+  if (!emoji) return null
+  return HOME_EMOJI_TO_SURVEY_MOOD[emoji] ?? null
 }
 
 export function MoodPickDashboard() {
@@ -234,6 +299,20 @@ export function MoodPickDashboard() {
   const [dailyReminderTimezone, setDailyReminderTimezone] = useState("Asia/Seoul")
   const [reminderSaveMessage, setReminderSaveMessage] = useState<string | null>(null)
 
+  const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear())
+  const [dayDetailOpen, setDayDetailOpen] = useState(false)
+  const [dayDetailLoading, setDayDetailLoading] = useState(false)
+  const [dayDetailError, setDayDetailError] = useState<string | null>(null)
+  const [dayDetailData, setDayDetailData] = useState<DailySummary | null>(null)
+  const [dayDetailIsoDate, setDayDetailIsoDate] = useState<string | null>(null)
+
+  const [profileSaveMessage, setProfileSaveMessage] = useState<string | null>(null)
+  const [isSavingProfile, setIsSavingProfile] = useState(false)
+  const [mypagePrefsMessage, setMypagePrefsMessage] = useState<string | null>(null)
+  const [isSavingMypagePrefs, setIsSavingMypagePrefs] = useState(false)
+  const [isExportingMyData, setIsExportingMyData] = useState(false)
+  const [exportMyDataMessage, setExportMyDataMessage] = useState<string | null>(null)
+
   useEffect(() => {
     const loadDashboardData = async () => {
       if (!user?.id) {
@@ -249,13 +328,18 @@ export function MoodPickDashboard() {
       }
 
       try {
-        const [stats, emotionRecordsRaw, summary, sessionsRaw, contentsRaw] = await Promise.all([
-          getUserStats(user.id),
-          getEmotionRecords(user.id, 30),
-          getEmotionSummary(user.id, 30),
-          getUserSessions(user.id, 10),
-          getContentHistory(user.id, 20),
-        ])
+        const mediaQuery = mediaPreferenceToQueryParam(mediaPreference)
+        const [stats, emotionRecordsRaw, summary, sessionsRaw, contentsRaw, recsRaw] =
+          await Promise.all([
+            getUserStats(user.id),
+            getEmotionRecords(user.id, 30),
+            getEmotionSummary(user.id, 30),
+            getUserSessions(user.id, 10),
+            getContentHistory(user.id, 20),
+            getContentRecommendations(user.id, { limit: 10, media: mediaQuery }).catch(
+              () => [] as unknown[]
+            ),
+          ])
 
         setUserStats(stats as UserStats)
         setEmotionSummary(summary as EmotionSummary)
@@ -271,7 +355,11 @@ export function MoodPickDashboard() {
           scores.push(record.score)
           groupedByDay.set(dayKey, scores)
 
-          if (date.getMonth() + 1 === currentMonth && record.question === "mood_general") {
+          if (
+            date.getFullYear() === calendarYear &&
+            date.getMonth() + 1 === currentMonth &&
+            record.question === "mood_general"
+          ) {
             dayMoodMap[date.getDate()] = {
               emoji: scoreToEmoji(record.score),
               color: scoreToCalendarColor(record.score),
@@ -298,10 +386,24 @@ export function MoodPickDashboard() {
         setEmotionData(emotionChartData)
         setCalendarMoods(dayMoodMap)
 
-        const contentItems = (contentsRaw as ContentHistoryItem[]) || []
+        const contentItems = ((contentsRaw as unknown[]) ?? []).map((r) =>
+          mapContentHistoryRow(r as Record<string, unknown>)
+        )
         setContentHistory(contentItems)
-        setCurrentContent(contentItems[0] ?? defaultContentItem)
-        setRecommendedQueue(contentItems.slice(1, 3))
+        const first = contentItems[0] ?? defaultContentItem
+        setCurrentContent(first)
+
+        const recItems = ((recsRaw as unknown[]) ?? []).map((r) =>
+          mapContentHistoryRow(r as Record<string, unknown>)
+        )
+        const fromApi = recItems.filter((c) => c.content_id !== first.content_id).slice(0, 6)
+        if (fromApi.length > 0) {
+          setRecommendedQueue(fromApi)
+        } else {
+          setRecommendedQueue(
+            contentItems.slice(1, 4).filter((c) => c.content_id !== first.content_id)
+          )
+        }
 
         const contentBySession = new Map<string, string>()
         contentItems.forEach((content) => {
@@ -330,7 +432,7 @@ export function MoodPickDashboard() {
     }
 
     void loadDashboardData()
-  }, [currentMonth, user?.id])
+  }, [currentMonth, calendarYear, user?.id, mediaPreference])
 
   useEffect(() => {
     const loadReminderPreference = async () => {
@@ -383,6 +485,20 @@ export function MoodPickDashboard() {
     setSelectedComfortStyle(Array.isArray(profile?.comfort_style) ? profile.comfort_style : [])
     setOnboardingErrorMessage(null)
     setIsOnboardingStateLoading(false)
+  }, [user])
+
+  useEffect(() => {
+    if (!user) return
+    const meta = user.user_metadata as {
+      moodpick_preferences?: { autoplay_enabled?: boolean; media_preference?: string }
+    }
+    const prefs = meta.moodpick_preferences
+    if (prefs && typeof prefs.autoplay_enabled === "boolean") {
+      setAutoPlayEnabled(prefs.autoplay_enabled)
+    }
+    if (prefs && typeof prefs.media_preference === "string") {
+      setMediaPreference(prefs.media_preference)
+    }
   }, [user])
 
   const handleLogin = async () => {
@@ -483,8 +599,8 @@ export function MoodPickDashboard() {
   }
 
   const handleStartNewSession = () => {
-    setPreSurveyMood(null)
     setSyncWarningMessage(null)
+    setPreSurveyMood(homeEmojiToPreMood(selectedEmotion))
     setShowPreSurvey(true)
   }
 
@@ -494,6 +610,19 @@ export function MoodPickDashboard() {
     let initialCounselingMessage = "안녕하세요, 저는 무드픽 상담사입니다. 오늘 하루 어떠셨나요? 편하게 이야기해 주세요."
 
     try {
+      if (user?.id) {
+        const cur = await getCurrentSession(user.id)
+        if (cur?.id && cur.started_at) {
+          const startedKey = new Date(cur.started_at).toLocaleDateString("en-CA", {
+            timeZone: dailyReminderTimezone,
+          })
+          const todayKey = new Date().toLocaleDateString("en-CA", { timeZone: dailyReminderTimezone })
+          if (startedKey !== todayKey) {
+            await endSession(cur.id)
+          }
+        }
+      }
+
       const createdSessionId = await startCounselingSession()
       setCurrentSessionId(createdSessionId)
 
@@ -580,6 +709,8 @@ export function MoodPickDashboard() {
         contentId: currentContent.content_id,
         contentTitle: currentContent.content_title,
         thumbnailUrl: currentContent.thumbnail_url ?? undefined,
+        mediaProvider: currentContent.media_provider ?? undefined,
+        mediaUrl: currentContent.media_url ?? undefined,
       })
     } catch {
       setSyncWarningMessage("콘텐츠 피드백 저장에 실패했어요. Supabase 설정을 확인해 주세요.")
@@ -661,6 +792,114 @@ export function MoodPickDashboard() {
 
   const handleEmotionSelect = (emoji: string) => {
     setSelectedEmotion(emoji)
+    const label = emotions.find((e) => e.emoji === emoji)?.label ?? ""
+    if (user?.id) {
+      void analyzeEmotion(`홈 화면에서 선택한 감정: ${emoji} (${label})`, "home_emotion_pick").catch(
+        () => undefined
+      )
+    }
+  }
+
+  const handleSaveDisplayName = async (name: string): Promise<boolean> => {
+    if (!user?.id) return false
+    const trimmed = name.trim()
+    if (!trimmed) {
+      setProfileSaveMessage("이름을 입력해 주세요.")
+      return false
+    }
+    setIsSavingProfile(true)
+    setProfileSaveMessage(null)
+    try {
+      await upsertUserProfile(user.id, trimmed)
+      const supabase = getSupabaseClient()
+      const { error } = await supabase.auth.updateUser({
+        data: { display_name: trimmed },
+      })
+      if (error) throw error
+      setProfileSaveMessage("이름이 저장되었습니다.")
+      return true
+    } catch (e) {
+      setProfileSaveMessage(e instanceof Error ? e.message : "저장에 실패했습니다.")
+      return false
+    } finally {
+      setIsSavingProfile(false)
+    }
+  }
+
+  const handleSaveMypagePreferences = async () => {
+    if (!user?.id) return
+    setIsSavingMypagePrefs(true)
+    setMypagePrefsMessage(null)
+    try {
+      const supabase = getSupabaseClient()
+      const { error } = await supabase.auth.updateUser({
+        data: {
+          moodpick_preferences: {
+            autoplay_enabled: autoPlayEnabled,
+            media_preference: mediaPreference,
+          },
+        },
+      })
+      if (error) throw error
+      setMypagePrefsMessage("맞춤 설정이 계정에 저장되었습니다.")
+    } catch (e) {
+      setMypagePrefsMessage(e instanceof Error ? e.message : "저장에 실패했습니다.")
+    } finally {
+      setIsSavingMypagePrefs(false)
+    }
+  }
+
+  const handleExportMyData = async () => {
+    if (!user?.id) return
+    setIsExportingMyData(true)
+    setExportMyDataMessage(null)
+    try {
+      const [stats, contents, emotions] = await Promise.all([
+        getUserStats(user.id),
+        getContentHistory(user.id, 100),
+        getEmotionRecords(user.id, 365),
+      ])
+      const payload = {
+        exported_at: new Date().toISOString(),
+        user_id: user.id,
+        stats,
+        content_history: contents,
+        emotion_records: emotions,
+      }
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `moodpick-export-${user.id.slice(0, 8)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      setExportMyDataMessage("JSON 파일로 내보냈습니다.")
+    } catch (e) {
+      console.error(e)
+      setExportMyDataMessage(
+        e instanceof Error ? e.message : "내보내기에 실패했습니다. 잠시 후 다시 시도해 주세요."
+      )
+    } finally {
+      setIsExportingMyData(false)
+    }
+  }
+
+  const handleCalendarDayClick = async (day: number) => {
+    if (!user?.id || !day) return
+    const iso = `${calendarYear}-${String(currentMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+    setDayDetailOpen(true)
+    setDayDetailLoading(true)
+    setDayDetailError(null)
+    setDayDetailData(null)
+    setDayDetailIsoDate(iso)
+    try {
+      const data = await getDailySummary(user.id, iso, dailyReminderTimezone)
+      setDayDetailData(data)
+    } catch (e) {
+      setDayDetailError(e instanceof Error ? e.message : "불러오기에 실패했습니다.")
+    } finally {
+      setDayDetailLoading(false)
+    }
   }
 
   const handleSaveReminderPreference = async () => {
@@ -682,9 +921,9 @@ export function MoodPickDashboard() {
   }
 
   const getDaysInMonth = () => {
-    const days = []
-    const daysInMonth = new Date(2026, currentMonth, 0).getDate()
-    const firstDay = new Date(2026, currentMonth - 1, 1).getDay()
+    const days: (number | null)[] = []
+    const daysInMonth = new Date(calendarYear, currentMonth, 0).getDate()
+    const firstDay = new Date(calendarYear, currentMonth - 1, 1).getDay()
 
     for (let i = 0; i < firstDay; i++) {
       days.push(null)
@@ -695,6 +934,24 @@ export function MoodPickDashboard() {
     }
 
     return days
+  }
+
+  const goCalendarPrev = () => {
+    if (currentMonth <= 1) {
+      setCurrentMonth(12)
+      setCalendarYear((y) => y - 1)
+    } else {
+      setCurrentMonth((m) => m - 1)
+    }
+  }
+
+  const goCalendarNext = () => {
+    if (currentMonth >= 12) {
+      setCurrentMonth(1)
+      setCalendarYear((y) => y + 1)
+    } else {
+      setCurrentMonth((m) => m + 1)
+    }
   }
 
   const navItems = [
@@ -819,6 +1076,11 @@ export function MoodPickDashboard() {
             userStats={userStats}
             emotionSummary={emotionSummary}
             currentContent={currentContent}
+            onPlayRecommended={() => {
+              setIsPlaying(true)
+              setActiveTab("counseling")
+            }}
+            flowMessage={syncWarningMessage}
           />
         )}
         {/* Pre-Survey Overlay */}
@@ -860,8 +1122,10 @@ export function MoodPickDashboard() {
         )}
         {activeTab === "dashboard" && (
           <DashboardView
+            calendarYear={calendarYear}
             currentMonth={currentMonth}
-            setCurrentMonth={setCurrentMonth}
+            goCalendarPrev={goCalendarPrev}
+            goCalendarNext={goCalendarNext}
             getDaysInMonth={getDaysInMonth}
             calendarMoods={calendarMoods}
             emotionData={emotionData}
@@ -869,6 +1133,7 @@ export function MoodPickDashboard() {
             contentHistory={contentHistory}
             lastSurveyDelta={lastSurveyDelta}
             userStats={userStats}
+            onCalendarDayClick={handleCalendarDayClick}
           />
         )}
         {activeTab === "mypage" && (
@@ -880,6 +1145,12 @@ export function MoodPickDashboard() {
             onLogout={handleLogout}
             userEmail={user?.email ?? "-"}
             displayName={(user?.user_metadata?.display_name as string | undefined) ?? null}
+            onSaveDisplayName={handleSaveDisplayName}
+            profileSaveMessage={profileSaveMessage}
+            isSavingProfile={isSavingProfile}
+            onSaveMypagePreferences={handleSaveMypagePreferences}
+            mypagePrefsMessage={mypagePrefsMessage}
+            isSavingMypagePrefs={isSavingMypagePrefs}
             userCreatedAt={user?.created_at ?? null}
             totalSessions={userStats?.total_sessions ?? 0}
             dailyReminderEnabled={dailyReminderEnabled}
@@ -890,9 +1161,64 @@ export function MoodPickDashboard() {
             setDailyReminderTimezone={setDailyReminderTimezone}
             onSaveReminderPreference={handleSaveReminderPreference}
             reminderSaveMessage={reminderSaveMessage}
+            onExportMyData={handleExportMyData}
+            isExportingMyData={isExportingMyData}
+            exportMyDataMessage={exportMyDataMessage}
           />
         )}
       </main>
+
+      <Dialog open={dayDetailOpen} onOpenChange={setDayDetailOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>하루 기록</DialogTitle>
+            <DialogDescription>
+              {dayDetailIsoDate ? `${dayDetailIsoDate} · ${dailyReminderTimezone}` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {dayDetailLoading && <p className="text-sm text-muted-foreground">불러오는 중…</p>}
+          {dayDetailError && <p className="text-sm text-destructive">{dayDetailError}</p>}
+          {dayDetailData && !dayDetailLoading && (
+            <div className="space-y-3 text-sm">
+              <div>
+                <p className="font-medium text-foreground">요약</p>
+                <p className="text-muted-foreground whitespace-pre-wrap leading-relaxed">
+                  {dayDetailData.counseling_summary}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <span className="rounded-full bg-muted px-2 py-1">
+                  사전: {dayDetailData.pre_mood_general ?? "—"}
+                </span>
+                <span className="rounded-full bg-muted px-2 py-1">
+                  사후: {dayDetailData.post_mood_general ?? "—"}
+                </span>
+                {dayDetailData.delta_average != null && (
+                  <span className="rounded-full bg-muted px-2 py-1">
+                    평균 델타: {dayDetailData.delta_average >= 0 ? "+" : ""}
+                    {dayDetailData.delta_average.toFixed(2)}
+                  </span>
+                )}
+              </div>
+              {dayDetailData.contents.length > 0 && (
+                <div>
+                  <p className="font-medium text-foreground mb-1">콘텐츠</p>
+                  <ul className="list-disc pl-4 text-muted-foreground space-y-1">
+                    {dayDetailData.contents.map((c) => (
+                      <li key={c.id}>{c.content_title}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => setDayDetailOpen(false)}>
+              닫기
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -905,6 +1231,8 @@ function HomeView({
   userStats,
   emotionSummary,
   currentContent,
+  onPlayRecommended,
+  flowMessage,
 }: {
   emotions: Emotion[]
   selectedEmotion: string | null
@@ -913,8 +1241,20 @@ function HomeView({
   userStats: UserStats | null
   emotionSummary: EmotionSummary | null
   currentContent: ContentHistoryItem
+  onPlayRecommended: () => void
+  flowMessage: string | null
 }) {
   const weeklyMoodEmoji = scoreToEmoji(emotionSummary?.average_score ?? 3)
+  const homePlayback = resolvePlayback({
+    content_id: currentContent.content_id,
+    media_provider: currentContent.media_provider,
+    media_url: currentContent.media_url,
+  })
+  const homeThumbUrl =
+    currentContent.thumbnail_url?.trim() ||
+    (homePlayback.kind === "youtube" && homePlayback.youtubeVideoId
+      ? youtubeThumbnailUrl(homePlayback.youtubeVideoId)
+      : null)
 
   return (
     <div className="p-8 max-w-4xl mx-auto">
@@ -924,8 +1264,11 @@ function HomeView({
           오늘 하루, 당신의 마음은 어떤 색인가요?
         </h2>
         <p className="text-muted-foreground text-lg">
-          지금 느끼는 감정을 선택해 주세요
+          지금 느끼는 감정을 선택해 주세요. 선택한 감정은 상담 시작 시 사전 문진에 반영됩니다.
         </p>
+        {flowMessage && (
+          <p className="mt-3 text-sm text-destructive bg-destructive/10 rounded-xl px-4 py-2">{flowMessage}</p>
+        )}
       </div>
 
       {/* Start New Session Button */}
@@ -972,13 +1315,17 @@ function HomeView({
         </CardHeader>
         <CardContent className="p-6">
           <div className="flex gap-6">
-            <div className="w-48 h-32 rounded-xl bg-muted flex items-center justify-center overflow-hidden">
-              <div className="text-center">
-                <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-2">
-                  <Play className="w-6 h-6 text-primary" />
+            <div className="w-48 h-32 rounded-xl bg-muted flex items-center justify-center overflow-hidden shrink-0">
+              {homeThumbUrl ? (
+                <img src={homeThumbUrl} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <div className="text-center">
+                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-2">
+                    <Play className="w-6 h-6 text-primary" />
+                  </div>
+                  <p className="text-xs text-muted-foreground">썸네일</p>
                 </div>
-                <p className="text-xs text-muted-foreground">썸네일</p>
-              </div>
+              )}
             </div>
             <div className="flex-1 flex flex-col justify-between">
               <div>
@@ -990,7 +1337,7 @@ function HomeView({
                   상담 중 반응 데이터를 바탕으로 추천 정밀도를 점진적으로 높입니다.
                 </p>
               </div>
-              <Button className="w-fit mt-4 rounded-xl">
+              <Button className="w-fit mt-4 rounded-xl" type="button" onClick={onPlayRecommended}>
                 <Play className="w-4 h-4 mr-2" />
                 바로 재생하기
               </Button>
@@ -1019,6 +1366,262 @@ function HomeView({
             <p className="text-sm text-muted-foreground">주간 평균 기분</p>
           </CardContent>
         </Card>
+      </div>
+    </div>
+  )
+}
+
+function ContentMediaPanel({
+  variant,
+  currentContent,
+  recommendedQueue,
+  isPlaying,
+  setIsPlaying,
+  mediaFeedback,
+  onMediaFeedbackChange,
+  syncWarningMessage,
+  onSelectRecommendedContent,
+  onRequestFullscreen,
+  onExitFullscreen,
+}: {
+  variant: "sidebar" | "fullscreen"
+  currentContent: ContentHistoryItem
+  recommendedQueue: ContentHistoryItem[]
+  isPlaying: boolean
+  setIsPlaying: (value: boolean) => void
+  mediaFeedback: "like" | "dislike" | null
+  onMediaFeedbackChange: (value: "like" | "dislike") => void
+  syncWarningMessage: string | null
+  onSelectRecommendedContent: (value: ContentHistoryItem) => void
+  onRequestFullscreen?: () => void
+  onExitFullscreen?: () => void
+}) {
+  const isFullscreen = variant === "fullscreen"
+  const playback = resolvePlayback({
+    content_id: currentContent.content_id,
+    media_provider: currentContent.media_provider,
+    media_url: currentContent.media_url,
+  })
+  const isEmbed = playback.kind === "youtube" || playback.kind === "spotify"
+
+  return (
+    <div className={cn("flex flex-col min-h-0", isFullscreen && "flex-1")}>
+      {isFullscreen && (
+        <div className="flex items-start justify-between gap-3 mb-4 shrink-0">
+          <div>
+            <h3 className="text-xl font-semibold text-foreground">자동 추천 콘텐츠</h3>
+            <p className="text-sm text-muted-foreground">대화 내용을 바탕으로 AI가 추천해 드려요</p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="shrink-0 rounded-xl"
+            onClick={onExitFullscreen}
+            aria-label="전체 화면 닫기"
+          >
+            <Minimize2 className="w-4 h-4" />
+          </Button>
+        </div>
+      )}
+
+      {!isFullscreen && (
+        <div className="mb-6">
+          <h3 className="text-lg font-semibold text-foreground mb-1">자동 추천 콘텐츠</h3>
+          <p className="text-sm text-muted-foreground">대화 내용을 바탕으로 AI가 추천해 드려요</p>
+        </div>
+      )}
+
+      <Card
+        className={cn(
+          "overflow-hidden border-0 shadow-lg shrink-0",
+          isFullscreen && "max-w-5xl w-full mx-auto"
+        )}
+      >
+        <div
+          className={cn(
+            "bg-foreground/90 relative flex items-center justify-center overflow-hidden",
+            !isEmbed && "aspect-video",
+            isEmbed && playback.kind === "youtube" && "aspect-video",
+            isEmbed && playback.kind === "spotify" && "min-h-[352px] h-[352px]",
+            isFullscreen && playback.kind !== "spotify" && "max-h-[min(52vh,560px)] w-full"
+          )}
+        >
+          {onRequestFullscreen && (
+            <button
+              type="button"
+              className="absolute top-2 right-2 z-10 p-2 rounded-lg bg-foreground/30 hover:bg-foreground/50 transition-colors"
+              onClick={onRequestFullscreen}
+              aria-label="콘텐츠 전체 화면"
+            >
+              <Maximize2 className="w-4 h-4 text-primary-foreground" />
+            </button>
+          )}
+          {playback.kind === "youtube" && playback.youtubeVideoId && (
+            <iframe
+              title={currentContent.content_title}
+              className="absolute inset-0 h-full w-full border-0"
+              src={youtubeEmbedUrl(playback.youtubeVideoId)}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+            />
+          )}
+          {playback.kind === "spotify" && playback.spotifyTrackId && (
+            <iframe
+              title={currentContent.content_title}
+              className="absolute inset-0 h-full w-full border-0"
+              src={spotifyEmbedUrl(playback.spotifyTrackId)}
+              allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+              loading="lazy"
+            />
+          )}
+          {playback.kind === "none" && (
+            <>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="text-center text-primary-foreground">
+                  <Flame className={cn("mx-auto mb-2 opacity-80", isFullscreen ? "w-24 h-24" : "w-16 h-16")} />
+                  <p className="text-sm opacity-70">영상 재생 중...</p>
+                </div>
+              </div>
+              {!isPlaying && (
+                <div className="absolute inset-0 bg-foreground/50 flex items-center justify-center z-[1]">
+                  <Play className={cn("text-primary-foreground", isFullscreen ? "w-20 h-20" : "w-16 h-16")} />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <CardContent className={cn("p-4", isFullscreen && "sm:p-6")}>
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <span className="px-2 py-1 bg-primary/10 text-primary text-xs rounded-full font-medium">
+              {playback.kind === "youtube"
+                ? "YouTube"
+                : playback.kind === "spotify"
+                  ? "Spotify"
+                  : "재생 중"}
+            </span>
+            {playback.kind === "spotify" && playback.spotifyTrackId && (
+              <a
+                href={spotifyOpenUrl(playback.spotifyTrackId)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                앱에서 열기
+              </a>
+            )}
+          </div>
+          <h4 className="font-medium text-foreground mb-2 text-balance">{currentContent.content_title}</h4>
+          <p className="text-sm text-muted-foreground mb-4">
+            최근 사용자 반응 기반으로 우선 노출된 콘텐츠입니다.
+          </p>
+
+          {isEmbed ? (
+            <p className="text-xs text-muted-foreground mb-4">
+              재생·일시정지·볼륨은 위 플레이어에서 조작할 수 있어요.
+            </p>
+          ) : (
+            <>
+              <div className="mb-4">
+                <div className="h-1 bg-muted rounded-full overflow-hidden">
+                  <div className="h-full w-1/3 bg-primary rounded-full" />
+                </div>
+                <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                  <span>12:34</span>
+                  <span>45:00</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-center gap-4">
+                <Button variant="ghost" size="icon" className="rounded-full">
+                  <Volume2 className="w-5 h-5" />
+                </Button>
+                <Button onClick={() => setIsPlaying(!isPlaying)} size="icon" className="w-12 h-12 rounded-full">
+                  {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+                </Button>
+                <Button variant="ghost" size="icon" className="rounded-full">
+                  <SkipForward className="w-5 h-5" />
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className={cn("mt-4 p-4 rounded-xl bg-secondary/30 shrink-0", isFullscreen && "max-w-5xl w-full mx-auto")}>
+        <p className="text-sm text-center text-muted-foreground mb-3">이 콘텐츠가 도움이 되었나요?</p>
+        <div className="flex items-center justify-center gap-6 sm:gap-10">
+          <div className="flex flex-col items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => onMediaFeedbackChange("like")}
+              className={cn(
+                "flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-2xl border-2 text-3xl sm:text-4xl transition-all",
+                mediaFeedback === "like"
+                  ? "border-primary bg-primary/15 shadow-md scale-105"
+                  : "border-transparent bg-muted/60 hover:bg-muted"
+              )}
+              aria-label="도움이 됐어요"
+              aria-pressed={mediaFeedback === "like"}
+            >
+              👍
+            </button>
+            <span className="text-xs text-muted-foreground">도움이 됐어요</span>
+          </div>
+          <div className="flex flex-col items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => onMediaFeedbackChange("dislike")}
+              className={cn(
+                "flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-2xl border-2 text-3xl sm:text-4xl transition-all",
+                mediaFeedback === "dislike"
+                  ? "border-primary bg-primary/15 shadow-md scale-105"
+                  : "border-transparent bg-muted/60 hover:bg-muted"
+              )}
+              aria-label="아쉬워요"
+              aria-pressed={mediaFeedback === "dislike"}
+            >
+              👎
+            </button>
+            <span className="text-xs text-muted-foreground">아쉬워요</span>
+          </div>
+        </div>
+        {syncWarningMessage && (
+          <p className="mt-3 text-xs text-center text-destructive">{syncWarningMessage}</p>
+        )}
+      </div>
+
+      <div className={cn("mt-6 min-h-0", isFullscreen && "max-w-5xl w-full mx-auto pb-2")}>
+        <h4 className="text-sm font-medium text-foreground mb-3">다음 추천 콘텐츠</h4>
+        <div className="space-y-3">
+          {recommendedQueue.map((content, idx) => (
+            <div
+              key={content.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => onSelectRecommendedContent(content)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault()
+                  onSelectRecommendedContent(content)
+                }
+              }}
+              className="flex items-center gap-3 p-3 rounded-xl bg-muted/50 hover:bg-muted transition-colors cursor-pointer"
+            >
+              <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
+                <Play className="w-4 h-4 text-primary" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-foreground truncate">{content.content_title}</p>
+                <p className="text-xs text-muted-foreground">{idx === 0 ? "추천 우선" : "다음 추천"}</p>
+              </div>
+            </div>
+          ))}
+          {recommendedQueue.length === 0 && (
+            <p className="text-sm text-muted-foreground">추천 대기열이 아직 없습니다.</p>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -1059,10 +1662,37 @@ function CounselingView({
   recommendedQueue: ContentHistoryItem[]
   onSelectRecommendedContent: (value: ContentHistoryItem) => void
 }) {
+  const [contentFullscreen, setContentFullscreen] = useState(false)
+
+  useEffect(() => {
+    if (!contentFullscreen) return
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setContentFullscreen(false)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => {
+      document.body.style.overflow = prevOverflow
+      window.removeEventListener("keydown", onKey)
+    }
+  }, [contentFullscreen])
+
+  const mediaProps = {
+    currentContent,
+    recommendedQueue,
+    isPlaying,
+    setIsPlaying,
+    mediaFeedback,
+    onMediaFeedbackChange,
+    syncWarningMessage,
+    onSelectRecommendedContent,
+  }
+
   return (
-    <div className="flex h-full">
+    <div className="flex h-full min-h-0">
       {/* Chat Section */}
-      <div className="flex-1 flex flex-col border-r border-border">
+      <div className="flex-1 flex flex-col border-r border-border min-w-0">
         <div className="p-4 border-b border-border bg-card">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -1154,122 +1784,37 @@ function CounselingView({
         </div>
       </div>
 
-      {/* Media Player Section */}
-      <div className="w-96 bg-card p-6">
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold text-foreground mb-1">자동 추천 콘텐츠</h3>
-          <p className="text-sm text-muted-foreground">
-            대화 내용을 바탕으로 AI가 추천해 드려요
-          </p>
-        </div>
-
-        {/* Video Player */}
-        <Card className="overflow-hidden border-0 shadow-lg">
-          <div className="aspect-video bg-foreground/90 relative">
-            {currentContent.content_id && currentContent.content_id !== "fireplace-comfort-001" ? (
-              <iframe
-                src={`https://www.youtube.com/embed/${currentContent.content_id}?autoplay=1`}
-                title={currentContent.content_title}
-                className="absolute inset-0 w-full h-full"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-              />
-            ) : (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="text-center text-primary-foreground">
-                  <Flame className="w-16 h-16 mx-auto mb-2 opacity-80" />
-                  <p className="text-sm opacity-70">추천 콘텐츠가 여기에 재생됩니다</p>
-                </div>
-              </div>
-            )}
-          </div>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <span className="px-2 py-1 bg-primary/10 text-primary text-xs rounded-full font-medium">
-                {currentContent.content_id !== "fireplace-comfort-001" ? "재생 중" : "대기 중"}
-              </span>
-            </div>
-            <h4 className="font-medium text-foreground mb-2">
-              {currentContent.content_title}
-            </h4>
-
-            {/* YouTube에서 열기 */}
-            {currentContent.content_id && currentContent.content_id !== "fireplace-comfort-001" && (
-              <a
-                href={`https://www.youtube.com/watch?v=${currentContent.content_id}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline mb-4"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                YouTube에서 열기
-              </a>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Lightweight Feedback Section */}
-        <div className="mt-4 p-4 rounded-xl bg-secondary/30">
-          <p className="text-sm text-center text-muted-foreground mb-3">
-            이 콘텐츠가 도움이 되었나요?
-          </p>
-          <div className="flex items-center justify-center gap-4">
-            <Button
-              variant={mediaFeedback === "like" ? "default" : "outline"}
-              onClick={() => onMediaFeedbackChange("like")}
-              className="rounded-xl px-6"
-            >
-              <ThumbsUp className="w-4 h-4 mr-2" />
-              좋아요
-            </Button>
-            <Button
-              variant={mediaFeedback === "dislike" ? "default" : "outline"}
-              onClick={() => onMediaFeedbackChange("dislike")}
-              className="rounded-xl px-6"
-            >
-              <ThumbsDown className="w-4 h-4 mr-2" />
-              아쉬워요
-            </Button>
-          </div>
-          {syncWarningMessage && (
-            <p className="mt-3 text-xs text-center text-destructive">{syncWarningMessage}</p>
-          )}
-        </div>
-
-        {/* Recommended Queue */}
-        <div className="mt-6">
-          <h4 className="text-sm font-medium text-foreground mb-3">다음 추천 콘텐츠</h4>
-          <div className="space-y-3">
-            {recommendedQueue.map((content, idx) => (
-              <div
-                key={content.id}
-                onClick={() => onSelectRecommendedContent(content)}
-                className="flex items-center gap-3 p-3 rounded-xl bg-muted/50 hover:bg-muted transition-colors cursor-pointer"
-              >
-                <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
-                  <Play className="w-4 h-4 text-primary" />
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-foreground">{content.content_title}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {idx === 0 ? "추천 우선" : "다음 추천"}
-                  </p>
-                </div>
-              </div>
-            ))}
-            {recommendedQueue.length === 0 && (
-              <p className="text-sm text-muted-foreground">추천 대기열이 아직 없습니다.</p>
-            )}
-          </div>
-        </div>
+      <div className="w-96 shrink-0 bg-card p-6 overflow-y-auto flex flex-col min-h-0">
+        <ContentMediaPanel
+          variant="sidebar"
+          {...mediaProps}
+          onRequestFullscreen={() => setContentFullscreen(true)}
+        />
       </div>
+
+      {contentFullscreen && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col bg-background p-4 sm:p-6 overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-label="추천 콘텐츠 전체 화면"
+        >
+          <ContentMediaPanel
+            variant="fullscreen"
+            {...mediaProps}
+            onExitFullscreen={() => setContentFullscreen(false)}
+          />
+        </div>
+      )}
     </div>
   )
 }
 
 function DashboardView({
+  calendarYear,
   currentMonth,
-  setCurrentMonth,
+  goCalendarPrev,
+  goCalendarNext,
   getDaysInMonth,
   calendarMoods,
   emotionData,
@@ -1277,9 +1822,12 @@ function DashboardView({
   contentHistory,
   lastSurveyDelta,
   userStats,
+  onCalendarDayClick,
 }: {
+  calendarYear: number
   currentMonth: number
-  setCurrentMonth: (value: number) => void
+  goCalendarPrev: () => void
+  goCalendarNext: () => void
   getDaysInMonth: () => (number | null)[]
   calendarMoods: Record<number, { emoji: string; color: string }>
   emotionData: { date: string; score: number; label: string }[]
@@ -1287,6 +1835,7 @@ function DashboardView({
   contentHistory: ContentHistoryItem[]
   lastSurveyDelta: SurveyDeltaSummary | null
   userStats: UserStats | null
+  onCalendarDayClick: (day: number) => void
 }) {
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -1341,23 +1890,13 @@ function DashboardView({
             <div className="flex items-center justify-between">
               <CardTitle className="text-lg">감정 캘린더</CardTitle>
               <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => setCurrentMonth(Math.max(1, currentMonth - 1))}
-                >
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={goCalendarPrev}>
                   <ChevronLeft className="w-4 h-4" />
                 </Button>
-                <span className="text-sm font-medium min-w-[80px] text-center">
-                  2026년 {currentMonth}월
+                <span className="text-sm font-medium min-w-[100px] text-center">
+                  {calendarYear}년 {currentMonth}월
                 </span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => setCurrentMonth(Math.min(12, currentMonth + 1))}
-                >
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={goCalendarNext}>
                   <ChevronRight className="w-4 h-4" />
                 </Button>
               </div>
@@ -1373,15 +1912,18 @@ function DashboardView({
             </div>
             <div className="grid grid-cols-7 gap-1">
               {getDaysInMonth().map((day, idx) => (
-                <div
+                <button
                   key={idx}
-                  className={`aspect-square flex flex-col items-center justify-center rounded-lg text-sm ${
+                  type="button"
+                  disabled={!day}
+                  onClick={() => day && onCalendarDayClick(day)}
+                  className={`aspect-square flex flex-col items-center justify-center rounded-lg text-sm transition-colors ${
                     day && calendarMoods[day]
                       ? `${calendarMoods[day].color}`
                       : day
-                      ? "bg-muted/30 hover:bg-muted"
-                      : ""
-                  }`}
+                        ? "bg-muted/30 hover:bg-muted cursor-pointer"
+                        : ""
+                  } ${!day ? "cursor-default" : ""}`}
                 >
                   {day && (
                     <>
@@ -1391,7 +1933,7 @@ function DashboardView({
                       )}
                     </>
                   )}
-                </div>
+                </button>
               ))}
             </div>
           </CardContent>
@@ -1887,6 +2429,13 @@ function MyPageView({
   setMediaPreference,
   onLogout,
   userEmail,
+  displayName,
+  onSaveDisplayName,
+  profileSaveMessage,
+  isSavingProfile,
+  onSaveMypagePreferences,
+  mypagePrefsMessage,
+  isSavingMypagePrefs,
   userCreatedAt,
   totalSessions,
   dailyReminderEnabled,
@@ -1897,6 +2446,9 @@ function MyPageView({
   setDailyReminderTimezone,
   onSaveReminderPreference,
   reminderSaveMessage,
+  onExportMyData,
+  isExportingMyData,
+  exportMyDataMessage,
 }: {
   autoPlayEnabled: boolean
   setAutoPlayEnabled: (value: boolean) => void
@@ -1904,6 +2456,13 @@ function MyPageView({
   setMediaPreference: (value: string) => void
   onLogout: () => void
   userEmail: string
+  displayName: string | null
+  onSaveDisplayName: (name: string) => Promise<boolean>
+  profileSaveMessage: string | null
+  isSavingProfile: boolean
+  onSaveMypagePreferences: () => Promise<void>
+  mypagePrefsMessage: string | null
+  isSavingMypagePrefs: boolean
   userCreatedAt: string | null
   totalSessions: number
   dailyReminderEnabled: boolean
@@ -1914,7 +2473,13 @@ function MyPageView({
   setDailyReminderTimezone: (value: string) => void
   onSaveReminderPreference: () => Promise<void>
   reminderSaveMessage: string | null
+  onExportMyData: () => Promise<void>
+  isExportingMyData: boolean
+  exportMyDataMessage: string | null
 }) {
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [draftDisplayName, setDraftDisplayName] = useState("")
+
   const joinedAtText = userCreatedAt
     ? new Date(userCreatedAt).toLocaleDateString("ko-KR", {
         year: "numeric",
@@ -1923,12 +2488,62 @@ function MyPageView({
       })
     : "-"
 
+  const shownName = displayName?.trim() || userEmail.split("@")[0]
+
+  const openProfileEdit = () => {
+    setDraftDisplayName(displayName?.trim() || userEmail.split("@")[0])
+    setProfileOpen(true)
+  }
+
   return (
     <div className="p-8 max-w-3xl mx-auto">
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-foreground mb-2">마이페이지</h2>
         <p className="text-muted-foreground">계정 설정 및 환경설정을 관리하세요</p>
       </div>
+
+      <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>표시 이름 수정</DialogTitle>
+            <DialogDescription>서비스에서 보여질 이름을 입력하세요.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="edit-display-name">이름</Label>
+            <Input
+              id="edit-display-name"
+              value={draftDisplayName}
+              onChange={(e) => setDraftDisplayName(e.target.value)}
+              className="rounded-xl bg-muted border-0"
+              placeholder="이름"
+            />
+            {profileSaveMessage && (
+              <p
+                className={`text-xs ${profileSaveMessage.includes("실패") ? "text-destructive" : "text-muted-foreground"}`}
+              >
+                {profileSaveMessage}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setProfileOpen(false)}>
+              취소
+            </Button>
+            <Button
+              type="button"
+              disabled={isSavingProfile}
+              onClick={() =>
+                void (async () => {
+                  const ok = await onSaveDisplayName(draftDisplayName)
+                  if (ok) setProfileOpen(false)
+                })()
+              }
+            >
+              {isSavingProfile ? "저장 중…" : "저장"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Profile Section */}
       <Card className="border-0 shadow-lg mb-6">
@@ -1940,10 +2555,10 @@ function MyPageView({
             <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center">
               <User className="w-10 h-10 text-primary" />
             </div>
-            <div className="flex-1">
-              <h3 className="text-xl font-semibold text-foreground mb-1">{userEmail.split("@")[0]}</h3>
-              <p className="text-muted-foreground">{userEmail}</p>
-              <div className="flex items-center gap-2 mt-3">
+            <div className="flex-1 min-w-0">
+              <h3 className="text-xl font-semibold text-foreground mb-1 truncate">{shownName}</h3>
+              <p className="text-muted-foreground break-all">{userEmail}</p>
+              <div className="flex items-center gap-2 mt-3 flex-wrap">
                 <span className="px-3 py-1 bg-primary/10 text-primary text-xs rounded-full font-medium">
                   일반 회원
                 </span>
@@ -1952,7 +2567,7 @@ function MyPageView({
                 </span>
               </div>
             </div>
-            <Button variant="outline" className="rounded-xl">
+            <Button variant="outline" className="rounded-xl shrink-0" type="button" onClick={openProfileEdit}>
               프로필 수정
             </Button>
           </div>
@@ -2001,6 +2616,21 @@ function MyPageView({
                 <SelectItem value="mixed">혼합 추천</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              className="rounded-xl w-fit"
+              disabled={isSavingMypagePrefs}
+              onClick={() => void onSaveMypagePreferences()}
+            >
+              {isSavingMypagePrefs ? "저장 중…" : "맞춤 설정 계정에 저장"}
+            </Button>
+            {mypagePrefsMessage && (
+              <p className="text-xs text-muted-foreground">{mypagePrefsMessage}</p>
+            )}
           </div>
 
           <div className="rounded-xl border border-border p-4 space-y-3">
@@ -2057,15 +2687,24 @@ function MyPageView({
           <CardTitle className="text-lg">데이터 관리</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between p-4 bg-muted/50 rounded-xl">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 bg-muted/50 rounded-xl">
             <div>
               <p className="font-medium text-foreground">내 상담 기록</p>
               <p className="text-sm text-muted-foreground">
                 총 {totalSessions}회의 상담 기록이 저장되어 있습니다
               </p>
+              {exportMyDataMessage && (
+                <p className="text-xs text-muted-foreground mt-1">{exportMyDataMessage}</p>
+              )}
             </div>
-            <Button variant="outline" className="rounded-xl">
-              기록 내보내기
+            <Button
+              variant="outline"
+              className="rounded-xl shrink-0"
+              type="button"
+              disabled={isExportingMyData}
+              onClick={() => void onExportMyData()}
+            >
+              {isExportingMyData ? "내보내는 중…" : "기록 내보내기 (JSON)"}
             </Button>
           </div>
 
@@ -2078,7 +2717,10 @@ function MyPageView({
             </div>
             <Button
               variant="outline"
-              className="rounded-xl border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground"
+              type="button"
+              disabled
+              title="준비 중입니다"
+              className="rounded-xl border-destructive text-destructive opacity-60"
             >
               <Trash2 className="w-4 h-4 mr-2" />
               초기화

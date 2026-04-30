@@ -83,6 +83,8 @@ export async function saveContentFeedback(params: {
   contentId: string
   contentTitle: string
   thumbnailUrl?: string
+  mediaProvider?: "youtube" | "spotify" | null
+  mediaUrl?: string | null
 }): Promise<void> {
   const userId = await getCurrentUserId()
 
@@ -100,6 +102,8 @@ export async function saveContentFeedback(params: {
     params.contentId,
     params.contentTitle,
     params.thumbnailUrl,
-    params.sessionId
+    params.sessionId,
+    params.mediaProvider,
+    params.mediaUrl
   )
 }
