@@ -16,6 +16,10 @@ RUN apt-get update \
 # Copy source
 COPY backend/ ./
 
+# Copy entrypoint script
+COPY backend/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
