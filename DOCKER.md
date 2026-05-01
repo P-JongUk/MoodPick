@@ -13,8 +13,12 @@ docker compose down
 ```
 
 Environment notes:
-- The `backend` service reads environment variables from the repository `.env`. Ensure `DATABASE_URL` and any API keys are set; `docker-compose.yml` sets a default `DATABASE_URL` pointing to the `db` service.
+- The `backend` service reads `backend/.env.local`.
+- The `frontend` service reads `frontend/.env.local`.
+- `docker-compose.yml` still sets `DATABASE_URL` for the backend container so it can reach the local `db` service.
 - The Postgres data is persisted in a Docker volume `db-data`.
+- Do not create a root `.env` for this setup unless you intentionally want to override the per-app env files.
 
 Troubleshooting:
 - To run migrations manually: run a one-off command against the backend container, e.g. `docker compose run --rm backend alembic upgrade head` (adjust to your migration tooling).
+- If you change `backend/.env.local` or `frontend/.env.local`, restart the affected container with `docker compose up -d --force-recreate backend frontend`.
