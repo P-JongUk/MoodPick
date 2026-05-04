@@ -88,11 +88,11 @@ _TOOL_DEFINITIONS = [
                     },
                     "emotion": {
                         "type": "string",
-                        "description": "감지된 감정 (예: 불안, 슬픔, 스트레스, 외로움, 분노, 무기력)",
+                        "description": "감지된 상세 감정 (예: 단순 슬픔이 아닌 '과도한 자책감이 동반된 우울', '깊은 상실감' 등 구체적 묘사)",
                     },
                     "intensity": {
                         "type": "number",
-                        "description": "감정 강도 (0.0~1.0)",
+                        "description": "감정 강도 (0.0~1.0). 매뉴얼 기준이 있다면 우선 적용.",
                     },
                 },
                 "required": ["user_id", "session_id", "emotion", "intensity"],
@@ -131,22 +131,13 @@ def _build_system_message(state: CounselingState) -> str:
     base_prompt = load_prompt("system_prompt.md")
 
     # Inject user_id and session_id so GPT can pass them to tools
-    context = (
-        f"\n\n## 현재 세션 정보\n"
+    session_context = (
+        f"\n\n### [Module 0: Session Context]\n"
         f"- user_id: {state.user_id}\n"
         f"- session_id: {state.session_id}\n"
     )
 
-    # Instruct GPT to also output emotion analysis
-    emotion_instruction = (
-        "\n\n## 감정 분석 지침\n"
-        "사용자 메시지를 분석하여 감정과 강도를 파악하라.\n"
-        "응답 생성 후 반드시 save_emotion_record를 호출하여 감정을 기록하라.\n"
-        "콘텐츠 추천이 도움될 것 같다고 판단되면, "
-        "응답 마지막에 자연스럽게 언급하라.\n"
-    )
-
-    return base_prompt + context + emotion_instruction
+    return base_prompt + session_context
 
 
 def _execute_tool_call(tool_call) -> str:
