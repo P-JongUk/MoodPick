@@ -56,6 +56,7 @@ async def run_counseling_pipeline(
             if video_id:
                 try:
                     supabase = _get_supabase()
+                    # 5-1. watched_content_records
                     supabase.table("watched_content_records").insert({
                         "user_id": state.user_id,
                         "session_id": state.session_id,
@@ -63,7 +64,25 @@ async def run_counseling_pipeline(
                         "content_title": title,
                         "thumbnail_url": state.recommended_content.get("thumbnail", ""),
                     }).execute()
-                except Exception:
-                    pass  # Non-fatal: don't break pipeline for a save failure
+                    
+                    # 5-2. recommendation_log
+                    emotion = state.emotion_score.get("emotion_description", "")
+                    intensity = float(abs(state.emotion_score.get("valence", 0.0)))
+                    
+                    supabase.table("recommendation_log").insert({
+                        "user_id": state.user_id,
+                        "session_id": state.session_id,
+                        "search_query": state.recommended_content.get("search_query", ""),
+                        "video_id": video_id,
+                        "video_title": title,
+                        "reason": reason,
+                        "emotion": emotion,
+                        "intensity": intensity,
+                        "candidate_pool": state.recommended_content.get("candidate_pool", []),
+                        "selected_score": state.recommended_content.get("selected_score", 0.0),
+                        "strategy_version": "v2.1"
+                    }).execute()
+                except Exception as e:
+                    print(f"Failed to save recommendation log/history: {e}")
 
     return state

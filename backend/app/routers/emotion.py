@@ -16,13 +16,11 @@ class EmotionAnalysisRequest(BaseModel):
 
 class EmotionAnalysisResponse(BaseModel):
     emotion: str
-    intensity: float
     recommendations: List[str] = []
 
 
 class EmotionRecordResponse(BaseModel):
     emotion: str
-    intensity: float
     recorded_at: str
 
 
@@ -69,7 +67,6 @@ async def analyze_emotion(
 
         return EmotionAnalysisResponse(
             emotion=emotion,
-            intensity=intensity,
             recommendations=recommendations
         )
     except Exception as e:

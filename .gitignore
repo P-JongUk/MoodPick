@@ -83,3 +83,7 @@ logs/
 
 # Gemini
 .geminiignore
+
+# Others
+/papers
+/artifacts

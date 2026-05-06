@@ -12,15 +12,20 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Locate backend/.env.local relative to this file
-# ai/config.py → ai/ → MoodPick/ → backend/.env.local
-_env_path = Path(__file__).parent.parent / "backend" / ".env.local"
+# 환경 변수로 .env 파일 경로를 지정할 수 있도록 허용 (배포용)
+# 지정되지 않은 경우 로컬 개발을 위한 기본 상대 경로 사용
+_env_path = os.getenv("ENV_FILE_PATH")
 
-if _env_path.exists():
+if not _env_path:
+    _fallback_path = Path(__file__).parent.parent / "backend" / ".env.local"
+    if _fallback_path.exists():
+        _env_path = str(_fallback_path)
+
+if _env_path:
     load_dotenv(dotenv_path=_env_path)
 else:
-    # Fallback: try OS environment variables directly (e.g. in Docker / CI)
-    pass
+    # 기본 .env 파일이나 OS 환경변수 폴백
+    load_dotenv()
 
 # --- Exported constants used by ai/tools/ ---
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")

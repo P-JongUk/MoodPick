@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from typing import List, Literal, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
 from app.services.supabase_service import get_supabase_client
 from supabase import Client
 from datetime import datetime
@@ -97,6 +97,7 @@ class ContentRecommendationItem(BaseModel):
 @router.post("/feedback")
 async def submit_content_feedback(
     payload: ContentFeedbackRequest,
+    background_tasks: BackgroundTasks,
     supabase: Client = Depends(get_supabase_client)
 ):
     """콘텐츠 피드백 저장 (👍/👎)"""
@@ -118,6 +119,12 @@ async def submit_content_feedback(
 
         if result.data and len(result.data) > 0:
             feedback = result.data[0]
+            
+            # 좋아요 시 백그라운드 태스크로 벡터 갱신
+            if payload.feedback == "like":
+                from ai.tools.user_taste import refresh_user_taste_vector
+                background_tasks.add_task(refresh_user_taste_vector, payload.user_id)
+                
             return ContentFeedbackResponse(**feedback)
         else:
             raise HTTPException(

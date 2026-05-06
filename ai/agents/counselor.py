@@ -86,16 +86,20 @@ _TOOL_DEFINITIONS = [
                         "type": "string",
                         "description": "현재 상담 세션 UUID",
                     },
-                    "emotion": {
-                        "type": "string",
-                        "description": "감지된 상세 감정 (예: 단순 슬픔이 아닌 '과도한 자책감이 동반된 우울', '깊은 상실감' 등 구체적 묘사)",
-                    },
-                    "intensity": {
+                    "valence": {
                         "type": "number",
-                        "description": "감정 강도 (0.0~1.0). 매뉴얼 기준이 있다면 우선 적용.",
+                        "description": "감정의 긍정/부정 정도 (-1.0 매우 부정 ~ 1.0 매우 긍정). 연속적인 실수값으로 평가.",
+                    },
+                    "arousal": {
+                        "type": "number",
+                        "description": "감정의 각성/활성화 정도 (-1.0 매우 침잠 ~ 1.0 매우 활성화). 연속적인 실수값으로 평가.",
+                    },
+                    "emotion_description": {
+                        "type": "string",
+                        "description": "사용자의 현재 감정 상태를 1~2문장으로 서술. 단순 레이블이 아닌 맥락·원인·필요를 포함할 것. 예: '직장 스트레스와 자책감으로 지쳐 있으며, 조용히 마음을 달래줄 콘텐츠가 필요한 상태' 이 문장은 콘텐츠 추천 임베딩 쿼리로 직접 사용됨.",
                     },
                 },
-                "required": ["user_id", "session_id", "emotion", "intensity"],
+                "required": ["user_id", "session_id", "valence", "arousal", "emotion_description"],
             },
         },
     },
@@ -103,21 +107,39 @@ _TOOL_DEFINITIONS = [
 
 # ── Tool dispatcher ─────────────────────────────────────────────────────────
 
-_TOOL_FUNCTIONS = {
-    "search_rag_context": lambda args: search_rag_context(
-        query_text=args["query_text"],
-        top_k=args.get("top_k", 3),
-    ),
-    "get_user_profile": lambda args: get_user_profile(
-        user_id=args["user_id"],
-    ),
-    "save_emotion_record": lambda args: save_emotion_record(
-        user_id=args["user_id"],
-        session_id=args["session_id"],
-        emotion=args["emotion"],
-        intensity=args["intensity"],
-    ),
-}
+def _execute_tool_call(tool_call, state: CounselingState) -> str:
+    """Execute a single tool call and return the result as a JSON string."""
+    fn_name = tool_call.function.name
+    fn_args = json.loads(tool_call.function.arguments)
+
+    # Log tool calls to terminal for debugging
+    print(f"\n>>> [AI TOOL CALL] {fn_name}({fn_args})\n")
+
+    if fn_name == "search_rag_context":
+        result = search_rag_context(
+            query_text=fn_args["query_text"],
+            top_k=fn_args.get("top_k", 3),
+        )
+    elif fn_name == "get_user_profile":
+        result = get_user_profile(
+            user_id=fn_args["user_id"],
+        )
+    elif fn_name == "save_emotion_record":
+        result = save_emotion_record(
+            user_id=fn_args["user_id"],
+            session_id=fn_args["session_id"],
+            valence=fn_args.get("valence", 0.0),
+            arousal=fn_args.get("arousal", 0.0),
+            emotion_description=fn_args.get("emotion_description", ""),
+            raw_message=state.message,  # 자동 주입
+        )
+    else:
+        return json.dumps({"error": f"Unknown tool: {fn_name}"})
+
+    try:
+        return json.dumps(result, ensure_ascii=False, default=str)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 def _get_openai() -> OpenAI:
@@ -139,21 +161,6 @@ def _build_system_message(state: CounselingState) -> str:
 
     return base_prompt + session_context
 
-
-def _execute_tool_call(tool_call) -> str:
-    """Execute a single tool call and return the result as a JSON string."""
-    fn_name = tool_call.function.name
-    fn_args = json.loads(tool_call.function.arguments)
-
-    executor = _TOOL_FUNCTIONS.get(fn_name)
-    if not executor:
-        return json.dumps({"error": f"Unknown tool: {fn_name}"})
-
-    try:
-        result = executor(fn_args)
-        return json.dumps(result, ensure_ascii=False, default=str)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
 
 
 async def counselor_agent(state: CounselingState) -> CounselingState:
@@ -177,6 +184,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
 
     # ── Function Calling loop ───────────────────────────────────────────
     max_iterations = 5  # safety limit to prevent infinite loops
+    save_emotion_called = False  # track if save_emotion_record was invoked
 
     for _ in range(max_iterations):
         response = client.chat.completions.create(
@@ -198,7 +206,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
 
         # Execute each tool call and append results
         for tool_call in choice.message.tool_calls:
-            result_str = _execute_tool_call(tool_call)
+            result_str = _execute_tool_call(tool_call, state)
 
             # Cache user_profile in state if fetched
             if tool_call.function.name == "get_user_profile":
@@ -211,11 +219,13 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
 
             # Extract emotion_score from save_emotion_record call
             if tool_call.function.name == "save_emotion_record":
+                save_emotion_called = True
                 try:
                     args = json.loads(tool_call.function.arguments)
                     state.emotion_score = {
-                        "emotion": args.get("emotion", ""),
-                        "intensity": args.get("intensity", 0.0),
+                        "valence": args.get("valence", 0.0),
+                        "arousal": args.get("arousal", 0.0),
+                        "emotion_description": args.get("emotion_description", ""),
                     }
                 except (json.JSONDecodeError, TypeError):
                     pass
@@ -229,6 +239,34 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
     # ── Extract final response ──────────────────────────────────────────
     final_content = response.choices[0].message.content or ""
     state.response = final_content
+
+    # ── Guarantee: save emotion even if GPT skipped the tool ────────────
+    # When GPT replies with text immediately (no tool calls), emotion_records
+    # would be missing. Force a single save_emotion_record call via tool_choice.
+    if not save_emotion_called:
+        try:
+            forced = _get_openai().chat.completions.create(
+                model=_MODEL,
+                temperature=0.0,
+                max_tokens=150,
+                tools=_TOOL_DEFINITIONS,
+                tool_choice={"type": "function", "function": {"name": "save_emotion_record"}},
+                messages=messages,
+            )
+            for tc in (forced.choices[0].message.tool_calls or []):
+                if tc.function.name == "save_emotion_record":
+                    _execute_tool_call(tc, state)
+                    try:
+                        args = json.loads(tc.function.arguments)
+                        state.emotion_score = {
+                            "valence": args.get("valence", 0.0),
+                            "arousal": args.get("arousal", 0.0),
+                            "emotion_description": args.get("emotion_description", ""),
+                        }
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+        except Exception as e:
+            print(f"[WARN] Forced emotion save failed: {e}")
 
     # Check if counselor suggests recommendation in the response
     recommendation_signals = ["추천해드릴까요", "추천해 드릴까요", "들려드릴까요", "틀어드릴까요"]
