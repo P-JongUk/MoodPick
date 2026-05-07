@@ -12,6 +12,24 @@ docker compose up --build
 docker compose down
 ```
 
+If another teammate wants to test the same setup:
+
+```bash
+# if they already cloned the repo, update first
+git fetch origin
+git switch develop
+git pull
+
+# then start Docker
+docker compose up --build
+```
+
+If they are starting from a fresh clone, they only need to make sure Docker Desktop is running and that these files exist locally:
+- `backend/.env.local`
+- `frontend/.env.local`
+
+Then run `docker compose up --build` from the repository root.
+
 Environment notes:
 - The `backend` service reads `backend/.env.local`.
 - The `frontend` service reads `frontend/.env.local`.

@@ -9,6 +9,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Message,
 
+    # 팀 표준 흐름: develop에서 feat/fix 브랜치를 뽑아 작업합니다.
     [string]$BaseBranch = "develop",
 
     [switch]$Push
@@ -74,9 +75,11 @@ Require-GitClean
 Write-Host "[2/5] 기준 브랜치 준비: $BaseBranch"
 Ensure-BaseBranch -Branch $BaseBranch
 Checkout-And-UpdateBase -Branch $BaseBranch
+Write-Host "      기준 브랜치 최신화 완료: $BaseBranch"
 
 Write-Host "[3/5] 작업 브랜치 준비: $branchName"
 Ensure-WorkBranch -BranchName $branchName -Base $BaseBranch
+Write-Host "      작업 브랜치 준비 완료: $branchName"
 
 Write-Host "[4/5] 변경사항 커밋"
 git add -A
@@ -91,6 +94,7 @@ git commit -m $commitMessage
 if ($Push) {
     Write-Host "[5/5] 원격 브랜치 푸시"
     git push -u origin $branchName
+    Write-Host "      원격 푸시 완료: origin/$branchName"
 }
 else {
     Write-Host "[5/5] 푸시 생략 (옵션 -Push 미사용)"
