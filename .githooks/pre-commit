@@ -1,0 +1,11 @@
+#!/bin/sh
+
+branch="$(git rev-parse --abbrev-ref HEAD)"
+
+if [ "$branch" = "main" ]; then
+  echo "[차단] main 브랜치 직접 커밋은 금지되어 있습니다."
+  echo "develop 또는 feat/*, fix/* 브랜치에서 작업 후 머지하세요."
+  exit 1
+fi
+
+exit 0

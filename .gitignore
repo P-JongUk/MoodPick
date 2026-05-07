@@ -11,6 +11,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 ENV/
 build/
 develop-eggs/
@@ -18,8 +19,6 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
 parts/
 sdist/
 var/
@@ -81,3 +80,10 @@ logs/
 # Local development
 .turbo/
 .cache/
+
+# Gemini
+.geminiignore
+
+# Others
+/papers
+/artifacts
