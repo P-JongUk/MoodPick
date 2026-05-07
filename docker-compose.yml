@@ -18,6 +18,9 @@ services:
       - backend/.env.local
     environment:
       DATABASE_URL: postgres://postgres:postgres@db:5432/moodpick
+    volumes:
+      - ./backend:/app
+      - ./ai:/app/ai
     depends_on:
       - db
     ports:
@@ -29,6 +32,9 @@ services:
       dockerfile: frontend/Dockerfile
     env_file:
       - frontend/.env.local
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
     ports:
       - "3000:3000"
     depends_on:
@@ -36,3 +42,4 @@ services:
 
 volumes:
   db-data:
+  frontend-node-modules:

@@ -12,6 +12,16 @@ docker compose up --build
 docker compose down
 ```
 
+Once the containers are running, editing files on your machine should be reflected automatically in the browser because the backend and frontend source folders are bind-mounted into the containers.
+
+If you change dependencies or Dockerfiles, run:
+
+```bash
+docker compose up --build -d
+```
+
+For normal code edits, you usually only need to save the file and refresh the page.
+
 If another teammate wants to test the same setup:
 
 ```bash

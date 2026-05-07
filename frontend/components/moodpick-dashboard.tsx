@@ -59,6 +59,8 @@ import {
   ThumbsUp,
   ThumbsDown,
   X,
+  Eye,
+  EyeOff,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -2021,6 +2023,8 @@ function LoginScreen({
 }) {
   const isEmailOnlyMode = true
   const [isSignUpMode, setIsSignUpMode] = useState(false)
+  const [showLoginPassword, setShowLoginPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [confirmPassword, setConfirmPassword] = useState("")
 
   const handleAuthSubmit = async () => {
@@ -2100,30 +2104,50 @@ function LoginScreen({
                 <Label htmlFor="password" className="text-sm text-muted-foreground">
                   비밀번호
                 </Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="비밀번호를 입력하세요"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="mt-1.5 rounded-xl bg-muted border-0 h-12"
-                  onKeyDown={(e) => e.key === "Enter" && handleAuthSubmit()}
-                />
+                <div className="relative mt-1.5">
+                  <Input
+                    id="password"
+                    type={showLoginPassword ? "text" : "password"}
+                    placeholder="비밀번호를 입력하세요"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="rounded-xl bg-muted border-0 h-12 pr-12"
+                    onKeyDown={(e) => e.key === "Enter" && handleAuthSubmit()}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowLoginPassword((prev) => !prev)}
+                    className="absolute inset-y-0 right-0 flex items-center justify-center w-12 text-muted-foreground hover:text-foreground"
+                    aria-label={showLoginPassword ? "비밀번호 숨기기" : "비밀번호 보기"}
+                  >
+                    {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
               {isSignUpMode && (
                 <div>
                   <Label htmlFor="confirm-password" className="text-sm text-muted-foreground">
                     비밀번호 확인
                   </Label>
-                  <Input
-                    id="confirm-password"
-                    type="password"
-                    placeholder="비밀번호를 다시 입력하세요"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="mt-1.5 rounded-xl bg-muted border-0 h-12"
-                    onKeyDown={(e) => e.key === "Enter" && handleAuthSubmit()}
-                  />
+                  <div className="relative mt-1.5">
+                    <Input
+                      id="confirm-password"
+                      type={showConfirmPassword ? "text" : "password"}
+                      placeholder="비밀번호를 다시 입력하세요"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      className="rounded-xl bg-muted border-0 h-12 pr-12"
+                      onKeyDown={(e) => e.key === "Enter" && handleAuthSubmit()}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword((prev) => !prev)}
+                      className="absolute inset-y-0 right-0 flex items-center justify-center w-12 text-muted-foreground hover:text-foreground"
+                      aria-label={showConfirmPassword ? "비밀번호 숨기기" : "비밀번호 보기"}
+                    >
+                      {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                   {confirmPassword && password !== confirmPassword && (
                     <p className="mt-2 text-xs text-destructive">비밀번호가 일치하지 않습니다.</p>
                   )}
