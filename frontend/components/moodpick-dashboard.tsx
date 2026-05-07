@@ -10,7 +10,6 @@ import {
   startCounselingSession,
 } from "@/lib/sessionData"
 import {
-  analyzeEmotion,
   endSession,
   getContentHistory,
   getCurrentSession,
@@ -111,12 +110,6 @@ interface Message {
   recommendedContent?: RecommendedContent | null
 }
 
-interface Emotion {
-  emoji: string
-  label: string
-  color: string
-}
-
 interface SessionHistory {
   id: number
   date: string
@@ -162,14 +155,6 @@ interface EmotionSummary {
   average_score: number
   trend: "improving" | "declining" | "stable"
 }
-
-const emotions: Emotion[] = [
-  { emoji: "😊", label: "기쁨", color: "bg-amber-100 hover:bg-amber-200 border-amber-300" },
-  { emoji: "😐", label: "평온", color: "bg-sky-100 hover:bg-sky-200 border-sky-300" },
-  { emoji: "😢", label: "슬픔", color: "bg-blue-100 hover:bg-blue-200 border-blue-300" },
-  { emoji: "😡", label: "분노", color: "bg-rose-100 hover:bg-rose-200 border-rose-300" },
-  { emoji: "😫", label: "불안", color: "bg-orange-100 hover:bg-orange-200 border-orange-300" },
-]
 
 const defaultContentItem: ContentHistoryItem = {
   id: "default-content",
@@ -224,20 +209,6 @@ const scoreToCalendarColor = (score: number) => {
   return "bg-blue-200"
 }
 
-/** 홈 감정 이모지 → 사전 문진 문항 값(great~bad) */
-const HOME_EMOJI_TO_SURVEY_MOOD: Record<string, string> = {
-  "😊": "great",
-  "😐": "neutral",
-  "😢": "low",
-  "😡": "low",
-  "😫": "low",
-}
-
-function homeEmojiToPreMood(emoji: string | null): string | null {
-  if (!emoji) return null
-  return HOME_EMOJI_TO_SURVEY_MOOD[emoji] ?? null
-}
-
 export function MoodPickDashboard() {
   const {
     user,
@@ -257,7 +228,6 @@ export function MoodPickDashboard() {
   const [activeTab, setActiveTab] = useState<TabType>("home")
   const [messages, setMessages] = useState<Message[]>([])
   const [inputMessage, setInputMessage] = useState("")
-  const [selectedEmotion, setSelectedEmotion] = useState<string | null>(null)
   const [isPlaying, setIsPlaying] = useState(true)
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth() + 1)
   const [mediaFeedback, setMediaFeedback] = useState<"like" | "dislike" | null>(null)
@@ -600,7 +570,7 @@ export function MoodPickDashboard() {
 
   const handleStartNewSession = () => {
     setSyncWarningMessage(null)
-    setPreSurveyMood(homeEmojiToPreMood(selectedEmotion))
+    setPreSurveyMood(null)
     setShowPreSurvey(true)
   }
 
@@ -787,16 +757,6 @@ export function MoodPickDashboard() {
       setMessages((prev) => [...prev, fallbackResponse])
     } finally {
       setIsSendingMessage(false)
-    }
-  }
-
-  const handleEmotionSelect = (emoji: string) => {
-    setSelectedEmotion(emoji)
-    const label = emotions.find((e) => e.emoji === emoji)?.label ?? ""
-    if (user?.id) {
-      void analyzeEmotion(`홈 화면에서 선택한 감정: ${emoji} (${label})`, "home_emotion_pick").catch(
-        () => undefined
-      )
     }
   }
 
@@ -1069,9 +1029,6 @@ export function MoodPickDashboard() {
       <main className="flex-1 overflow-auto">
         {activeTab === "home" && (
           <HomeView
-            emotions={emotions}
-            selectedEmotion={selectedEmotion}
-            onEmotionSelect={handleEmotionSelect}
             onStartNewSession={handleStartNewSession}
             userStats={userStats}
             emotionSummary={emotionSummary}
@@ -1224,9 +1181,6 @@ export function MoodPickDashboard() {
 }
 
 function HomeView({
-  emotions,
-  selectedEmotion,
-  onEmotionSelect,
   onStartNewSession,
   userStats,
   emotionSummary,
@@ -1234,9 +1188,6 @@ function HomeView({
   onPlayRecommended,
   flowMessage,
 }: {
-  emotions: Emotion[]
-  selectedEmotion: string | null
-  onEmotionSelect: (emoji: string) => void
   onStartNewSession: () => void
   userStats: UserStats | null
   emotionSummary: EmotionSummary | null
@@ -1263,9 +1214,6 @@ function HomeView({
         <h2 className="text-3xl font-bold text-foreground mb-3 text-balance">
           오늘 하루, 당신의 마음은 어떤 색인가요?
         </h2>
-        <p className="text-muted-foreground text-lg">
-          지금 느끼는 감정을 선택해 주세요. 선택한 감정은 상담 시작 시 사전 문진에 반영됩니다.
-        </p>
         {flowMessage && (
           <p className="mt-3 text-sm text-destructive bg-destructive/10 rounded-xl px-4 py-2">{flowMessage}</p>
         )}
@@ -1281,28 +1229,6 @@ function HomeView({
           <MessageCircle className="w-5 h-5 mr-3" />
           새로운 상담 시작하기
         </Button>
-      </div>
-
-      {/* Emotion Selection */}
-      <div className="mb-10">
-        <div className="grid grid-cols-5 gap-4">
-          {emotions.map((emotion) => (
-            <button
-              key={emotion.emoji}
-              onClick={() => onEmotionSelect(emotion.emoji)}
-              className={`flex flex-col items-center justify-center p-6 rounded-2xl border-2 transition-all duration-200 ${
-                emotion.color
-              } ${
-                selectedEmotion === emotion.emoji
-                  ? "ring-2 ring-primary ring-offset-2 scale-105"
-                  : "hover:scale-105"
-              }`}
-            >
-              <span className="text-4xl mb-2">{emotion.emoji}</span>
-              <span className="text-sm font-medium text-foreground">{emotion.label}</span>
-            </button>
-          ))}
-        </div>
       </div>
 
       {/* Today's Care */}
