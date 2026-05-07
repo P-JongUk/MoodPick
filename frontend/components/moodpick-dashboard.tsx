@@ -176,6 +176,7 @@ function mapContentHistoryRow(row: Record<string, unknown>): ContentHistoryItem 
         ? row.media_provider
         : null,
     media_url: row.media_url != null ? String(row.media_url) : null,
+    getUserProfile,
     watched_at: String(row.watched_at ?? new Date().toISOString()),
     session_id: row.session_id != null ? String(row.session_id) : null,
   }
@@ -278,6 +279,7 @@ export function MoodPickDashboard() {
 
   const [profileSaveMessage, setProfileSaveMessage] = useState<string | null>(null)
   const [isSavingProfile, setIsSavingProfile] = useState(false)
+  const [profileDisplayName, setProfileDisplayName] = useState<string | null>(null)
   const [mypagePrefsMessage, setMypagePrefsMessage] = useState<string | null>(null)
   const [isSavingMypagePrefs, setIsSavingMypagePrefs] = useState(false)
   const [isExportingMyData, setIsExportingMyData] = useState(false)
@@ -294,12 +296,13 @@ export function MoodPickDashboard() {
         setContentHistory([])
         setCurrentContent(defaultContentItem)
         setRecommendedQueue([])
+        setProfileDisplayName(null)
         return
       }
 
       try {
         const mediaQuery = mediaPreferenceToQueryParam(mediaPreference)
-        const [stats, emotionRecordsRaw, summary, sessionsRaw, contentsRaw, recsRaw] =
+        const [stats, emotionRecordsRaw, summary, sessionsRaw, contentsRaw, recsRaw, profile] =
           await Promise.all([
             getUserStats(user.id),
             getEmotionRecords(user.id, 30),
@@ -309,10 +312,12 @@ export function MoodPickDashboard() {
             getContentRecommendations(user.id, { limit: 10, media: mediaQuery }).catch(
               () => [] as unknown[]
             ),
+            getUserProfile(user.id).catch(() => null),
           ])
 
         setUserStats(stats as UserStats)
         setEmotionSummary(summary as EmotionSummary)
+        setProfileDisplayName((profile as { name?: string | null } | null)?.name ?? null)
 
         const emotionRecords = (emotionRecordsRaw as EmotionRecordItem[]) || []
         const groupedByDay = new Map<string, number[]>()
@@ -775,7 +780,10 @@ export function MoodPickDashboard() {
       const { error } = await supabase.auth.updateUser({
         data: { display_name: trimmed },
       })
-      if (error) throw error
+      if (error) {
+        console.warn("Failed to sync auth metadata display name:", error)
+      }
+      setProfileDisplayName(trimmed)
       setProfileSaveMessage("이름이 저장되었습니다.")
       return true
     } catch (e) {
@@ -1101,7 +1109,7 @@ export function MoodPickDashboard() {
             setMediaPreference={setMediaPreference}
             onLogout={handleLogout}
             userEmail={user?.email ?? "-"}
-            displayName={(user?.user_metadata?.display_name as string | undefined) ?? null}
+            displayName={profileDisplayName ?? (user?.user_metadata?.display_name as string | undefined) ?? null}
             onSaveDisplayName={handleSaveDisplayName}
             profileSaveMessage={profileSaveMessage}
             isSavingProfile={isSavingProfile}

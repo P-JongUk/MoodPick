@@ -113,10 +113,11 @@ async def upsert_user_profile(
                 "display_name": row["display_name"],
             }
 
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to upsert user profile",
-        )
+        return {
+            "status": "success",
+            "user_id": payload.user_id,
+            "display_name": display_name,
+        }
     except HTTPException:
         raise
     except Exception as e:
