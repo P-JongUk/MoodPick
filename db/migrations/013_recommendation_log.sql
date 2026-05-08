@@ -1,4 +1,4 @@
--- db/migrations/003_recommendation_log.sql
+-- db/migrations/013_recommendation_log.sql
 create table if not exists public.recommendation_log (
   id             uuid primary key default gen_random_uuid(),
   user_id        uuid not null references auth.users(id),
