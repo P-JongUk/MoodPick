@@ -3,10 +3,11 @@
  *
  * - YouTube: `youtube:VIDEO_ID`, `yt:VIDEO_ID`, 또는 11자 video id 단독
  * - Spotify: `spotify:track:TRACK_ID`
+ * - Podcast: `podcast:episode:<EPISODE_KEY>`
  * - media_url에 youtube.com/watch?v= / youtu.be/ 포함 시 추출
  */
 
-export type PlaybackKind = "youtube" | "spotify" | "none"
+export type PlaybackKind = "youtube" | "spotify" | "podcast" | "none"
 
 export interface ContentPlaybackInput {
   content_id: string
@@ -18,6 +19,7 @@ export interface ResolvedPlayback {
   kind: PlaybackKind
   youtubeVideoId?: string
   spotifyTrackId?: string
+  podcastAudioUrl?: string
 }
 
 function extractYoutubeFromUrl(url: string): string | undefined {
@@ -48,6 +50,11 @@ function extractSpotifyTrackId(contentId: string): string | undefined {
 
 export function resolvePlayback(input: ContentPlaybackInput): ResolvedPlayback {
   const { content_id, media_provider, media_url } = input
+
+  // Podcast는 media_provider에 별도 타입이 없어서 content_id prefix로 판별합니다.
+  if (content_id?.toLowerCase().startsWith("podcast:") && media_url) {
+    return { kind: "podcast", podcastAudioUrl: media_url }
+  }
 
   if (media_provider === "youtube" || content_id.toLowerCase().includes("youtube:") || content_id.toLowerCase().startsWith("yt:")) {
     const id = extractYoutubeVideoId(content_id, media_url)

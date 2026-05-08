@@ -55,36 +55,45 @@ async def run_counseling_pipeline(
             video_id = state.recommended_content.get("video_id")
             if video_id:
                 try:
+                    media_url = None
+                    # 팟캐스트는 오디오 재생을 위해 media_url도 저장
+                    if isinstance(video_id, str) and video_id.lower().startswith("podcast:"):
+                        media_url = state.recommended_content.get("url")
+
                     supabase = _get_supabase()
-                    # 5-1. watched_content_records
-                    supabase.table("watched_content_records").insert({
+                    row = {
                         "user_id": state.user_id,
                         "session_id": state.session_id,
                         "content_id": video_id,
                         "content_title": title,
                         "thumbnail_url": state.recommended_content.get("thumbnail", ""),
-                    }).execute()
-                    
-                    # 5-2. recommendation_log
+                    }
+                    if media_url:
+                        row["media_url"] = media_url
+
+                    supabase.table("watched_content_records").insert(row).execute()
+
                     emotion = state.emotion_score.get("emotion_description", "")
                     intensity = float(state.emotion_score.get("intensity", 0.0))
-                    
-                    supabase.table("recommendation_log").insert({
-                        "user_id": state.user_id,
-                        "session_id": state.session_id,
-                        "search_query": state.recommended_content.get("search_query", ""),
-                        "video_id": video_id,
-                        "video_title": title,
-                        "reason": reason,
-                        "emotion": emotion,
-                        "intensity": intensity,
-                        "ambiguity": state.recommended_content.get("ambiguity"),
-                        "secondary_emotion": state.recommended_content.get("secondary_emotion"),
-                        "candidate_pool": state.recommended_content.get("candidate_pool", []),
-                        "selected_score": state.recommended_content.get("selected_score", 0.0),
-                        "strategy_version": "v2.1"
-                    }).execute()
+                    supabase.table("recommendation_log").insert(
+                        {
+                            "user_id": state.user_id,
+                            "session_id": state.session_id,
+                            "search_query": state.recommended_content.get("search_query", ""),
+                            "video_id": video_id,
+                            "video_title": title,
+                            "reason": reason,
+                            "emotion": emotion,
+                            "intensity": intensity,
+                            "ambiguity": state.recommended_content.get("ambiguity"),
+                            "secondary_emotion": state.recommended_content.get("secondary_emotion"),
+                            "candidate_pool": state.recommended_content.get("candidate_pool", []),
+                            "selected_score": state.recommended_content.get("selected_score", 0.0),
+                            "strategy_version": "v2.1",
+                        }
+                    ).execute()
                 except Exception as e:
+                    # Non-fatal: don't break pipeline for a save failure
                     print(f"Failed to save recommendation log/history: {e}")
 
     return state

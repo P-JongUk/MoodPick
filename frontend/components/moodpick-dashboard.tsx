@@ -851,13 +851,18 @@ export function MoodPickDashboard() {
 
       setMessages((prev) => [...prev, aiResponse])
 
-      // Update content player if recommendation includes a video
+      // Update content player if recommendation includes a playable media
       if (recommended?.video_id) {
+        const contentId = recommended.video_id.toString()
+        const isPodcast = contentId.toLowerCase().startsWith("podcast:")
+
         setCurrentContent({
-          id: recommended.video_id,
-          content_id: recommended.video_id,
+          id: contentId,
+          content_id: contentId,
           content_title: recommended.title ?? "추천 콘텐츠",
           thumbnail_url: recommended.thumbnail,
+          // 팟캐스트는 audio 재생을 위해 오디오 URL을 media_url로 내려줍니다.
+          media_url: isPodcast ? (recommended.url ?? null) : null,
           watched_at: new Date().toISOString(),
           session_id: currentSessionId,
         })
@@ -1461,6 +1466,84 @@ function ContentMediaPanel({
   })
   const isEmbed = playback.kind === "youtube" || playback.kind === "spotify"
 
+  // Podcast 전용 오디오 상태/컨트롤
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const [podcastPlaying, setPodcastPlaying] = useState(false)
+  const [podcastCurrentTime, setPodcastCurrentTime] = useState(0)
+  const [podcastDuration, setPodcastDuration] = useState(0)
+  const [podcastRate, setPodcastRate] = useState(1)
+
+  useEffect(() => {
+    if (playback.kind !== "podcast") return
+
+    setPodcastPlaying(false)
+    setPodcastCurrentTime(0)
+    setPodcastDuration(0)
+
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current.currentTime = 0
+      audioRef.current.playbackRate = podcastRate
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentContent.content_id, playback.kind])
+
+  useEffect(() => {
+    if (playback.kind !== "podcast") return
+    if (!audioRef.current) return
+    audioRef.current.playbackRate = podcastRate
+  }, [podcastRate, playback.kind])
+
+  const formatPodcastTime = (sec: number) => {
+    const s = Number.isFinite(sec) ? sec : 0
+    const m = Math.floor(s / 60)
+    const r = Math.floor(s % 60)
+    return `${m}:${String(r).padStart(2, "0")}`
+  }
+
+  const togglePodcast = async () => {
+    const el = audioRef.current
+    if (!el) return
+    try {
+      if (el.paused) {
+        await el.play()
+      } else {
+        el.pause()
+      }
+    } catch {
+      // Autoplay 정책/네트워크 문제 등으로 play 실패 시 무시
+    }
+  }
+
+  const skipPodcast = (deltaSeconds: number) => {
+    const el = audioRef.current
+    if (!el) return
+    const duration = Number.isFinite(el.duration) ? el.duration : 0
+    const nextRaw = el.currentTime + deltaSeconds
+    const next = Math.max(
+      0,
+      duration > 0 ? Math.min(duration, nextRaw) : nextRaw
+    )
+    el.currentTime = next
+    setPodcastCurrentTime(next)
+  }
+
+  const applyPodcastRate = (rate: number) => {
+    setPodcastRate(rate)
+    if (audioRef.current) {
+      audioRef.current.playbackRate = rate
+    }
+  }
+
+  const seekPodcast = (sec: number) => {
+    const el = audioRef.current
+    if (!el) return
+    const duration = Number.isFinite(el.duration) ? el.duration : 0
+    const next = Math.max(0, Math.min(duration || 0, sec))
+    el.currentTime = next
+    setPodcastCurrentTime(next)
+  }
+
   return (
     <div className={cn("flex flex-col min-h-0", isFullscreen && "flex-1")}>
       {isFullscreen && (
@@ -1532,6 +1615,136 @@ function ContentMediaPanel({
               loading="lazy"
             />
           )}
+          {playback.kind === "podcast" && playback.podcastAudioUrl && (
+            <>
+              <div
+                className="absolute inset-0 bg-center bg-cover opacity-35 blur-2xl scale-110"
+                style={{
+                  backgroundImage: currentContent.thumbnail_url ? `url(${currentContent.thumbnail_url})` : undefined,
+                }}
+              />
+              <div className="absolute inset-0 bg-gradient-to-b from-black/25 via-black/55 to-black/80" />
+
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="relative w-56 h-56 sm:w-64 sm:h-64">
+                  <div className="absolute inset-0 rounded-full bg-black/70 shadow-2xl" />
+                  <div className="absolute inset-3 rounded-full bg-neutral-900/90" />
+                  <div
+                    className={cn("absolute inset-6 rounded-full bg-center bg-cover animate-spin")}
+                    style={{
+                      animationDuration: "14s",
+                      backgroundImage: currentContent.thumbnail_url ? `url(${currentContent.thumbnail_url})` : undefined,
+                    }}
+                  />
+                  <div className="absolute left-1/2 top-1/2 w-3 h-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-neutral-200/80" />
+                </div>
+              </div>
+
+              <audio
+                ref={audioRef}
+                src={playback.podcastAudioUrl}
+                preload="metadata"
+                onLoadedMetadata={() => {
+                  const el = audioRef.current
+                  if (!el) return
+                  setPodcastDuration(Number.isFinite(el.duration) ? el.duration : 0)
+                  setPodcastCurrentTime(Number.isFinite(el.currentTime) ? el.currentTime : 0)
+                }}
+                onTimeUpdate={() => {
+                  const el = audioRef.current
+                  if (!el) return
+                  setPodcastCurrentTime(Number.isFinite(el.currentTime) ? el.currentTime : 0)
+                }}
+                onPlay={() => setPodcastPlaying(true)}
+                onPause={() => setPodcastPlaying(false)}
+                onEnded={() => setPodcastPlaying(false)}
+              />
+
+              <div className="absolute left-4 right-4 bottom-4 z-[2] rounded-xl overflow-hidden border border-white/10 bg-black/30 backdrop-blur">
+                <div className="p-3 sm:p-4">
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="rounded-full text-primary-foreground hover:bg-white/10"
+                      onClick={() => skipPodcast(-15)}
+                      aria-label="15초 뒤로"
+                    >
+                      <ChevronLeft className="w-5 h-5" />
+                    </Button>
+
+                    <Button
+                      type="button"
+                      onClick={() => void togglePodcast()}
+                      size="icon"
+                      className="w-12 h-12 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground"
+                      aria-label={podcastPlaying ? "일시정지" : "재생"}
+                    >
+                      {podcastPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="rounded-full text-primary-foreground hover:bg-white/10"
+                      onClick={() => skipPodcast(15)}
+                      aria-label="15초 앞으로"
+                    >
+                      <SkipForward className="w-5 h-5" />
+                    </Button>
+                  </div>
+
+                  <input
+                    type="range"
+                    min={0}
+                    max={podcastDuration || 0}
+                    step={0.1}
+                    value={Math.min(podcastCurrentTime, podcastDuration || 0)}
+                    onChange={(e) => seekPodcast(Number(e.target.value))}
+                    disabled={podcastDuration <= 0}
+                    className="w-full"
+                  />
+
+                  <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-1">
+                    <span>{formatPodcastTime(podcastCurrentTime)}</span>
+                    <span>{formatPodcastTime(podcastDuration)}</span>
+                  </div>
+
+                  <div className="mt-3 flex items-center gap-2 justify-end">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => applyPodcastRate(0.75)}
+                      className={cn("rounded-full px-3", podcastRate === 0.75 && "bg-primary text-primary-foreground")}
+                    >
+                      0.75x
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => applyPodcastRate(1)}
+                      className={cn("rounded-full px-3", podcastRate === 1 && "bg-primary text-primary-foreground")}
+                    >
+                      1x
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => applyPodcastRate(1.25)}
+                      className={cn("rounded-full px-3", podcastRate === 1.25 && "bg-primary text-primary-foreground")}
+                    >
+                      1.25x
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
           {playback.kind === "none" && (
             <>
               <div className="absolute inset-0 flex items-center justify-center">
@@ -1555,7 +1768,9 @@ function ContentMediaPanel({
                 ? "YouTube"
                 : playback.kind === "spotify"
                   ? "Spotify"
-                  : "재생 중"}
+                  : playback.kind === "podcast"
+                    ? "Podcast"
+                    : "재생 중"}
             </span>
             {playback.kind === "spotify" && playback.spotifyTrackId && (
               <a
@@ -1574,7 +1789,11 @@ function ContentMediaPanel({
             최근 사용자 반응 기반으로 우선 노출된 콘텐츠입니다.
           </p>
 
-          {isEmbed ? (
+          {playback.kind === "podcast" ? (
+            <p className="text-xs text-muted-foreground mb-4">
+              팟캐스트 오디오 컨트롤은 위 플레이어에서 조작할 수 있어요.
+            </p>
+          ) : isEmbed ? (
             <p className="text-xs text-muted-foreground mb-4">
               재생·일시정지·볼륨은 위 플레이어에서 조작할 수 있어요.
             </p>
