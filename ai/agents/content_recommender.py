@@ -38,6 +38,41 @@ def _get_openai() -> OpenAI:
         raise RuntimeError("OPENAI_API_KEY is not set. Check backend/.env.local")
     return OpenAI(api_key=OPENAI_API_KEY)
 
+def _wants_podcast(message: str | None) -> bool:
+    """
+    Heuristic override for media preference.
+
+    Orchestrator intent can classify "틀어줘/추천해줘" as intent=="추천" even when
+    the user explicitly wants audio/podcast. We treat explicit audio/podcast signals
+    as a strong preference and try podcast first.
+    """
+    if not message:
+        return False
+    m = message.lower()
+
+    # Strong positive signals
+    positive = [
+        "팟캐스트",
+        "podcast",
+        "오디오",
+        "audio",
+        "수면",
+        "명상",
+        "호흡",
+        "잠",
+        "asrm",  # common typo
+        "asmr",
+    ]
+    if any(p.lower() in m for p in positive):
+        return True
+
+    # Explicitly reject video/youtube
+    negative_video = ["유튜브", "youtube", "영상", "video"]
+    if any(n in m for n in negative_video) and ("말고" in m or "싫" in m or "빼" in m):
+        return True
+
+    return False
+
 async def content_recommender_agent(state: CounselingState) -> CounselingState:
     # ── 1. User profile ─────────────
     profile = state.user_profile
@@ -73,7 +108,8 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
     intensity = state.emotion_score.get("intensity", 0.5)
 
     # ── 3.5 팟캐스트 추천 (선택) ───────────────────────────────────────────
-    if state.intent != "추천" and recommend_podcast_episode is not None:
+    prefer_podcast = _wants_podcast(state.message)
+    if (prefer_podcast or state.intent != "추천") and recommend_podcast_episode is not None:
         try:
             episode = recommend_podcast_episode(
                 emotion=emotion,

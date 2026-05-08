@@ -58,7 +58,7 @@ class WatchedContentRequest(BaseModel):
     content_id: str
     content_title: str
     thumbnail_url: Optional[str] = None
-    media_provider: Optional[Literal["youtube", "spotify"]] = None
+    media_provider: Optional[Literal["youtube", "spotify", "podcast"]] = None
     media_url: Optional[str] = None
 
 
@@ -235,9 +235,9 @@ async def get_content_history(
 async def get_content_recommendations(
     user_id: str,
     limit: int = Query(8, ge=1, le=30),
-    media: Literal["all", "youtube", "spotify"] = Query(
+    media: Literal["all", "youtube", "spotify", "podcast"] = Query(
         "all",
-        description="youtube | spotify | all (혼합)",
+        description="youtube | spotify | podcast | all (혼합)",
     ),
 ):
     """자동 추천 콘텐츠 시드 목록. user_id는 향후 개인화 시 사용."""
