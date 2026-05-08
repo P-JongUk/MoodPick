@@ -1,7 +1,10 @@
 """
 ai/agents/content_recommender.py
 
-사용자의 감정 상태와 취향을 분석하여 최적의 콘텐츠를 추천하는 에이전트.
+유저 의도에 따라 콘텐츠 추천을 수행합니다.
+
+  - intent == "추천": 좋아요/선호 기반 YouTube 추천 (기존 방식)
+  - 그 외(상담/감정 개선): RSS 큐레이션(A, 검색 없음) 기반 팟캐스트 추천
 
 - GPT를 이용해 검색 쿼리 생성
 - MCP YouTube 서버를 통해 후보군 검색
@@ -20,6 +23,10 @@ from ai.utils import load_prompt
 from ai.tools.content_history import get_content_history, _get_supabase, get_recent_liked_titles
 from ai.tools.user_profile import get_user_profile
 from ai.agents.reranker import compute_emotion_trend, hybrid_rerank
+try:
+    from ai.tools.podcast_catalog import recommend_podcast_episode
+except Exception:  # optional dependency during merges
+    recommend_podcast_episode = None  # type: ignore[assignment]
 
 # MCP 서버 경로 (환경 변수로 오버라이드 가능)
 _DEFAULT_MCP_SERVER_PATH = str(Path(__file__).parent.parent.parent / "mcp_servers" / "server.py")
@@ -64,8 +71,27 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
     # ── 3. Build prompt with template substitution ──────────────────────
     emotion = state.emotion_score.get("emotion", "스트레스")
     intensity = state.emotion_score.get("intensity", 0.5)
-    # 수정 필요
 
+    # ── 3.5 팟캐스트 추천 (선택) ───────────────────────────────────────────
+    if state.intent != "추천" and recommend_podcast_episode is not None:
+        try:
+            episode = recommend_podcast_episode(
+                emotion=emotion,
+                intensity=intensity,
+                watched_content_ids=watched_ids,
+            )
+        except Exception:
+            episode = None
+
+        if episode:
+            state.recommended_content = {
+                "video_id": episode.get("content_id"),
+                "title": episode.get("title", ""),
+                "url": episode.get("audio_url", ""),
+                "thumbnail": episode.get("thumbnail_url", ""),
+                "reason": episode.get("reason", "지금의 감정에 맞춰 마음을 정리해주는 가이드를 추천드려요."),
+            }
+            return state
     prompt_template = load_prompt("content_recommender_prompt.md")
     user_prompt = prompt_template.format(
         emotion=emotion,
@@ -99,12 +125,8 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
 
     raw = response.choices[0].message.content or "{}"
     result = json.loads(raw)
-    
-    # query_generation만 GPT로 함
     search_query = result.get("search_query", "healing music relaxing")
     reason = result.get("reason", "마음을 편안하게 해줄 콘텐츠를 추천드려요.")
-
-    # ── 5. MCP YouTube 서버 호출 (10개로 증가) ──────────────────────────
     videos = []
     try:
         async with MCPClient(_MCP_SERVER_PATH) as mcp:
