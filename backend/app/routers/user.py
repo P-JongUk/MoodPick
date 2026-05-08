@@ -287,7 +287,15 @@ async def get_daily_summary(
             .order("watched_at", desc=True)
             .execute()
         )
-        contents = watched_res.data or []
+        content_rows = watched_res.data or []
+        seen_content_keys: set[tuple[Optional[str], str]] = set()
+        contents = []
+        for row in content_rows:
+            key = (row.get("session_id"), row.get("content_id"))
+            if key in seen_content_keys:
+                continue
+            seen_content_keys.add(key)
+            contents.append(row)
 
         summary_lines = [
             "상담 대화 원문은 서버에 저장되지 않습니다. 아래는 해당 날짜의 문진·세션·콘텐츠 기록을 바탕으로 한 요약입니다.",

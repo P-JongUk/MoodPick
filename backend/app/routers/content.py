@@ -189,6 +189,19 @@ async def record_watched_content(
         if payload.media_url is not None:
             row["media_url"] = payload.media_url
 
+        existing_result = (
+            supabase.table("watched_content_records")
+            .select("*")
+            .eq("user_id", payload.user_id)
+            .eq("content_id", payload.content_id)
+            .order("watched_at", desc=True)
+            .limit(20)
+            .execute()
+        )
+        for existing in existing_result.data or []:
+            if existing.get("session_id") == payload.session_id:
+                return WatchedContentResponse(**existing)
+
         result = supabase.table("watched_content_records").insert(row).execute()
 
         if result.data and len(result.data) > 0:

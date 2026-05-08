@@ -3,7 +3,6 @@ import {
   endSession,
   submitSurveyResponse,
   submitContentFeedback,
-  recordWatchedContent,
 } from "./api"
 
 export type SurveyPhase = "pre" | "post"
@@ -96,14 +95,4 @@ export async function saveContentFeedback(params: {
     params.sessionId
   )
 
-  // 2. 시청 기록 저장
-  await recordWatchedContent(
-    userId,
-    params.contentId,
-    params.contentTitle,
-    params.thumbnailUrl,
-    params.sessionId,
-    params.mediaProvider,
-    params.mediaUrl
-  )
 }
