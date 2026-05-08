@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { getSupabaseClient } from "@/lib/supabaseClient"
 import {
@@ -1589,6 +1589,7 @@ function CounselingView({
   onSelectRecommendedContent: (value: ContentHistoryItem) => void
 }) {
   const [contentFullscreen, setContentFullscreen] = useState(false)
+  const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!contentFullscreen) return
@@ -1603,6 +1604,12 @@ function CounselingView({
       window.removeEventListener("keydown", onKey)
     }
   }, [contentFullscreen])
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({
+      behavior: "smooth",
+    })
+  }, [messages])
 
   const mediaProps = {
     currentContent,
@@ -1637,7 +1644,7 @@ function CounselingView({
           </div>
         </div>
 
-        <ScrollArea className="flex-1 p-4">
+        <ScrollArea className="flex-1 p-4 overflow-y-auto">
           <div className="space-y-4">
             {messages.map((message) => (
               <div
@@ -1682,6 +1689,7 @@ function CounselingView({
                 </div>
               </div>
             ))}
+            <div ref={bottomRef} />
           </div>
         </ScrollArea>
 
@@ -1710,28 +1718,20 @@ function CounselingView({
         </div>
       </div>
 
-      <div className="w-96 shrink-0 bg-card p-6 overflow-y-auto flex flex-col min-h-0">
+      <div className={cn(
+        contentFullscreen ? "fixed inset-0 z-50 bg-background p-4 sm:p-6" : "w-96 shrink-0 bg-card p-6 min-h-0", "overflow-y-auto flex flex-col")}
+        role={contentFullscreen ? "dialog" : undefined}
+        aria-modal={contentFullscreen? "true" : undefined}
+        aria-label={contentFullscreen? "추천 콘텐츠 전체 화면" : undefined}
+      >
         <ContentMediaPanel
-          variant="sidebar"
+          variant={contentFullscreen ? "fullscreen" : "sidebar"}
           {...mediaProps}
-          onRequestFullscreen={() => setContentFullscreen(true)}
+          onRequestFullscreen={contentFullscreen ? undefined : () => setContentFullscreen(true)}
+          onExitFullscreen={contentFullscreen ? () => setContentFullscreen(false) : undefined}
         />
       </div>
 
-      {contentFullscreen && (
-        <div
-          className="fixed inset-0 z-50 flex flex-col bg-background p-4 sm:p-6 overflow-y-auto"
-          role="dialog"
-          aria-modal="true"
-          aria-label="추천 콘텐츠 전체 화면"
-        >
-          <ContentMediaPanel
-            variant="fullscreen"
-            {...mediaProps}
-            onExitFullscreen={() => setContentFullscreen(false)}
-          />
-        </div>
-      )}
     </div>
   )
 }
