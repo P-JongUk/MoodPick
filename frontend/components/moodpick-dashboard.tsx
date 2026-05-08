@@ -216,6 +216,32 @@ const formatEmotionDayKey = (date: Date) => date.toLocaleDateString("en-CA")
 
 const formatEmotionDayLabel = (date: Date) => `${date.getMonth() + 1}/${date.getDate()}`
 
+const getSidebarEncouragement = (
+  isSessionActive: boolean,
+  summary: EmotionSummary | null,
+  delta: SurveyDeltaSummary | null
+) => {
+  if (isSessionActive) {
+    return "지금 대화에 천천히 머물러도 괜찮아요."
+  }
+  if (delta?.improved) {
+    return "방금의 작은 변화도 충분히 의미 있어요."
+  }
+  if (summary?.trend === "improving") {
+    return "최근 마음의 흐름이 조금씩 좋아지고 있어요."
+  }
+  if (summary?.trend === "declining") {
+    return "조금 무거운 날들도 혼자 버티지 않아도 괜찮아요."
+  }
+  if (summary && summary.average_score >= 4) {
+    return "좋은 흐름을 오늘도 부드럽게 이어가봐요."
+  }
+  if (summary && summary.average_score <= 2.5) {
+    return "오늘은 마음을 더 작고 다정하게 돌봐도 좋아요."
+  }
+  return "오늘도 당신의 마음을 응원합니다."
+}
+
 export function MoodPickDashboard() {
   const {
     user,
@@ -243,6 +269,7 @@ export function MoodPickDashboard() {
   const [isSessionActive, setIsSessionActive] = useState(false)
   const [showPreSurvey, setShowPreSurvey] = useState(false)
   const [showPostSurvey, setShowPostSurvey] = useState(false)
+  const [showStartSessionPrompt, setShowStartSessionPrompt] = useState(false)
   const [preSurveyMood, setPreSurveyMood] = useState<string | null>(null)
   const [postSurveyMood, setPostSurveyMood] = useState<string | null>(null)
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
@@ -295,6 +322,11 @@ export function MoodPickDashboard() {
   const [isExportingMyData, setIsExportingMyData] = useState(false)
   const [exportMyDataMessage, setExportMyDataMessage] = useState<string | null>(null)
   const previousUserIdRef = useRef<string | null>(null)
+  const sidebarEncouragement = getSidebarEncouragement(
+    isSessionActive,
+    emotionSummary,
+    lastSurveyDelta
+  )
 
   const resetCounselingState = () => {
     setActiveTab("home")
@@ -304,6 +336,7 @@ export function MoodPickDashboard() {
     setIsSessionActive(false)
     setShowPreSurvey(false)
     setShowPostSurvey(false)
+    setShowStartSessionPrompt(false)
     setPreSurveyMood(null)
     setPostSurveyMood(null)
     setCurrentSessionId(null)
@@ -684,6 +717,7 @@ export function MoodPickDashboard() {
   }
 
   const handleStartNewSession = () => {
+    setShowStartSessionPrompt(false)
     setSyncWarningMessage(null)
     setPreSurveyMood(null)
     setShowPreSurvey(true)
@@ -815,7 +849,8 @@ export function MoodPickDashboard() {
       return
     }
     if (!isSessionActive || !currentSessionId) {
-      setSyncWarningMessage("상담 시작하기를 누르고 사전 문진을 완료한 뒤 메시지를 보내 주세요.")
+      setSyncWarningMessage(null)
+      setShowStartSessionPrompt(true)
       return
     }
 
@@ -1122,7 +1157,12 @@ export function MoodPickDashboard() {
       {/* Sidebar */}
       <aside className="w-64 bg-sidebar border-r border-sidebar-border flex flex-col">
         <div className="p-6 border-b border-sidebar-border">
-          <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setActiveTab("home")}
+            className="flex w-full items-center gap-3 rounded-xl text-left transition-colors hover:bg-sidebar-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="홈으로 이동"
+          >
             <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
               <Heart className="w-5 h-5 text-primary-foreground" />
             </div>
@@ -1130,7 +1170,7 @@ export function MoodPickDashboard() {
               <h1 className="text-xl font-bold text-sidebar-foreground">무드픽</h1>
               <p className="text-xs text-muted-foreground">MoodPick</p>
             </div>
-          </div>
+          </button>
         </div>
 
         <nav className="flex-1 p-4">
@@ -1157,7 +1197,7 @@ export function MoodPickDashboard() {
           <Card className="bg-secondary/50 border-0 shadow-none">
             <CardContent className="p-4">
               <p className="text-sm text-muted-foreground leading-relaxed">
-                오늘도 당신의 마음을 응원합니다
+                {sidebarEncouragement}
               </p>
             </CardContent>
           </Card>
@@ -1196,6 +1236,28 @@ export function MoodPickDashboard() {
             onComplete={handlePostSurveyComplete}
           />
         )}
+        <Dialog open={showStartSessionPrompt} onOpenChange={setShowStartSessionPrompt}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>상담을 시작할까요?</DialogTitle>
+              <DialogDescription>
+                메시지를 보내기 전에 짧은 사전 문진을 먼저 완료해 주세요.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setShowStartSessionPrompt(false)}
+              >
+                닫기
+              </Button>
+              <Button type="button" onClick={handleStartNewSession}>
+                상담 시작하기
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         {activeTab === "counseling" && (
           <CounselingView
             messages={messages}
@@ -1372,8 +1434,8 @@ function HomeView({
       </div>
 
       {/* Today's Care */}
-      <Card className="overflow-hidden shadow-lg border-0 bg-card">
-        <CardHeader className="bg-primary/5 border-b border-border">
+      <Card className="overflow-hidden shadow-lg border-0 bg-card py-0 gap-0">
+        <CardHeader className="bg-primary/5 border-b border-border p-6">
           <CardTitle className="text-lg flex items-center gap-2 text-foreground">
             <Heart className="w-5 h-5 text-primary" />
             오늘의 맞춤 위로 콘텐츠
@@ -2056,7 +2118,7 @@ function CounselingView({
             <Button
               onClick={onEndSession}
               variant="outline"
-              className="w-full rounded-xl border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground"
+              className="w-full cursor-pointer rounded-xl border-destructive text-destructive hover:border-destructive/70 hover:bg-destructive/10 hover:text-destructive"
             >
               오늘의 상담 종료하기
             </Button>
