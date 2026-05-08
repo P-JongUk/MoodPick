@@ -1,4 +1,4 @@
--- db/migrations/001_content_embeddings.sql
+-- db/migrations/011_content_embeddings.sql
 create table if not exists public.content_embeddings (
   content_id     text primary key,        -- YouTube video_id
   source_text    text not null,           -- 임베딩 입력 (title + description 일부)

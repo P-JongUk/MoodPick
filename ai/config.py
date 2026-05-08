@@ -8,6 +8,7 @@ without importing from backend/app/.
 """
 
 import os
+import warnings
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -40,7 +41,6 @@ _missing = [k for k, v in {
 }.items() if not v]
 
 if _missing:
-    import warnings
     warnings.warn(
         f"[ai/config] Missing environment variables: {_missing}. "
         f"Check backend/.env.local",

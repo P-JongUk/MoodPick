@@ -67,7 +67,7 @@ async def run_counseling_pipeline(
                     
                     # 5-2. recommendation_log
                     emotion = state.emotion_score.get("emotion_description", "")
-                    intensity = float(abs(state.emotion_score.get("valence", 0.0)))
+                    intensity = float(state.emotion_score.get("intensity", 0.0))
                     
                     supabase.table("recommendation_log").insert({
                         "user_id": state.user_id,

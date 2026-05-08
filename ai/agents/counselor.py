@@ -16,6 +16,7 @@ Flow:
 """
 
 import json
+import math
 
 from openai import OpenAI
 
@@ -25,6 +26,22 @@ from ai.utils import load_prompt
 from ai.tools.rag_search import search_rag_context
 from ai.tools.user_profile import get_user_profile
 from ai.tools.emotion_record import save_emotion_record
+from ai.tools.emotion_va_map import get_nearest_emotion
+
+
+def _build_emotion_score(args: dict) -> dict:
+    """save_emotion_record 인자에서 후속 에이전트들이 쓰는 통합 emotion_score를 만든다."""
+    valence = float(args.get("valence", 0.0))
+    arousal = float(args.get("arousal", 0.0))
+    emotion_label, _ = get_nearest_emotion(valence, arousal)
+    intensity = min(1.0, math.sqrt(valence * valence + arousal * arousal))
+    return {
+        "valence": valence,
+        "arousal": arousal,
+        "emotion_description": args.get("emotion_description", ""),
+        "emotion": emotion_label,
+        "intensity": intensity,
+    }
 
 _MODEL = "gpt-4o-mini"
 
@@ -222,11 +239,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
                 save_emotion_called = True
                 try:
                     args = json.loads(tool_call.function.arguments)
-                    state.emotion_score = {
-                        "valence": args.get("valence", 0.0),
-                        "arousal": args.get("arousal", 0.0),
-                        "emotion_description": args.get("emotion_description", ""),
-                    }
+                    state.emotion_score = _build_emotion_score(args)
                 except (json.JSONDecodeError, TypeError):
                     pass
 
@@ -237,7 +250,11 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
             })
 
     # ── Extract final response ──────────────────────────────────────────
-    final_content = response.choices[0].message.content or ""
+    # max_iterations에 도달했는데 마지막도 tool_calls인 경우 content가 비어 사용자에게
+    # 빈 메시지가 전달될 수 있어 안전장치를 둔다.
+    final_content = (response.choices[0].message.content or "").strip()
+    if not final_content:
+        final_content = "지금은 답변을 정리하기 어렵네요. 다시 한 번 말씀해 주실 수 있을까요?"
     state.response = final_content
 
     # ── Guarantee: save emotion even if GPT skipped the tool ────────────
@@ -258,11 +275,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
                     _execute_tool_call(tc, state)
                     try:
                         args = json.loads(tc.function.arguments)
-                        state.emotion_score = {
-                            "valence": args.get("valence", 0.0),
-                            "arousal": args.get("arousal", 0.0),
-                            "emotion_description": args.get("emotion_description", ""),
-                        }
+                        state.emotion_score = _build_emotion_score(args)
                     except (json.JSONDecodeError, TypeError):
                         pass
         except Exception as e:

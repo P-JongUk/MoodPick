@@ -100,31 +100,32 @@ async def submit_content_feedback(
     background_tasks: BackgroundTasks,
     supabase: Client = Depends(get_supabase_client)
 ):
-    """콘텐츠 피드백 저장 (👍/👎)"""
+    """콘텐츠 피드백 저장/변경 (👍/👎). (user_id, content_id) 단위 upsert."""
     try:
-        # feedback 값 검증
         if payload.feedback not in ["like", "dislike"]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="feedback must be 'like' or 'dislike'"
             )
 
-        result = supabase.table("content_feedback").insert({
-            "session_id": payload.session_id,
-            "user_id": payload.user_id,
-            "content_id": payload.content_id,
-            "feedback": payload.feedback,
-            "created_at": datetime.utcnow().isoformat(),
-        }).execute()
+        result = supabase.table("content_feedback").upsert(
+            {
+                "session_id": payload.session_id,
+                "user_id": payload.user_id,
+                "content_id": payload.content_id,
+                "feedback": payload.feedback,
+                "created_at": datetime.utcnow().isoformat(),
+            },
+            on_conflict="user_id,content_id",
+        ).execute()
 
         if result.data and len(result.data) > 0:
             feedback = result.data[0]
-            
-            # 좋아요 시 백그라운드 태스크로 벡터 갱신
-            if payload.feedback == "like":
-                from ai.tools.user_taste import refresh_user_taste_vector
-                background_tasks.add_task(refresh_user_taste_vector, payload.user_id)
-                
+
+            # 모든 feedback 변경은 like 카운트에 영향을 줄 수 있으므로 취향 벡터 갱신
+            from ai.tools.user_taste import refresh_user_taste_vector
+            background_tasks.add_task(refresh_user_taste_vector, payload.user_id)
+
             return ContentFeedbackResponse(**feedback)
         else:
             raise HTTPException(
@@ -135,6 +136,36 @@ async def submit_content_feedback(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
+        )
+
+
+@router.delete("/feedback")
+async def remove_content_feedback(
+    user_id: str,
+    content_id: str,
+    background_tasks: BackgroundTasks,
+    supabase: Client = Depends(get_supabase_client),
+):
+    """좋아요/싫어요 토글 취소 — (user_id, content_id) row 제거."""
+    try:
+        result = (
+            supabase.table("content_feedback")
+            .delete()
+            .eq("user_id", user_id)
+            .eq("content_id", content_id)
+            .execute()
+        )
+
+        deleted = len(result.data or [])
+        if deleted > 0:
+            from ai.tools.user_taste import refresh_user_taste_vector
+            background_tasks.add_task(refresh_user_taste_vector, user_id)
+
+        return {"deleted": deleted, "user_id": user_id, "content_id": content_id}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
         )
 
 

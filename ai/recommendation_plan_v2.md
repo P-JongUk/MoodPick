@@ -389,9 +389,9 @@ def hybrid_score(candidate_emb, ctx) -> float:
 > 콜드스타트는 v1 GPT 재랭킹으로 폴백 (옵션 C 인터페이스).
 
 #### 1-1. 마이그레이션 (~30분)
-- `db/migrations/00X_content_embeddings.sql`
-- `db/migrations/00Y_user_taste_vectors.sql`
-- `db/migrations/00Z_recommendation_log.sql`
+- `db/migrations/011_content_embeddings.sql`
+- `db/migrations/012_user_taste_vectors.sql`
+- `db/migrations/013_recommendation_log.sql`
 - 인덱스 포함
 
 #### 1-2. 임베딩 도구 (~3시간)
@@ -637,9 +637,9 @@ async def _rerank(candidates, ctx) -> list[dict]:
 
 ### Phase 1 신규
 ```
-db/migrations/00X_content_embeddings.sql
-db/migrations/00Y_user_taste_vectors.sql
-db/migrations/00Z_recommendation_log.sql
+db/migrations/011_content_embeddings.sql
+db/migrations/012_user_taste_vectors.sql
+db/migrations/013_recommendation_log.sql
 ai/tools/embedding_service.py
 ai/tools/user_taste.py
 ai/agents/reranker.py

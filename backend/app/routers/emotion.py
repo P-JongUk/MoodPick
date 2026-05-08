@@ -194,10 +194,3 @@ async def get_emotion_summary(
         )
 
 
-@router.get("/records")
-async def get_emotion_records():
-    return {
-        "message": "감정 기록 조회 엔드포인트가 준비되었습니다.",
-        "records": [],
-        "status": "ok",
-    }
