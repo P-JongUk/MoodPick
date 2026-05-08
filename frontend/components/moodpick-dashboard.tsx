@@ -322,6 +322,10 @@ export function MoodPickDashboard() {
   }, [user?.id])
 
   useEffect(() => {
+    setMediaFeedback(null)
+  }, [currentContent.content_id])
+
+  useEffect(() => {
     const loadDashboardData = async () => {
       if (!user?.id) {
         setUserStats(null)
