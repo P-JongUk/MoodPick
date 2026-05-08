@@ -17,7 +17,7 @@ from fastmcp import Client as MCPClient
 from ai.config import OPENAI_API_KEY
 from ai.state import CounselingState
 from ai.utils import load_prompt
-from ai.tools.content_history import get_content_history, _get_supabase
+from ai.tools.content_history import get_content_history, _get_supabase, get_recent_liked_titles
 from ai.tools.user_profile import get_user_profile
 from ai.agents.reranker import compute_emotion_trend, hybrid_rerank
 
@@ -45,6 +45,13 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
     history = get_content_history(state.user_id)
     watched_ids = history.get("watched_ids", [])
 
+    # 최근 좋아요 영상 제목을 검색 쿼리 생성용 힌트로 사용
+    liked_titles = get_recent_liked_titles(state.user_id, limit=5)
+    liked_hints = " | ".join(t[:60] for t in liked_titles) or "없음"
+
+    # print(f"[DEBUG] user={state.user_id[:8]} liked_hints={liked_hints!r}", flush=True) # for debug
+
+
     # ── 2.5 감정 궤적(Trend) 파악 ───────────────────────────────────────
     supabase = _get_supabase()
     emotion_result = supabase.table("emotion_records").select("*") \
@@ -65,6 +72,7 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
         intensity=intensity,
         concerns=concerns,
         comfort_style=comfort_style,
+        liked_hints=liked_hints,
     )
 
     # ── 4. GPT call for query generation (Trend 반영) ───────────────────
@@ -83,6 +91,7 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
                     f"현재 감정: {emotion} (강도: {intensity}, 트렌드: {trend})\n"
                     f"고민: {concerns}\n"
                     f"위로 방식: {comfort_style}\n"
+                    f"좋아한 콘텐츠 제목들: {liked_hints}\n"
                 ),
             },
         ],

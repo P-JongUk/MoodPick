@@ -71,3 +71,38 @@ def get_content_history(user_id: str) -> dict:
         "liked_ids": liked_ids,
         "disliked_ids": disliked_ids,
     }
+
+
+def get_recent_liked_titles(user_id: str, limit: int = 5) -> list[str]:
+    """최근 좋아요 영상의 제목을 반환. 검색 쿼리 생성용 키워드 힌트로 사용."""
+    supabase = _get_supabase()
+
+    feedback_res = (
+        supabase.table("content_feedback")
+        .select("content_id, created_at")
+        .eq("user_id", user_id)
+        .eq("feedback", "like")
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    liked_ids = [r["content_id"] for r in (feedback_res.data or [])]
+    if not liked_ids:
+        return []
+
+    titles_res = (
+        supabase.table("watched_content_records")
+        .select("content_id, content_title")
+        .eq("user_id", user_id)
+        .in_("content_id", liked_ids)
+        .execute()
+    )
+
+    title_map: dict[str, str] = {}
+    for row in (titles_res.data or []):
+        cid = row.get("content_id")
+        title = row.get("content_title")
+        if cid and title and cid not in title_map:
+            title_map[cid] = title
+
+    return [title_map[cid] for cid in liked_ids if cid in title_map]

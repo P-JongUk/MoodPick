@@ -27,10 +27,10 @@ curl -X POST http://localhost:8000/api/counseling/chat \
 ```
 
 **기대 결과**
-- [ ] HTTP 200 응답, `recommended_content` 필드에 `video_id`, `title` 존재
-- [ ] `content_embeddings` 테이블에 추천된 영상의 임베딩 캐시가 생성됨
-- [ ] `recommendation_log` 테이블에 레코드 1개 삽입됨 (`strategy_version = "v2.1"`)
-- [ ] `user_taste_vectors` 테이블에는 레코드 **없음** (좋아요 3개 미달)
+- [-] HTTP 200 응답, `recommended_content` 필드에 `video_id`, `title` 존재
+- [-] `content_embeddings` 테이블에 추천된 영상의 임베딩 캐시가 생성됨
+- [-] `recommendation_log` 테이블에 레코드 1개 삽입됨 (`strategy_version = "v2.1"`)
+- [-] `user_taste_vectors` 테이블에는 레코드 **없음** (좋아요 3개 미달)
 
 **Supabase 확인 쿼리**
 ```sql
@@ -68,9 +68,9 @@ curl -X POST http://localhost:8000/api/content/feedback \
 ```
 
 **기대 결과**
-- [ ] 3번째 `like` API 호출 후 수 초 내에 `user_taste_vectors` 테이블에 레코드 생성
-- [ ] `source_count = 3`, `strategy = "time_weighted_avg"` 값 확인
-- [ ] `embedding` 컬럼이 1536차원 벡터로 채워짐
+- [-] 3번째 `like` API 호출 후 수 초 내에 `user_taste_vectors` 테이블에 레코드 생성
+- [-] `source_count = 3`, `strategy = "time_weighted_avg"` 값 확인
+- [-] `embedding` 컬럼이 1536차원 벡터로 채워짐
 
 **Supabase 확인 쿼리**
 ```sql
@@ -104,17 +104,47 @@ curl -X POST http://localhost:8000/api/counseling/chat \
 ```
 
 **기대 결과**
-- [ ] 사용자 A와 사용자 B가 받은 `video_id`가 **다름**
-- [ ] `recommendation_log`에서 두 레코드의 `selected_score`와 `candidate_pool` 비교 시, 동일 후보라도 점수 순위가 다름
-- [ ] 사용자 A는 차분한 분위기 영상, B는 에너지 있는 영상이 상위에 랭크
+- [-] 사용자 A와 사용자 B가 받은 `video_id`가 **다름**
+- [-] `recommendation_log`에서 두 레코드의 `selected_score`와 `candidate_pool` 비교 시, 동일 후보라도 점수 순위가 다름
+- [-] 두 사용자 모두 자기 좋아요 톤(장르/스타일)이 `search_query` 와 상위 영상에 반영되고, 그 위에 현재 감정 강도에 맞는 형용사(예: 강도 ≥0.7 이면 `chill`/`calm`, 0.4~0.7 이면 `feel-good`/`uplifting`)가 가미됨
+
+> **참고**: 검색 쿼리 생성은 "역할 분담" 모델을 따른다. liked_hints가 장르를 결정하고, 감정·강도가 형용사를 결정한다. 따라서 강도가 높으면 양쪽 모두 차분한 형용사로 수렴할 수 있으나, 장르(EDM vs 클래식 등)는 사용자별로 보존되어야 한다. 자세한 규칙은 [content_recommender_prompt.md](prompts/content_recommender_prompt.md) 의 규칙 #2 참고.
 
 **Supabase 확인 쿼리**
+
 ```sql
-SELECT user_id, video_title, selected_score, candidate_pool
+-- 1) 전제 조건: 두 사용자 모두 취향 벡터가 생성돼 있는지 확인
+SELECT user_id, source_count, strategy, vector_dims(embedding) AS dim
+FROM user_taste_vectors
+WHERE user_id IN ('<사용자A UUID>', '<사용자B UUID>');
+-- 기대: 둘 다 source_count >= 3, dim = 1536
+
+-- 2) 사용자별 최신 추천 1건씩 비교 (DISTINCT ON 으로 user_id별 최신 1건 보장)
+SELECT DISTINCT ON (user_id)
+  user_id,
+  video_id,
+  video_title,
+  emotion,
+  intensity,
+  selected_score,
+  candidate_pool,
+  created_at
 FROM recommendation_log
 WHERE user_id IN ('<사용자A UUID>', '<사용자B UUID>')
-ORDER BY created_at DESC
-LIMIT 2;
+ORDER BY user_id, created_at DESC;
+-- 기대: 두 행의 video_id가 서로 다름, emotion/intensity는 비슷(같은 메시지였으므로)
+
+-- 3) 후보 풀 상위 5개만 추출해 점수 순위 비교
+--    (candidate_pool 스키마는 recommendation_log 작성 코드 기준 [{video_id, score, ...}] 형태 가정)
+SELECT
+  user_id,
+  jsonb_path_query_array(
+    candidate_pool,
+    '$[0 to 4] ? (@.score != null)'
+  ) AS top5
+FROM recommendation_log
+WHERE user_id IN ('<사용자A UUID>', '<사용자B UUID>')
+ORDER BY user_id, created_at DESC;
 ```
 
 ---
@@ -144,25 +174,40 @@ curl -X POST http://localhost:8000/api/counseling/chat \
 ```
 
 **기대 결과**
-- [ ] `emotion_records` 테이블에 3개의 기록이 순서대로 생성됨
-- [ ] 3번째 대화에서 `recommendation_log`의 기록 확인 시 `emotion`에 높은 강도 감정, `intensity`가 0.7 이상
-- [ ] (디버그 로그 확인) `reranker.py`의 `compute_emotion_trend`가 `"worsening"` 반환
-- [ ] `w_emotion`이 `w_taste`보다 높은 값으로 계산되어 감정 적합성 위주 영상 선정
+- [-] `emotion_records` 테이블에 3개의 기록이 순서대로 생성됨
+- [-] 3번째 대화에서 `recommendation_log`의 기록 확인 시 `emotion`에 높은 강도 감정, `intensity`가 0.7 이상
+- [-] (디버그 로그 확인) `reranker.py`의 `compute_emotion_trend`가 `"worsening"` 반환
+- [-] `w_emotion`이 `w_taste`보다 높은 값으로 계산되어 감정 적합성 위주 영상 선정
+
+> **Note (intensity 의미)**: `emotion_records`는 마이그레이션 009 이후 `intensity` 컬럼을 제거하고 `valence`/`arousal`/`va_radius` 만 사용합니다. `recommendation_log.intensity` 컬럼은 그대로 유지하지만 적재되는 값은 `va_radius = √(V² + A²)` 입니다(0~1). 즉 두 테이블의 "강도" 비교는 `emotion_records.va_radius` ↔ `recommendation_log.intensity` 로 봐야 합니다.
 
 **Supabase 확인 쿼리**
 ```sql
--- 감정 기록 순서 확인
-SELECT emotion, intensity, created_at
+-- 감정 기록 순서 확인 (VA 모델 기준)
+SELECT emotion, emotion_description, valence, arousal, va_radius, created_at
 FROM emotion_records
 WHERE user_id = '<UUID>'
 ORDER BY created_at ASC;
 
--- 추천 로그에서 감정 강도 확인
+-- 추천 로그에서 감정 강도 확인 (intensity = va_radius)
 SELECT emotion, intensity, video_title, selected_score
 FROM recommendation_log
 WHERE user_id = '<UUID>'
 ORDER BY created_at DESC
 LIMIT 1;
+
+-- 두 테이블 강도 정합성 교차 확인
+SELECT
+  rl.created_at AS rec_at,
+  rl.intensity  AS rec_intensity,
+  er.va_radius  AS er_va_radius,
+  er.created_at AS er_at
+FROM recommendation_log rl
+JOIN emotion_records er
+  ON er.user_id = rl.user_id AND er.session_id = rl.session_id
+WHERE rl.user_id = '<UUID>'
+ORDER BY rl.created_at DESC, er.created_at DESC
+LIMIT 5;
 ```
 
 ---
@@ -178,8 +223,8 @@ LIMIT 1;
 3. 서버 로그 또는 `content_embeddings` 테이블의 `created_at` 확인
 
 **기대 결과**
-- [ ] 두 번째 추천 시 `content_embeddings` 테이블의 기존 레코드 `created_at`이 변경되지 않음 (캐시 히트)
-- [ ] 서버 응답 시간이 첫 번째보다 빠름 (임베딩 API 호출 없음)
+- [-] 두 번째 추천 시 `content_embeddings` 테이블의 기존 레코드 `created_at`이 변경되지 않음 (캐시 히트)
+- [-] 서버 응답 시간이 첫 번째보다 빠름 (임베딩 API 호출 없음)
 
 **Supabase 확인 쿼리**
 ```sql

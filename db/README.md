@@ -19,7 +19,8 @@ db/
 │   ├── 010_watched_content_media.sql             # watched_content_records: media_provider/media_url 컬럼 추가
 │   ├── 011_content_embeddings.sql                # 콘텐츠 임베딩 (추천 v2)
 │   ├── 012_user_taste_vectors.sql                # 사용자 취향 벡터 (추천 v2)
-│   └── 013_recommendation_log.sql                # 추천 로그 (추천 v2)
+│   ├── 013_recommendation_log.sql                # 추천 로그 (추천 v2)
+│   └── 014_content_feedback_unique.sql           # content_feedback (user_id, content_id) UNIQUE — 토글 UX 지원
 ├── seed_data/
 │   ├── 001_rag_sample_data.sql
 │   └── 002_frontend_dev_sample_seed.sql
