@@ -20,6 +20,7 @@ import {
   getSurveyDelta,
   getUserSessions,
   getUserStats,
+  getUserProfile,
   sendCounselingMessage,
   getReminderPreference,
   upsertReminderPreference,
@@ -59,6 +60,8 @@ import {
   ThumbsUp,
   ThumbsDown,
   X,
+  Eye,
+  EyeOff,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -209,6 +212,10 @@ const scoreToCalendarColor = (score: number) => {
   return "bg-blue-200"
 }
 
+const formatEmotionDayKey = (date: Date) => date.toLocaleDateString("en-CA")
+
+const formatEmotionDayLabel = (date: Date) => `${date.getMonth() + 1}/${date.getDate()}`
+
 export function MoodPickDashboard() {
   const {
     user,
@@ -242,9 +249,11 @@ export function MoodPickDashboard() {
   const [syncWarningMessage, setSyncWarningMessage] = useState<string | null>(null)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
   const [lastSurveyDelta, setLastSurveyDelta] = useState<SurveyDeltaSummary | null>(null)
+  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0)
   const [userStats, setUserStats] = useState<UserStats | null>(null)
   const [emotionSummary, setEmotionSummary] = useState<EmotionSummary | null>(null)
   const [emotionData, setEmotionData] = useState<{ date: string; score: number; label: string }[]>([])
+  const [recentEmotionRecords, setRecentEmotionRecords] = useState<EmotionRecordItem[]>([])
   const [calendarMoods, setCalendarMoods] = useState<Record<number, { emoji: string; color: string }>>({})
   const [sessionHistory, setSessionHistory] = useState<SessionHistory[]>([])
   const [contentHistory, setContentHistory] = useState<ContentHistoryItem[]>([])
@@ -254,6 +263,8 @@ export function MoodPickDashboard() {
   // Login form state
   const [loginEmail, setLoginEmail] = useState("")
   const [signupDisplayName, setSignupDisplayName] = useState("")
+  const [signupGender, setSignupGender] = useState("")
+  const [signupBirthYear, setSignupBirthYear] = useState("")
   const [loginPassword, setLoginPassword] = useState("")
   const [authSuccessMessage, setAuthSuccessMessage] = useState<string | null>(null)
 
@@ -278,10 +289,37 @@ export function MoodPickDashboard() {
 
   const [profileSaveMessage, setProfileSaveMessage] = useState<string | null>(null)
   const [isSavingProfile, setIsSavingProfile] = useState(false)
+  const [profileDisplayName, setProfileDisplayName] = useState<string | null>(null)
   const [mypagePrefsMessage, setMypagePrefsMessage] = useState<string | null>(null)
   const [isSavingMypagePrefs, setIsSavingMypagePrefs] = useState(false)
   const [isExportingMyData, setIsExportingMyData] = useState(false)
   const [exportMyDataMessage, setExportMyDataMessage] = useState<string | null>(null)
+  const previousUserIdRef = useRef<string | null>(null)
+
+  const resetCounselingState = () => {
+    setActiveTab("home")
+    setMessages([])
+    setInputMessage("")
+    setMediaFeedback(null)
+    setIsSessionActive(false)
+    setShowPreSurvey(false)
+    setShowPostSurvey(false)
+    setPreSurveyMood(null)
+    setPostSurveyMood(null)
+    setCurrentSessionId(null)
+    setSyncWarningMessage(null)
+    setIsSendingMessage(false)
+  }
+
+  useEffect(() => {
+    const previousUserId = previousUserIdRef.current
+    const currentUserId = user?.id ?? null
+
+    if (previousUserId !== currentUserId) {
+      resetCounselingState()
+      previousUserIdRef.current = currentUserId
+    }
+  }, [user?.id])
 
   useEffect(() => {
     const loadDashboardData = async () => {
@@ -289,72 +327,118 @@ export function MoodPickDashboard() {
         setUserStats(null)
         setEmotionSummary(null)
         setEmotionData([])
+        setRecentEmotionRecords([])
         setCalendarMoods({})
         setSessionHistory([])
         setContentHistory([])
         setCurrentContent(defaultContentItem)
         setRecommendedQueue([])
+        setProfileDisplayName(null)
         return
       }
 
       try {
         const mediaQuery = mediaPreferenceToQueryParam(mediaPreference)
-        const [stats, emotionRecordsRaw, summary, sessionsRaw, contentsRaw, recsRaw] =
-          await Promise.all([
-            getUserStats(user.id),
-            getEmotionRecords(user.id, 30),
-            getEmotionSummary(user.id, 30),
-            getUserSessions(user.id, 10),
-            getContentHistory(user.id, 20),
-            getContentRecommendations(user.id, { limit: 10, media: mediaQuery }).catch(
-              () => [] as unknown[]
-            ),
-          ])
+        const [
+          statsResult,
+          emotionRecordsResult,
+          summaryResult,
+          sessionsResult,
+          contentsResult,
+          recsResult,
+          profileResult,
+        ] = await Promise.allSettled([
+          getUserStats(user.id),
+          getEmotionRecords(user.id, 30),
+          getEmotionSummary(user.id, 30),
+          getUserSessions(user.id, 10),
+          getContentHistory(user.id, 20),
+          getContentRecommendations(user.id, { limit: 10, media: mediaQuery }),
+          getUserProfile(user.id),
+        ])
 
-        setUserStats(stats as UserStats)
-        setEmotionSummary(summary as EmotionSummary)
+        setUserStats(statsResult.status === "fulfilled" ? (statsResult.value as UserStats) : null)
+        setEmotionSummary(
+          summaryResult.status === "fulfilled" ? (summaryResult.value as EmotionSummary) : null
+        )
+        const userProfile =
+          profileResult.status === "fulfilled"
+            ? (profileResult.value as { name?: string | null; display_name?: string | null } | null)
+            : null
+        setProfileDisplayName(userProfile?.name ?? userProfile?.display_name ?? null)
 
-        const emotionRecords = (emotionRecordsRaw as EmotionRecordItem[]) || []
-        const groupedByDay = new Map<string, number[]>()
-        const dayMoodMap: Record<number, { emoji: string; color: string }> = {}
+        const emotionRecords =
+          emotionRecordsResult.status === "fulfilled"
+            ? ((emotionRecordsResult.value as EmotionRecordItem[]) ?? [])
+            : []
+        const validEmotionRecords = emotionRecords
+          .filter((record) => record?.recorded_at && Number.isFinite(Number(record.score)))
+          .sort(
+            (a, b) =>
+              new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime()
+          )
+        const groupedByDay = new Map<string, { label: string; timestamp: number; scores: number[] }>()
+        const latestMoodByDay = new Map<
+          number,
+          { recordedAt: number; mood: { emoji: string; color: string } }
+        >()
 
-        emotionRecords.forEach((record) => {
+        validEmotionRecords.forEach((record) => {
           const date = new Date(record.recorded_at)
-          const dayKey = `${date.getMonth() + 1}/${date.getDate()}`
-          const scores = groupedByDay.get(dayKey) ?? []
-          scores.push(record.score)
-          groupedByDay.set(dayKey, scores)
+          const dayKey = formatEmotionDayKey(date)
+          const grouped = groupedByDay.get(dayKey) ?? {
+            label: formatEmotionDayLabel(date),
+            timestamp: date.getTime(),
+            scores: [],
+          }
+          grouped.scores.push(record.score)
+          grouped.timestamp = Math.min(grouped.timestamp, date.getTime())
+          groupedByDay.set(dayKey, grouped)
 
           if (
             date.getFullYear() === calendarYear &&
             date.getMonth() + 1 === currentMonth &&
             record.question === "mood_general"
           ) {
-            dayMoodMap[date.getDate()] = {
-              emoji: scoreToEmoji(record.score),
-              color: scoreToCalendarColor(record.score),
+            const day = date.getDate()
+            const recordedAt = date.getTime()
+            const existing = latestMoodByDay.get(day)
+            if (!existing || recordedAt > existing.recordedAt) {
+              latestMoodByDay.set(day, {
+                recordedAt,
+                mood: {
+                  emoji: scoreToEmoji(record.score),
+                  color: scoreToCalendarColor(record.score),
+                },
+              })
             }
           }
         })
 
-        const emotionChartData = Array.from(groupedByDay.entries())
-          .map(([date, scores]) => {
+        const emotionChartData = Array.from(groupedByDay.values())
+          .map(({ label, timestamp, scores }) => {
             const avg = scores.reduce((sum, score) => sum + score, 0) / scores.length
             return {
-              date,
+              date: label,
+              timestamp,
               score: Math.round((avg / 5) * 100),
               label: scoreToLabel(avg),
             }
           })
-          .sort((a, b) => {
-            const [aMonth, aDay] = a.date.split("/").map(Number)
-            const [bMonth, bDay] = b.date.split("/").map(Number)
-            if (aMonth === bMonth) return aDay - bDay
-            return aMonth - bMonth
-          })
+          .sort((a, b) => a.timestamp - b.timestamp)
+          .map(({ timestamp, ...record }) => record)
 
         setEmotionData(emotionChartData)
-        setCalendarMoods(dayMoodMap)
+        setRecentEmotionRecords(validEmotionRecords.slice(0, 5))
+        setCalendarMoods(
+          Object.fromEntries(
+            Array.from(latestMoodByDay.entries()).map(([day, value]) => [day, value.mood])
+          )
+        )
+
+        const contentsRaw = contentsResult.status === "fulfilled" ? contentsResult.value : []
+        const recsRaw = recsResult.status === "fulfilled" ? recsResult.value : []
+        const sessionsRaw = sessionsResult.status === "fulfilled" ? sessionsResult.value : null
 
         const contentItems = ((contentsRaw as unknown[]) ?? []).map((r) =>
           mapContentHistoryRow(r as Record<string, unknown>)
@@ -395,14 +479,18 @@ export function MoodPickDashboard() {
         }))
 
         setSessionHistory(mappedSessionHistory)
-      } catch {
+      } catch (error) {
+        console.error("Failed to load dashboard data", error)
         setUserStats(null)
         setEmotionSummary(null)
+        setEmotionData([])
+        setRecentEmotionRecords([])
+        setCalendarMoods({})
       }
     }
 
     void loadDashboardData()
-  }, [currentMonth, calendarYear, user?.id, mediaPreference])
+  }, [currentMonth, calendarYear, user?.id, mediaPreference, dashboardRefreshKey])
 
   useEffect(() => {
     const loadReminderPreference = async () => {
@@ -502,11 +590,31 @@ export function MoodPickDashboard() {
       return
     }
 
+    const normalizedBirthYear = signupBirthYear.trim()
+    const parsedBirthYear = normalizedBirthYear ? Number(normalizedBirthYear) : null
+    const currentYear = new Date().getFullYear()
+
+    if (
+      normalizedBirthYear &&
+      (!Number.isInteger(parsedBirthYear) || parsedBirthYear < 1900 || parsedBirthYear > currentYear)
+    ) {
+      setAuthErrorMessage("출생년도는 1900년부터 현재 연도 사이의 숫자로 입력해 주세요.")
+      return
+    }
+
     try {
-      await signUpWithPassword(loginEmail, loginPassword, signupDisplayName.trim())
+      await signUpWithPassword(
+        loginEmail,
+        loginPassword,
+        signupDisplayName.trim(),
+        signupGender || null,
+        parsedBirthYear
+      )
       setAuthSuccessMessage("회원가입이 완료되었습니다. 이제 같은 계정으로 로그인해 주세요.")
       setAuthErrorMessage(null)
       setSignupDisplayName("")
+      setSignupGender("")
+      setSignupBirthYear("")
     } catch {
       return
     }
@@ -555,14 +663,17 @@ export function MoodPickDashboard() {
     await signOut()
     setLoginEmail("")
     setSignupDisplayName("")
+    setSignupGender("")
+    setSignupBirthYear("")
     setLoginPassword("")
-    setCurrentSessionId(null)
-    setSyncWarningMessage(null)
+    setAuthSuccessMessage(null)
+    resetCounselingState()
   }
 
   const handleSocialLogin = async (provider: "google" | "kakao") => {
     try {
       await signInWithOAuth(provider)
+      setAuthSuccessMessage(null)
     } catch {
       return
     }
@@ -632,11 +743,13 @@ export function MoodPickDashboard() {
     if (!postSurveyMood) return
 
     const endedSessionId = currentSessionId
+    let shouldRefreshDashboard = false
 
     if (currentSessionId) {
       try {
         await saveSurveyResponse(currentSessionId, "post", postSurveyMood)
         await endCounselingSession(currentSessionId)
+        shouldRefreshDashboard = true
 
         const deltaResponse = await getSurveyDelta(currentSessionId)
         if (deltaResponse?.delta && typeof deltaResponse.delta === "object") {
@@ -662,6 +775,9 @@ export function MoodPickDashboard() {
     setPostSurveyMood(null)
     setPreSurveyMood(null)
     setMediaFeedback(null)
+    if (shouldRefreshDashboard) {
+      setDashboardRefreshKey((value) => value + 1)
+    }
     setActiveTab(endedSessionId ? "dashboard" : "home")
   }
 
@@ -690,6 +806,14 @@ export function MoodPickDashboard() {
   const handleSendMessage = async () => {
     const trimmedMessage = inputMessage.trim()
     if (!trimmedMessage || isSendingMessage) return
+    if (!user?.id) {
+      setSyncWarningMessage("로그인 후 상담 메시지를 보낼 수 있어요.")
+      return
+    }
+    if (!isSessionActive || !currentSessionId) {
+      setSyncWarningMessage("상담 시작하기를 누르고 사전 문진을 완료한 뒤 메시지를 보내 주세요.")
+      return
+    }
 
     const newMessage: Message = {
       id: Date.now(),
@@ -707,9 +831,7 @@ export function MoodPickDashboard() {
     setIsSendingMessage(true)
 
     try {
-      const response = user
-        ? await sendCounselingMessage(user.id, trimmedMessage, currentSessionId ?? undefined)
-        : null
+      const response = await sendCounselingMessage(user.id, trimmedMessage, currentSessionId)
 
       const recommended = response?.recommended_content ?? null
 
@@ -780,7 +902,10 @@ export function MoodPickDashboard() {
       const { error } = await supabase.auth.updateUser({
         data: { display_name: trimmed },
       })
-      if (error) throw error
+      if (error) {
+        console.warn("Failed to sync auth metadata display name:", error)
+      }
+      setProfileDisplayName(trimmed)
       setProfileSaveMessage("이름이 저장되었습니다.")
       return true
     } catch (e) {
@@ -945,6 +1070,10 @@ export function MoodPickDashboard() {
         setEmail={setLoginEmail}
         displayName={signupDisplayName}
         setDisplayName={setSignupDisplayName}
+        gender={signupGender}
+        setGender={setSignupGender}
+        birthYear={signupBirthYear}
+        setBirthYear={setSignupBirthYear}
         password={loginPassword}
         setPassword={setLoginPassword}
         onLogin={handleLogin}
@@ -953,6 +1082,7 @@ export function MoodPickDashboard() {
         isAuthLoading={isAuthLoading}
         authErrorMessage={authErrorMessage}
         authSuccessMessage={authSuccessMessage}
+        clearAuthSuccessMessage={() => setAuthSuccessMessage(null)}
       />
     )
   }
@@ -1091,6 +1221,7 @@ export function MoodPickDashboard() {
             getDaysInMonth={getDaysInMonth}
             calendarMoods={calendarMoods}
             emotionData={emotionData}
+            recentEmotionRecords={recentEmotionRecords}
             sessionHistory={sessionHistory}
             contentHistory={contentHistory}
             lastSurveyDelta={lastSurveyDelta}
@@ -1106,7 +1237,7 @@ export function MoodPickDashboard() {
             setMediaPreference={setMediaPreference}
             onLogout={handleLogout}
             userEmail={user?.email ?? "-"}
-            displayName={(user?.user_metadata?.display_name as string | undefined) ?? null}
+            displayName={profileDisplayName ?? (user?.user_metadata?.display_name as string | undefined) ?? null}
             onSaveDisplayName={handleSaveDisplayName}
             profileSaveMessage={profileSaveMessage}
             isSavingProfile={isSavingProfile}
@@ -1963,6 +2094,7 @@ function DashboardView({
   getDaysInMonth,
   calendarMoods,
   emotionData,
+  recentEmotionRecords,
   sessionHistory,
   contentHistory,
   lastSurveyDelta,
@@ -1976,6 +2108,7 @@ function DashboardView({
   getDaysInMonth: () => (number | null)[]
   calendarMoods: Record<number, { emoji: string; color: string }>
   emotionData: { date: string; score: number; label: string }[]
+  recentEmotionRecords: EmotionRecordItem[]
   sessionHistory: SessionHistory[]
   contentHistory: ContentHistoryItem[]
   lastSurveyDelta: SurveyDeltaSummary | null
@@ -2091,38 +2224,69 @@ function DashboardView({
           </CardHeader>
           <CardContent>
             <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={emotionData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fontSize: 12 }}
-                    stroke="var(--muted-foreground)"
-                  />
-                  <YAxis
-                    domain={[0, 100]}
-                    tick={{ fontSize: 12 }}
-                    stroke="var(--muted-foreground)"
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "var(--card)",
-                      border: "1px solid var(--border)",
-                      borderRadius: "0.75rem",
-                    }}
-                    labelStyle={{ color: "var(--foreground)" }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="score"
-                    stroke="var(--primary)"
-                    strokeWidth={3}
-                    dot={{ fill: "var(--primary)", strokeWidth: 2, r: 4 }}
-                    activeDot={{ r: 6 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+              {emotionData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={emotionData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fontSize: 12 }}
+                      stroke="var(--muted-foreground)"
+                    />
+                    <YAxis
+                      domain={[0, 100]}
+                      tick={{ fontSize: 12 }}
+                      stroke="var(--muted-foreground)"
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "var(--card)",
+                        border: "1px solid var(--border)",
+                        borderRadius: "0.75rem",
+                      }}
+                      labelStyle={{ color: "var(--foreground)" }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="score"
+                      stroke="var(--primary)"
+                      strokeWidth={3}
+                      dot={{ fill: "var(--primary)", strokeWidth: 2, r: 4 }}
+                      activeDot={{ r: 6 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex h-full items-center justify-center rounded-lg bg-muted/30 text-sm text-muted-foreground">
+                  아직 표시할 감정 기록이 없습니다.
+                </div>
+              )}
             </div>
+            {recentEmotionRecords.length > 0 && (
+              <div className="mt-4 space-y-2">
+                {recentEmotionRecords.slice(0, 3).map((record, index) => (
+                  <div
+                    key={`${record.session_id}-${record.phase ?? "record"}-${record.recorded_at}-${index}`}
+                    className="flex items-center justify-between rounded-lg bg-muted/30 px-3 py-2 text-sm"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span>{scoreToEmoji(record.score)}</span>
+                      <span className="font-medium text-foreground">
+                        {record.phase === "post" ? "상담 후" : "상담 전"}
+                      </span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {new Date(record.recorded_at).toLocaleString("ko-KR", {
+                        month: "long",
+                        day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="flex justify-center gap-4 mt-4">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">😢 낮음</span>
@@ -2208,6 +2372,10 @@ function LoginScreen({
   setEmail,
   displayName,
   setDisplayName,
+  gender,
+  setGender,
+  birthYear,
+  setBirthYear,
   password,
   setPassword,
   onLogin,
@@ -2216,11 +2384,16 @@ function LoginScreen({
   isAuthLoading,
   authErrorMessage,
   authSuccessMessage,
+  clearAuthSuccessMessage,
 }: {
   email: string
   setEmail: (value: string) => void
   displayName: string
   setDisplayName: (value: string) => void
+  gender: string
+  setGender: (value: string) => void
+  birthYear: string
+  setBirthYear: (value: string) => void
   password: string
   setPassword: (value: string) => void
   onLogin: () => Promise<void>
@@ -2229,9 +2402,12 @@ function LoginScreen({
   isAuthLoading: boolean
   authErrorMessage: string | null
   authSuccessMessage: string | null
+  clearAuthSuccessMessage: () => void
 }) {
   const isEmailOnlyMode = true
   const [isSignUpMode, setIsSignUpMode] = useState(false)
+  const [showLoginPassword, setShowLoginPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [confirmPassword, setConfirmPassword] = useState("")
 
   const handleAuthSubmit = async () => {
@@ -2252,7 +2428,7 @@ function LoginScreen({
   }
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+    <div className="min-h-screen bg-background flex items-start justify-center overflow-y-auto p-4 py-8">
       <div className="w-full max-w-md">
         <Card className="border-0 shadow-2xl">
           <CardContent className="p-8">
@@ -2294,6 +2470,45 @@ function LoginScreen({
                 </div>
               )}
 
+              {isSignUpMode && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="flex min-w-0 flex-col">
+                    <Label htmlFor="signup-gender" className="text-sm leading-5 text-muted-foreground">
+                      성별
+                    </Label>
+                    <Select value={gender} onValueChange={setGender}>
+                      <SelectTrigger
+                        id="signup-gender"
+                        className="mt-1.5 !h-12 !min-h-12 w-full box-border rounded-xl border-0 bg-muted py-0 data-[size=default]:!h-12"
+                      >
+                        <SelectValue placeholder="선택 안 함" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="female">여성</SelectItem>
+                        <SelectItem value="male">남성</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex min-w-0 flex-col">
+                    <Label htmlFor="signup-birth-year" className="text-sm leading-5 text-muted-foreground">
+                      출생년도
+                    </Label>
+                    <Input
+                      id="signup-birth-year"
+                      type="number"
+                      inputMode="numeric"
+                      min={1900}
+                      max={new Date().getFullYear()}
+                      placeholder="예: 2001"
+                      value={birthYear}
+                      onChange={(e) => setBirthYear(e.target.value)}
+                      className="mt-1.5 !h-12 !min-h-12 w-full box-border rounded-xl border-0 bg-muted py-0"
+                      onKeyDown={(e) => e.key === "Enter" && handleAuthSubmit()}
+                    />
+                  </div>
+                </div>
+              )}
+
               <div>
                 <Label htmlFor="email" className="text-sm text-muted-foreground">
                   이메일
@@ -2311,30 +2526,50 @@ function LoginScreen({
                 <Label htmlFor="password" className="text-sm text-muted-foreground">
                   비밀번호
                 </Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="비밀번호를 입력하세요"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="mt-1.5 rounded-xl bg-muted border-0 h-12"
-                  onKeyDown={(e) => e.key === "Enter" && handleAuthSubmit()}
-                />
+                <div className="relative mt-1.5">
+                  <Input
+                    id="password"
+                    type={showLoginPassword ? "text" : "password"}
+                    placeholder="비밀번호를 입력하세요"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="rounded-xl bg-muted border-0 h-12 pr-12"
+                    onKeyDown={(e) => e.key === "Enter" && handleAuthSubmit()}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowLoginPassword((prev) => !prev)}
+                    className="absolute inset-y-0 right-0 flex items-center justify-center w-12 text-muted-foreground hover:text-foreground"
+                    aria-label={showLoginPassword ? "비밀번호 숨기기" : "비밀번호 보기"}
+                  >
+                    {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
               {isSignUpMode && (
                 <div>
                   <Label htmlFor="confirm-password" className="text-sm text-muted-foreground">
                     비밀번호 확인
                   </Label>
-                  <Input
-                    id="confirm-password"
-                    type="password"
-                    placeholder="비밀번호를 다시 입력하세요"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="mt-1.5 rounded-xl bg-muted border-0 h-12"
-                    onKeyDown={(e) => e.key === "Enter" && handleAuthSubmit()}
-                  />
+                  <div className="relative mt-1.5">
+                    <Input
+                      id="confirm-password"
+                      type={showConfirmPassword ? "text" : "password"}
+                      placeholder="비밀번호를 다시 입력하세요"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      className="rounded-xl bg-muted border-0 h-12 pr-12"
+                      onKeyDown={(e) => e.key === "Enter" && handleAuthSubmit()}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword((prev) => !prev)}
+                      className="absolute inset-y-0 right-0 flex items-center justify-center w-12 text-muted-foreground hover:text-foreground"
+                      aria-label={showConfirmPassword ? "비밀번호 숨기기" : "비밀번호 보기"}
+                    >
+                      {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                   {confirmPassword && password !== confirmPassword && (
                     <p className="mt-2 text-xs text-destructive">비밀번호가 일치하지 않습니다.</p>
                   )}
@@ -2408,6 +2643,9 @@ function LoginScreen({
                   setIsSignUpMode((prev) => !prev)
                   setConfirmPassword("")
                   setDisplayName("")
+                  setGender("")
+                  setBirthYear("")
+                  clearAuthSuccessMessage()
                 }}
               >
                 {isSignUpMode ? "로그인" : "회원가입"}
@@ -2778,7 +3016,7 @@ function MyPageView({
             )}
           </div>
 
-          <div className="rounded-xl border border-border p-4 space-y-3">
+          <div className="hidden rounded-xl border border-border p-4 space-y-3">
             <div className="flex items-center justify-between">
               <div>
                 <Label htmlFor="daily-reminder" className="text-base font-medium text-foreground">
@@ -2853,7 +3091,7 @@ function MyPageView({
             </Button>
           </div>
 
-          <div className="flex items-center justify-between p-4 bg-destructive/5 rounded-xl border border-destructive/20">
+          <div className="hidden items-center justify-between p-4 bg-destructive/5 rounded-xl border border-destructive/20">
             <div>
               <p className="font-medium text-foreground">내 상담 기록 초기화</p>
               <p className="text-sm text-muted-foreground">

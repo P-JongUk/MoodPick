@@ -75,7 +75,6 @@ async def run_counseling_pipeline(
 
                     emotion = state.emotion_score.get("emotion_description", "")
                     intensity = float(state.emotion_score.get("intensity", 0.0))
-
                     supabase.table("recommendation_log").insert(
                         {
                             "user_id": state.user_id,
@@ -86,6 +85,8 @@ async def run_counseling_pipeline(
                             "reason": reason,
                             "emotion": emotion,
                             "intensity": intensity,
+                            "ambiguity": state.recommended_content.get("ambiguity"),
+                            "secondary_emotion": state.recommended_content.get("secondary_emotion"),
                             "candidate_pool": state.recommended_content.get("candidate_pool", []),
                             "selected_score": state.recommended_content.get("selected_score", 0.0),
                             "strategy_version": "v2.1",

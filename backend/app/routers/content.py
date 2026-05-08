@@ -3,7 +3,7 @@ from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
 from app.services.supabase_service import get_supabase_client
 from supabase import Client
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 router = APIRouter(prefix="/content", tags=["content"])
@@ -114,7 +114,7 @@ async def submit_content_feedback(
                 "user_id": payload.user_id,
                 "content_id": payload.content_id,
                 "feedback": payload.feedback,
-                "created_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
             },
             on_conflict="user_id,content_id",
         ).execute()
@@ -182,7 +182,7 @@ async def record_watched_content(
             "content_id": payload.content_id,
             "content_title": payload.content_title,
             "thumbnail_url": payload.thumbnail_url,
-            "watched_at": datetime.utcnow().isoformat(),
+            "watched_at": datetime.now(timezone.utc).isoformat(),
         }
         if payload.media_provider is not None:
             row["media_provider"] = payload.media_provider
@@ -242,7 +242,7 @@ async def get_content_recommendations(
 ):
     """자동 추천 콘텐츠 시드 목록. user_id는 향후 개인화 시 사용."""
     _ = user_id
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     if media == "all":
         filtered = _SEED_RECOMMENDATIONS[:limit]
     else:

@@ -311,7 +311,7 @@ export async function getEmotionSummary(userId: string, days = 7): Promise<any> 
 // ============ User API ============
 
 export async function getUserProfile(userId: string): Promise<any> {
-  const response = await fetch(`${API_BASE_URL}/user/profile/${userId}`, {
+  const response = await fetch(`/api/user/profile?user_id=${encodeURIComponent(userId)}`, {
     method: "GET",
   })
 
@@ -322,14 +322,24 @@ export async function getUserProfile(userId: string): Promise<any> {
   return response.json()
 }
 
-export async function upsertUserProfile(userId: string, displayName: string): Promise<any> {
-  const response = await fetch(`${API_BASE_URL}/user/profile`, {
+export async function upsertUserProfile(
+  userId: string,
+  displayName: string,
+  gender?: string | null,
+  birthYear?: number | null
+): Promise<any> {
+  const payload: Record<string, unknown> = {
+    user_id: userId,
+    display_name: displayName,
+  }
+
+  if (gender != null) payload.gender = gender
+  if (birthYear != null) payload.birth_year = birthYear
+
+  const response = await fetch(`/api/user/profile`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      user_id: userId,
-      display_name: displayName,
-    }),
+    body: JSON.stringify(payload),
   })
 
   if (!response.ok) {

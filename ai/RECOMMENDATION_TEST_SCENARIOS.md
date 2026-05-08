@@ -106,9 +106,9 @@ curl -X POST http://localhost:8000/api/counseling/chat \
 **기대 결과**
 - [-] 사용자 A와 사용자 B가 받은 `video_id`가 **다름**
 - [-] `recommendation_log`에서 두 레코드의 `selected_score`와 `candidate_pool` 비교 시, 동일 후보라도 점수 순위가 다름
-- [-] 두 사용자 모두 자기 좋아요 톤(장르/스타일)이 `search_query` 와 상위 영상에 반영되고, 그 위에 현재 감정 강도에 맞는 형용사(예: 강도 ≥0.7 이면 `chill`/`calm`, 0.4~0.7 이면 `feel-good`/`uplifting`)가 가미됨
+- [-] 두 사용자 모두 자기 좋아요 톤(장르/스타일)이 `search_query` 와 상위 영상에 반영되고, 그 위에 현재 케어 시급도(`intensity`)에 맞는 형용사(예: `intensity` ≥0.6 이면 `chill`/`calm`, 0.3~0.6 이면 `feel-good`/`uplifting`)가 가미됨
 
-> **참고**: 검색 쿼리 생성은 "역할 분담" 모델을 따른다. liked_hints가 장르를 결정하고, 감정·강도가 형용사를 결정한다. 따라서 강도가 높으면 양쪽 모두 차분한 형용사로 수렴할 수 있으나, 장르(EDM vs 클래식 등)는 사용자별로 보존되어야 한다. 자세한 규칙은 [content_recommender_prompt.md](prompts/content_recommender_prompt.md) 의 규칙 #2 참고.
+> **참고**: 검색 쿼리 생성은 "역할 분담" 모델을 따른다. liked_hints가 장르를 결정하고, 감정·케어 시급도(`intensity`)가 형용사를 결정한다. 따라서 시급도가 높으면 양쪽 모두 차분한 형용사로 수렴할 수 있으나, 장르(EDM vs 클래식 등)는 사용자별로 보존되어야 한다. 자세한 규칙은 [content_recommender_prompt.md](prompts/content_recommender_prompt.md) 의 규칙 #2 참고.
 
 **Supabase 확인 쿼리**
 
@@ -155,7 +155,7 @@ ORDER BY user_id, created_at DESC;
 
 **전제 조건**
 - 동일 사용자가 동일 세션에서 여러 번 대화를 나눔
-- 감정 강도가 회차에 따라 상승 (0.3 → 0.5 → 0.8 순으로)
+- 감정 케어 시급도(`intensity`)가 회차에 따라 상승 (대략 0.2 → 0.4 → 0.6 추세). 절대값은 LLM이 산출하는 valence/arousal에 의존하며, 공식은 `min(1, max(0,-V)*0.6 + |A|*0.4)`.
 
 **실행 방법**
 
@@ -175,11 +175,15 @@ curl -X POST http://localhost:8000/api/counseling/chat \
 
 **기대 결과**
 - [-] `emotion_records` 테이블에 3개의 기록이 순서대로 생성됨
-- [-] 3번째 대화에서 `recommendation_log`의 기록 확인 시 `emotion`에 높은 강도 감정, `intensity`가 0.7 이상
+- [-] 3번째 대화에서 `recommendation_log`의 기록 확인 시 `emotion`에 부정·고각성 감정(예: 슬픔/공포/우울), `intensity`가 0.5 이상 (새 공식: `min(1, max(0,-V)*0.6 + |A|*0.4)`)
 - [-] (디버그 로그 확인) `reranker.py`의 `compute_emotion_trend`가 `"worsening"` 반환
 - [-] `w_emotion`이 `w_taste`보다 높은 값으로 계산되어 감정 적합성 위주 영상 선정
 
-> **Note (intensity 의미)**: `emotion_records`는 마이그레이션 009 이후 `intensity` 컬럼을 제거하고 `valence`/`arousal`/`va_radius` 만 사용합니다. `recommendation_log.intensity` 컬럼은 그대로 유지하지만 적재되는 값은 `va_radius = √(V² + A²)` 입니다(0~1). 즉 두 테이블의 "강도" 비교는 `emotion_records.va_radius` ↔ `recommendation_log.intensity` 로 봐야 합니다.
+> **Note (`va_radius`와 `intensity`는 별개 개념)**:
+> - `emotion_records.va_radius`: Russell circumplex 기준 해당 감정 라벨의 `confidence_radius` 룩업값 (0.15~0.30). 감정 클러스터의 VA 평면상 영역 크기를 나타냄. ([ai/tools/emotion_va_map.py](emotion_va_map.py)의 `EMOTION_VA_MAP`)
+> - `recommendation_log.intensity`: 추천 시점에 [counselor.py:_build_emotion_score()](agents/counselor.py)에서 계산되는 "감정 케어 시급도" 신호. 공식: `min(1, max(0, -V) * 0.6 + |A| * 0.4)` (0~1). [reranker.py](agents/reranker.py)의 동적 가중치(`w_taste`/`w_emotion`) 조정에 사용.
+>
+> 두 값은 단위·의미가 다르므로 **정합성 비교 대상이 아님**. 분석 시 두 컬럼을 동일시하지 말 것.
 
 **Supabase 확인 쿼리**
 ```sql
@@ -189,18 +193,19 @@ FROM emotion_records
 WHERE user_id = '<UUID>'
 ORDER BY created_at ASC;
 
--- 추천 로그에서 감정 강도 확인 (intensity = va_radius)
+-- 추천 로그에서 감정 케어 시급도(intensity) 확인 — va_radius와는 별개 개념
 SELECT emotion, intensity, video_title, selected_score
 FROM recommendation_log
 WHERE user_id = '<UUID>'
 ORDER BY created_at DESC
 LIMIT 1;
 
--- 두 테이블 강도 정합성 교차 확인
+-- 참고용 join: 같은 (user, session)의 두 컬럼을 한 번에 보기 위함이며,
+-- 두 값(rl.intensity, er.va_radius)이 같은지 검증하는 쿼리가 아님에 유의.
 SELECT
   rl.created_at AS rec_at,
-  rl.intensity  AS rec_intensity,
-  er.va_radius  AS er_va_radius,
+  rl.intensity  AS rec_intensity_care_urgency,
+  er.va_radius  AS er_va_radius_cluster_extent,
   er.created_at AS er_at
 FROM recommendation_log rl
 JOIN emotion_records er

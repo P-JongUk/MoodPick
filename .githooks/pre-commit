@@ -8,4 +8,14 @@ if [ "$branch" = "main" ]; then
   exit 1
 fi
 
+if command -v powershell.exe >/dev/null 2>&1; then
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/update-context.ps1 -Quiet
+  git add CONTEXT.md
+elif command -v pwsh >/dev/null 2>&1; then
+  pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/update-context.ps1 -Quiet
+  git add CONTEXT.md
+else
+  echo "[info] PowerShell not found; skipping CONTEXT.md auto-refresh."
+fi
+
 exit 0

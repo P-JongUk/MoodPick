@@ -18,6 +18,12 @@ services:
       - backend/.env.local
     environment:
       DATABASE_URL: postgres://postgres:postgres@db:5432/moodpick
+      WATCHFILES_FORCE_POLLING: "true"
+    volumes:
+      - ./backend:/app
+      - ./ai:/app/ai
+      - ./mcp_servers:/app/mcp_servers
+      - ./backend/.env.local:/app/mcp_servers/.env.local:ro
     depends_on:
       - db
     ports:
@@ -29,10 +35,19 @@ services:
       dockerfile: frontend/Dockerfile
     env_file:
       - frontend/.env.local
+    environment:
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
     ports:
       - "3000:3000"
     depends_on:
       - backend
+    command: pnpm exec next dev --webpack --hostname 0.0.0.0
 
 volumes:
   db-data:
+  frontend-node-modules:
