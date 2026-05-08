@@ -27,8 +27,13 @@ class CounselingState(BaseModel):
     emotion_score: dict = Field(default_factory=dict)
     # 형식:
     # {
-    #   "emotion": "불안",                    # 24개 기준 감정 중 하나
-    #   "intensity": 0.7,                     # 0.0~1.0
+    #   "emotion": "불안",                    # 24개 기준 감정 중 하나 (get_nearest_emotion 결과)
+    #   "valence": -0.5,                      # -1.0~1.0
+    #   "arousal":  0.5,                      # -1.0~1.0
+    #   "intensity": 0.50,                    # 0.0~1.0, "감정 케어 시급도"
+    #                                         #   = min(1, max(0, -V) * 0.6 + |A| * 0.4)
+    #                                         #   counselor._build_emotion_score()에서 즉석 계산
+    #                                         #   ※ va_radius (EMOTION_VA_MAP confidence_radius)와 다른 개념
     #   "emotion_description": "직장 스트레스와 자책감으로...",  # 임베딩 쿼리용 서술문
     # }
     user_profile: Optional[dict] = None                 # cached after first fetch; reused by Recommender

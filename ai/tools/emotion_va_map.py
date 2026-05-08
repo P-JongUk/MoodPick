@@ -98,24 +98,77 @@ def compute_va_score(emotions: list[dict]) -> dict:
 def get_nearest_emotion(valence: float, arousal: float) -> tuple[str, float]:
     """
     주어진 VA 좌표와 가장 가까운 기준 감정을 유클리디안 거리로 찾아 반환합니다.
-    
+
     Args:
         valence: 원자가 (-1.0 ~ 1.0)
         arousal: 각성도 (-1.0 ~ 1.0)
-        
+
     Returns:
         tuple[str, float]: (가장 가까운 감정 레이블, 해당 감정의 불확실성 반경)
     """
     nearest_emotion = "중립"
     min_distance = float('inf')
     nearest_radius = 0.25
-    
+
     for emotion, (v, a, r) in EMOTION_VA_MAP.items():
         dist = math.sqrt((valence - v)**2 + (arousal - a)**2)
         if dist < min_distance:
             min_distance = dist
             nearest_emotion = emotion
             nearest_radius = r
-            
+
     return nearest_emotion, nearest_radius
+
+
+# ── 감정 분류 모호성(ambiguity) 산출 임계값 ────────────────────────────────
+# 정규화 거리비(n1/n2)가 이 값을 넘고, 동시에 두 번째 감정의 절대거리가 d2 임계
+# 이내일 때만 secondary 감정을 채택. 임계값은 운영 데이터 누적 후 조정 가능.
+_AMBIGUITY_RATIO_THRESHOLD = 0.7
+_AMBIGUITY_ABSOLUTE_DISTANCE_THRESHOLD = 0.35
+
+
+def compute_emotion_ambiguity(valence: float, arousal: float) -> dict:
+    """
+    좌표 기반 감정 분류 모호성(ambiguity)을 계산합니다.
+
+    `va_radius`는 클러스터 단위 정적 정보라 사용자 좌표가 클러스터 중심에 있는지
+    경계에 끼어 있는지를 구분하지 못합니다. 본 함수는 좌표 자체에서 두 인접 감정
+    사이에 끼어 있는지를 판정합니다:
+
+    - 정규화 거리(`euclidean / va_radius`)로 정렬해 클러스터 영역 크기를 반영.
+    - 두 번째 가까운 감정이 절대거리 임계 이내일 때만 secondary로 채택해 튐값 방지.
+
+    Args:
+        valence: 원자가 (-1.0 ~ 1.0)
+        arousal: 각성도 (-1.0 ~ 1.0)
+
+    Returns:
+        {
+            "ambiguity": float (0.0~1.0, 1에 가까울수록 두 감정 사이에 끼어 있음),
+            "primary":   str  (정규화 거리 기준 가장 적합한 감정 라벨),
+            "secondary": str | None (모호성 임계 충족 시에만 채워짐)
+        }
+    """
+    candidates: list[tuple[str, float, float]] = []
+    for label, (v, a, r) in EMOTION_VA_MAP.items():
+        euclidean = math.sqrt((valence - v) ** 2 + (arousal - a) ** 2)
+        normalized = euclidean / r if r > 0 else float("inf")
+        candidates.append((label, euclidean, normalized))
+
+    candidates.sort(key=lambda x: x[2])
+
+    primary, _d1, n1 = candidates[0]
+    second,  d2, n2 = candidates[1]
+
+    ambiguity = n1 / n2 if n2 > 0 else 0.0
+
+    secondary: str | None = None
+    if ambiguity > _AMBIGUITY_RATIO_THRESHOLD and d2 < _AMBIGUITY_ABSOLUTE_DISTANCE_THRESHOLD:
+        secondary = second
+
+    return {
+        "ambiguity": round(ambiguity, 3),
+        "primary": primary,
+        "secondary": secondary,
+    }
 
