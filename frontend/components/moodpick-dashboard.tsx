@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { getSupabaseClient } from "@/lib/supabaseClient"
 import {
@@ -288,6 +288,32 @@ export function MoodPickDashboard() {
   const [isSavingMypagePrefs, setIsSavingMypagePrefs] = useState(false)
   const [isExportingMyData, setIsExportingMyData] = useState(false)
   const [exportMyDataMessage, setExportMyDataMessage] = useState<string | null>(null)
+  const previousUserIdRef = useRef<string | null>(null)
+
+  const resetCounselingState = () => {
+    setActiveTab("home")
+    setMessages([])
+    setInputMessage("")
+    setMediaFeedback(null)
+    setIsSessionActive(false)
+    setShowPreSurvey(false)
+    setShowPostSurvey(false)
+    setPreSurveyMood(null)
+    setPostSurveyMood(null)
+    setCurrentSessionId(null)
+    setSyncWarningMessage(null)
+    setIsSendingMessage(false)
+  }
+
+  useEffect(() => {
+    const previousUserId = previousUserIdRef.current
+    const currentUserId = user?.id ?? null
+
+    if (previousUserId !== currentUserId) {
+      resetCounselingState()
+      previousUserIdRef.current = currentUserId
+    }
+  }, [user?.id])
 
   useEffect(() => {
     const loadDashboardData = async () => {
@@ -588,13 +614,14 @@ export function MoodPickDashboard() {
     setSignupGender("")
     setSignupBirthYear("")
     setLoginPassword("")
-    setCurrentSessionId(null)
-    setSyncWarningMessage(null)
+    setAuthSuccessMessage(null)
+    resetCounselingState()
   }
 
   const handleSocialLogin = async (provider: "google" | "kakao") => {
     try {
       await signInWithOAuth(provider)
+      setAuthSuccessMessage(null)
     } catch {
       return
     }
@@ -722,6 +749,14 @@ export function MoodPickDashboard() {
   const handleSendMessage = async () => {
     const trimmedMessage = inputMessage.trim()
     if (!trimmedMessage || isSendingMessage) return
+    if (!user?.id) {
+      setSyncWarningMessage("로그인 후 상담 메시지를 보낼 수 있어요.")
+      return
+    }
+    if (!isSessionActive || !currentSessionId) {
+      setSyncWarningMessage("상담 시작하기를 누르고 사전 문진을 완료한 뒤 메시지를 보내 주세요.")
+      return
+    }
 
     const newMessage: Message = {
       id: Date.now(),
@@ -739,9 +774,7 @@ export function MoodPickDashboard() {
     setIsSendingMessage(true)
 
     try {
-      const response = user
-        ? await sendCounselingMessage(user.id, trimmedMessage, currentSessionId ?? undefined)
-        : null
+      const response = await sendCounselingMessage(user.id, trimmedMessage, currentSessionId)
 
       const recommended = response?.recommended_content ?? null
 
@@ -987,6 +1020,7 @@ export function MoodPickDashboard() {
         isAuthLoading={isAuthLoading}
         authErrorMessage={authErrorMessage}
         authSuccessMessage={authSuccessMessage}
+        clearAuthSuccessMessage={() => setAuthSuccessMessage(null)}
       />
     )
   }
@@ -2040,6 +2074,7 @@ function LoginScreen({
   isAuthLoading,
   authErrorMessage,
   authSuccessMessage,
+  clearAuthSuccessMessage,
 }: {
   email: string
   setEmail: (value: string) => void
@@ -2057,6 +2092,7 @@ function LoginScreen({
   isAuthLoading: boolean
   authErrorMessage: string | null
   authSuccessMessage: string | null
+  clearAuthSuccessMessage: () => void
 }) {
   const isEmailOnlyMode = true
   const [isSignUpMode, setIsSignUpMode] = useState(false)
@@ -2299,6 +2335,7 @@ function LoginScreen({
                   setDisplayName("")
                   setGender("")
                   setBirthYear("")
+                  clearAuthSuccessMessage()
                 }}
               >
                 {isSignUpMode ? "로그인" : "회원가입"}

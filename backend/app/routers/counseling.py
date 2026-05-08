@@ -87,6 +87,12 @@ async def send_counseling_message(
     payload: CounselingMessageRequest,
     supabase: Client = Depends(get_supabase_client),
 ):
+    if not payload.session_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="session_id is required. Start a counseling session before sending messages.",
+        )
+
     # 1. Fetch conversation history
     history = _fetch_session_messages(supabase, payload.session_id)
 
