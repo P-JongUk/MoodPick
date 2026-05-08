@@ -22,6 +22,8 @@ services:
     volumes:
       - ./backend:/app
       - ./ai:/app/ai
+      - ./mcp_servers:/app/mcp_servers
+      - ./backend/.env.local:/app/mcp_servers/.env.local:ro
     depends_on:
       - db
     ports:

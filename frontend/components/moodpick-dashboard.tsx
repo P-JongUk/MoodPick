@@ -2706,7 +2706,7 @@ function MyPageView({
             )}
           </div>
 
-          <div className="rounded-xl border border-border p-4 space-y-3">
+          <div className="hidden rounded-xl border border-border p-4 space-y-3">
             <div className="flex items-center justify-between">
               <div>
                 <Label htmlFor="daily-reminder" className="text-base font-medium text-foreground">
@@ -2781,7 +2781,7 @@ function MyPageView({
             </Button>
           </div>
 
-          <div className="flex items-center justify-between p-4 bg-destructive/5 rounded-xl border border-destructive/20">
+          <div className="hidden items-center justify-between p-4 bg-destructive/5 rounded-xl border border-destructive/20">
             <div>
               <p className="font-medium text-foreground">내 상담 기록 초기화</p>
               <p className="text-sm text-muted-foreground">

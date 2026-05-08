@@ -19,6 +19,9 @@ COPY backend/ ./
 # Copy ai helpers/tools used by backend
 COPY ai/ ./ai/
 
+# Copy MCP servers used by the AI recommendation pipeline
+COPY mcp_servers/ ./mcp_servers/
+
 # Copy entrypoint script
 COPY backend/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
