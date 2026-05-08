@@ -82,12 +82,24 @@ export function youtubeThumbnailUrl(
   return `https://img.youtube.com/vi/${videoId}/${size}.jpg`
 }
 
-export function youtubeEmbedUrl(videoId: string): string {
-  return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?rel=0`
+export function youtubeEmbedUrl(
+  videoId: string,
+  opts?: { autoplay?: boolean }
+): string {
+  let q = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?rel=0`
+  if (opts?.autoplay) {
+    // mute=1: 많은 브라우저가 사용자 제스처 없이는 음소거 자동재생만 허용 — 플레이어에서 음소거 해제 가능
+    q += "&autoplay=1&mute=1"
+  }
+  return q
 }
 
-export function spotifyEmbedUrl(trackId: string): string {
-  return `https://open.spotify.com/embed/track/${encodeURIComponent(trackId)}?utm_source=generator`
+export function spotifyEmbedUrl(trackId: string, opts?: { autoplay?: boolean }): string {
+  let q = `https://open.spotify.com/embed/track/${encodeURIComponent(trackId)}?utm_source=generator`
+  if (opts?.autoplay) {
+    q += "&autoplay=true"
+  }
+  return q
 }
 
 export function spotifyOpenUrl(trackId: string): string {

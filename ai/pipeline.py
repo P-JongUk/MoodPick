@@ -15,6 +15,16 @@ from ai.agents.orchestrator import orchestrator_agent
 from ai.agents.counselor import counselor_agent
 from ai.agents.content_recommender import content_recommender_agent
 from ai.tools.content_history import _get_supabase
+from ai.tools.session_meditation_format import (
+    get_session_meditation_audio_format,
+    set_session_meditation_audio_format,
+)
+from ai.meditation_audio_clarify import (
+    MEDITATION_FORMAT_CLARIFICATION,
+    is_reply_to_meditation_format_clarification,
+    parse_meditation_format_reply,
+    should_ask_meditation_format_clarification,
+)
 
 
 async def run_counseling_pipeline(
@@ -30,6 +40,12 @@ async def run_counseling_pipeline(
         message=message,
         messages=messages or [],
     )
+    try:
+        _fmt = get_session_meditation_audio_format(session_id)
+        if _fmt:
+            state.meditation_audio_format = _fmt
+    except Exception:
+        pass
 
     # ① Orchestrator
     state = await orchestrator_agent(state)
@@ -40,8 +56,32 @@ async def run_counseling_pipeline(
     # ② Counselor
     state = await counselor_agent(state)
 
+    # 오케스트레이터는 직전 맥락 없이 보므로 「가이드」「음악만」만 오면 needs_recommendation=false가 되기 쉬움.
+    # 확인 질문에 답하는 턴은 반드시 추천 파이프로 진입해야 함.
+    replying_meditation_format = is_reply_to_meditation_format_clarification(
+        state.messages, state.message
+    )
+    if replying_meditation_format:
+        state.needs_recommendation = True
+
     # ③ Content Recommender (conditional)
     if state.needs_recommendation:
+        if replying_meditation_format:
+            _reply_fmt = parse_meditation_format_reply(state.message)
+            if _reply_fmt is None:
+                _reply_fmt = "guided"
+            try:
+                set_session_meditation_audio_format(session_id, _reply_fmt)
+            except Exception as e:
+                print(f"meditation_audio_format save skipped: {e}", flush=True)
+            state.meditation_audio_format = _reply_fmt
+            state.needs_recommendation = True
+            state.meditation_format_resolved_this_turn = True
+
+        if should_ask_meditation_format_clarification(state):
+            state.response += MEDITATION_FORMAT_CLARIFICATION
+            return state
+
         state = await content_recommender_agent(state)
 
         # ④ Post-processing: append recommendation info to counselor response

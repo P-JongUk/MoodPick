@@ -22,6 +22,11 @@ class CounselingState(BaseModel):
     intent: str = "상담"                                # "상담" | "추천" | "잡담"
     needs_recommendation: bool = False
 
+    # 세션 DB(counseling_sessions.meditation_audio_format)와 동기: guided | music_only
+    meditation_audio_format: Optional[str] = None
+    # 이번 요청에서 확인 질문 답으로 형식이 확정된 경우 추천 분기에 세션 선호를 반영
+    meditation_format_resolved_this_turn: bool = False
+
     # --- Counselor fills these ---
     rag_context: list = Field(default_factory=list)
     emotion_score: dict = Field(default_factory=dict)

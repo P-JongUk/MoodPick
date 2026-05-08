@@ -216,6 +216,28 @@ const formatEmotionDayKey = (date: Date) => date.toLocaleDateString("en-CA")
 
 const formatEmotionDayLabel = (date: Date) => `${date.getMonth() + 1}/${date.getDate()}`
 
+/** `<audio>` 시크 시 duration·seekable·UI 메타 길이를 맞춰 Range 미지원/지연 로드 케이스를 줄입니다. */
+function podcastSeekUpperBound(el: HTMLMediaElement, uiDuration: number): number {
+  try {
+    if (el.seekable?.length) {
+      const end = el.seekable.end(el.seekable.length - 1)
+      if (Number.isFinite(end) && end > 0) return end
+    }
+  } catch {
+    // seekable 접근 실패 무시
+  }
+  if (Number.isFinite(el.duration) && el.duration > 0) return el.duration
+  if (Number.isFinite(uiDuration) && uiDuration > 0) return uiDuration
+  return 0
+}
+
+function clampPodcastTargetTime(el: HTMLMediaElement, sec: number, uiDuration: number): number {
+  const max = podcastSeekUpperBound(el, uiDuration)
+  const t = Number.isFinite(sec) ? sec : 0
+  if (max > 0) return Math.max(0, Math.min(max, t))
+  return Math.max(0, t)
+}
+
 export function MoodPickDashboard() {
   const {
     user,
@@ -1201,6 +1223,7 @@ export function MoodPickDashboard() {
             isSendingMessage={isSendingMessage}
             isPlaying={isPlaying}
             setIsPlaying={setIsPlaying}
+            autoPlayEnabled={autoPlayEnabled}
             mediaFeedback={mediaFeedback}
             onMediaFeedbackChange={handleMediaFeedbackChange}
             onEndSession={handleEndSession}
@@ -1439,6 +1462,7 @@ function ContentMediaPanel({
   recommendedQueue,
   isPlaying,
   setIsPlaying,
+  autoPlayEnabled,
   mediaFeedback,
   onMediaFeedbackChange,
   syncWarningMessage,
@@ -1451,6 +1475,7 @@ function ContentMediaPanel({
   recommendedQueue: ContentHistoryItem[]
   isPlaying: boolean
   setIsPlaying: (value: boolean) => void
+  autoPlayEnabled: boolean
   mediaFeedback: "like" | "dislike" | null
   onMediaFeedbackChange: (value: "like" | "dislike") => void
   syncWarningMessage: string | null
@@ -1494,6 +1519,21 @@ function ContentMediaPanel({
     audioRef.current.playbackRate = podcastRate
   }, [podcastRate, playback.kind])
 
+  useEffect(() => {
+    if (playback.kind !== "podcast" || !autoPlayEnabled) return
+    const el = audioRef.current
+    if (!el) return
+    const tryPlay = () => {
+      void el.play().catch(() => {})
+    }
+    if (el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+      tryPlay()
+      return
+    }
+    el.addEventListener("canplay", tryPlay, { once: true })
+    return () => el.removeEventListener("canplay", tryPlay)
+  }, [currentContent.content_id, playback.kind, autoPlayEnabled])
+
   const formatPodcastTime = (sec: number) => {
     const s = Number.isFinite(sec) ? sec : 0
     const m = Math.floor(s / 60)
@@ -1518,14 +1558,13 @@ function ContentMediaPanel({
   const skipPodcast = (deltaSeconds: number) => {
     const el = audioRef.current
     if (!el) return
-    const duration = Number.isFinite(el.duration) ? el.duration : 0
+    const max = podcastSeekUpperBound(el, podcastDuration)
     const nextRaw = el.currentTime + deltaSeconds
-    const next = Math.max(
-      0,
-      duration > 0 ? Math.min(duration, nextRaw) : nextRaw
-    )
+    const next = max > 0 ? Math.max(0, Math.min(max, nextRaw)) : Math.max(0, nextRaw)
+    const wasPlaying = !el.paused
     el.currentTime = next
     setPodcastCurrentTime(next)
+    if (wasPlaying) void el.play().catch(() => {})
   }
 
   const applyPodcastRate = (rate: number) => {
@@ -1538,10 +1577,11 @@ function ContentMediaPanel({
   const seekPodcast = (sec: number) => {
     const el = audioRef.current
     if (!el) return
-    const duration = Number.isFinite(el.duration) ? el.duration : 0
-    const next = Math.max(0, Math.min(duration || 0, sec))
+    const wasPlaying = !el.paused
+    const next = clampPodcastTargetTime(el, sec, podcastDuration)
     el.currentTime = next
     setPodcastCurrentTime(next)
+    if (wasPlaying) void el.play().catch(() => {})
   }
 
   return (
@@ -1580,11 +1620,16 @@ function ContentMediaPanel({
       >
         <div
           className={cn(
-            "bg-foreground/90 relative flex items-center justify-center overflow-hidden",
-            !isEmbed && "aspect-video",
-            isEmbed && playback.kind === "youtube" && "aspect-video",
-            isEmbed && playback.kind === "spotify" && "min-h-[352px] h-[352px]",
-            isFullscreen && playback.kind !== "spotify" && "max-h-[min(52vh,560px)] w-full"
+            "bg-foreground/90 relative flex overflow-hidden",
+            !isEmbed &&
+              playback.kind !== "podcast" &&
+              "aspect-video items-center justify-center",
+            playback.kind === "podcast" &&
+              "min-h-[260px] h-[min(56vh,380px)] max-h-[420px] w-full max-w-[min(100%,22rem)] mx-auto flex-col sm:min-h-[280px] sm:h-[min(52vh,400px)] sm:max-w-[24rem]",
+            isEmbed && playback.kind === "youtube" && "aspect-video items-center justify-center",
+            isEmbed && playback.kind === "spotify" && "min-h-[352px] h-[352px] items-center justify-center",
+            isFullscreen && playback.kind !== "spotify" && playback.kind !== "podcast" && "max-h-[min(52vh,560px)] w-full",
+            isFullscreen && playback.kind === "podcast" && "max-h-[min(70vh,520px)] flex-1 min-h-0"
           )}
         >
           {onRequestFullscreen && (
@@ -1599,18 +1644,20 @@ function ContentMediaPanel({
           )}
           {playback.kind === "youtube" && playback.youtubeVideoId && (
             <iframe
+              key={`yt-${playback.youtubeVideoId}-${autoPlayEnabled ? "ap" : "noap"}`}
               title={currentContent.content_title}
               className="absolute inset-0 h-full w-full border-0"
-              src={youtubeEmbedUrl(playback.youtubeVideoId)}
+              src={youtubeEmbedUrl(playback.youtubeVideoId, { autoplay: autoPlayEnabled })}
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
               allowFullScreen
             />
           )}
           {playback.kind === "spotify" && playback.spotifyTrackId && (
             <iframe
+              key={`sp-${playback.spotifyTrackId}-${autoPlayEnabled ? "ap" : "noap"}`}
               title={currentContent.content_title}
               className="absolute inset-0 h-full w-full border-0"
-              src={spotifyEmbedUrl(playback.spotifyTrackId)}
+              src={spotifyEmbedUrl(playback.spotifyTrackId, { autoplay: autoPlayEnabled })}
               allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
               loading="lazy"
             />
@@ -1625,32 +1672,59 @@ function ContentMediaPanel({
               />
               <div className="absolute inset-0 bg-gradient-to-b from-black/25 via-black/55 to-black/80" />
 
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="relative w-56 h-56 sm:w-64 sm:h-64">
+              {/* 턴테이블: 상단 flex 영역만 사용 → 프레임 안에 원 전체가 들어감 */}
+              <div className="relative z-[1] flex min-h-0 flex-1 items-center justify-center px-4 pt-4 pb-2">
+                <div className="relative aspect-square w-[min(72%,17.5rem)] max-h-full shrink-0 sm:w-[min(70%,18rem)]">
                   <div className="absolute inset-0 rounded-full bg-black/70 shadow-2xl" />
-                  <div className="absolute inset-3 rounded-full bg-neutral-900/90" />
+                  <div className="absolute inset-[10%] rounded-full bg-neutral-900/90" />
                   <div
-                    className={cn("absolute inset-6 rounded-full bg-center bg-cover animate-spin")}
+                    className={cn("absolute inset-[18%] rounded-full bg-center bg-cover animate-spin")}
                     style={{
                       animationDuration: "14s",
                       backgroundImage: currentContent.thumbnail_url ? `url(${currentContent.thumbnail_url})` : undefined,
                     }}
                   />
-                  <div className="absolute left-1/2 top-1/2 w-3 h-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-neutral-200/80" />
+                  <div className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-neutral-200/80 sm:h-3 sm:w-3" />
                 </div>
               </div>
 
               <audio
                 ref={audioRef}
                 src={playback.podcastAudioUrl}
-                preload="metadata"
+                preload="auto"
                 onLoadedMetadata={() => {
                   const el = audioRef.current
                   if (!el) return
-                  setPodcastDuration(Number.isFinite(el.duration) ? el.duration : 0)
+                  const upper = podcastSeekUpperBound(el, 0)
+                  const d =
+                    Number.isFinite(el.duration) && el.duration > 0 ? el.duration : upper
+                  setPodcastDuration(d)
                   setPodcastCurrentTime(Number.isFinite(el.currentTime) ? el.currentTime : 0)
                 }}
+                onDurationChange={() => {
+                  const el = audioRef.current
+                  if (!el) return
+                  setPodcastDuration((prev) => {
+                    const upper = podcastSeekUpperBound(el, prev)
+                    const d =
+                      Number.isFinite(el.duration) && el.duration > 0 ? el.duration : upper
+                    return d > 0 ? Math.max(prev, d) : prev
+                  })
+                }}
+                onProgress={() => {
+                  const el = audioRef.current
+                  if (!el) return
+                  setPodcastDuration((prev) => {
+                    const upper = podcastSeekUpperBound(el, prev)
+                    return upper > prev ? upper : prev
+                  })
+                }}
                 onTimeUpdate={() => {
+                  const el = audioRef.current
+                  if (!el) return
+                  setPodcastCurrentTime(Number.isFinite(el.currentTime) ? el.currentTime : 0)
+                }}
+                onSeeked={() => {
                   const el = audioRef.current
                   if (!el) return
                   setPodcastCurrentTime(Number.isFinite(el.currentTime) ? el.currentTime : 0)
@@ -1660,86 +1734,100 @@ function ContentMediaPanel({
                 onEnded={() => setPodcastPlaying(false)}
               />
 
-              <div className="absolute left-4 right-4 bottom-4 z-[2] rounded-xl overflow-hidden border border-white/10 bg-black/30 backdrop-blur">
-                <div className="p-3 sm:p-4">
-                  <div className="flex items-center justify-between gap-3 mb-3">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="rounded-full text-primary-foreground hover:bg-white/10"
-                      onClick={() => skipPodcast(-15)}
-                      aria-label="15초 뒤로"
-                    >
-                      <ChevronLeft className="w-5 h-5" />
-                    </Button>
+              <div className="relative z-[2] mt-auto flex shrink-0 justify-center px-3 pb-3 pt-1 sm:px-4 sm:pb-4">
+                <div className="w-full max-w-[17.5rem] sm:max-w-xs rounded-lg overflow-hidden border border-white/15 bg-black/50 backdrop-blur-md shadow-lg">
+                  <div className="px-2.5 pt-1.5 pb-1.5 sm:px-3 sm:pb-2">
+                    <div className="flex items-center justify-between gap-1 mb-1.5">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 rounded-full text-primary-foreground hover:bg-white/10 shrink-0"
+                        onClick={() => skipPodcast(-15)}
+                        aria-label="15초 뒤로"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </Button>
 
-                    <Button
-                      type="button"
-                      onClick={() => void togglePodcast()}
-                      size="icon"
-                      className="w-12 h-12 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground"
-                      aria-label={podcastPlaying ? "일시정지" : "재생"}
-                    >
-                      {podcastPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
-                    </Button>
+                      <Button
+                        type="button"
+                        onClick={() => void togglePodcast()}
+                        size="icon"
+                        className="h-10 w-10 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground shrink-0"
+                        aria-label={podcastPlaying ? "일시정지" : "재생"}
+                      >
+                        {podcastPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                      </Button>
 
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="rounded-full text-primary-foreground hover:bg-white/10"
-                      onClick={() => skipPodcast(15)}
-                      aria-label="15초 앞으로"
-                    >
-                      <SkipForward className="w-5 h-5" />
-                    </Button>
-                  </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 rounded-full text-primary-foreground hover:bg-white/10 shrink-0"
+                        onClick={() => skipPodcast(15)}
+                        aria-label="15초 앞으로"
+                      >
+                        <SkipForward className="w-4 h-4" />
+                      </Button>
+                    </div>
 
-                  <input
-                    type="range"
-                    min={0}
-                    max={podcastDuration || 0}
-                    step={0.1}
-                    value={Math.min(podcastCurrentTime, podcastDuration || 0)}
-                    onChange={(e) => seekPodcast(Number(e.target.value))}
-                    disabled={podcastDuration <= 0}
-                    className="w-full"
-                  />
+                    <input
+                      type="range"
+                      min={0}
+                      max={podcastDuration || 0}
+                      step={0.1}
+                      value={Math.min(podcastCurrentTime, podcastDuration || 0)}
+                      onChange={(e) => seekPodcast(Number(e.target.value))}
+                      disabled={podcastDuration <= 0}
+                      className="w-full h-1.5 accent-primary"
+                    />
 
-                  <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-1">
-                    <span>{formatPodcastTime(podcastCurrentTime)}</span>
-                    <span>{formatPodcastTime(podcastDuration)}</span>
-                  </div>
-
-                  <div className="mt-3 flex items-center gap-2 justify-end">
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => applyPodcastRate(0.75)}
-                      className={cn("rounded-full px-3", podcastRate === 0.75 && "bg-primary text-primary-foreground")}
-                    >
-                      0.75x
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => applyPodcastRate(1)}
-                      className={cn("rounded-full px-3", podcastRate === 1 && "bg-primary text-primary-foreground")}
-                    >
-                      1x
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => applyPodcastRate(1.25)}
-                      className={cn("rounded-full px-3", podcastRate === 1.25 && "bg-primary text-primary-foreground")}
-                    >
-                      1.25x
-                    </Button>
+                    <div className="flex items-center justify-between gap-2 mt-0.5">
+                      <span className="text-[10px] tabular-nums text-white/70">
+                        {formatPodcastTime(podcastCurrentTime)}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => applyPodcastRate(0.75)}
+                          className={cn(
+                            "h-6 min-w-0 rounded-full px-2 text-[10px] py-0",
+                            podcastRate === 0.75 && "bg-primary text-primary-foreground"
+                          )}
+                        >
+                          0.75
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => applyPodcastRate(1)}
+                          className={cn(
+                            "h-6 min-w-0 rounded-full px-2 text-[10px] py-0",
+                            podcastRate === 1 && "bg-primary text-primary-foreground"
+                          )}
+                        >
+                          1×
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => applyPodcastRate(1.25)}
+                          className={cn(
+                            "h-6 min-w-0 rounded-full px-2 text-[10px] py-0",
+                            podcastRate === 1.25 && "bg-primary text-primary-foreground"
+                          )}
+                        >
+                          1.25
+                        </Button>
+                      </div>
+                      <span className="text-[10px] tabular-nums text-white/70">
+                        {formatPodcastTime(podcastDuration)}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1911,6 +1999,7 @@ function CounselingView({
   isSendingMessage,
   isPlaying,
   setIsPlaying,
+  autoPlayEnabled,
   mediaFeedback,
   onMediaFeedbackChange,
   onEndSession,
@@ -1928,6 +2017,7 @@ function CounselingView({
   isSendingMessage: boolean
   isPlaying: boolean
   setIsPlaying: (value: boolean) => void
+  autoPlayEnabled: boolean
   mediaFeedback: "like" | "dislike" | null
   onMediaFeedbackChange: (value: "like" | "dislike") => void
   onEndSession: () => void
@@ -1959,6 +2049,7 @@ function CounselingView({
     recommendedQueue,
     isPlaying,
     setIsPlaying,
+    autoPlayEnabled,
     mediaFeedback,
     onMediaFeedbackChange,
     syncWarningMessage,
@@ -2970,7 +3061,8 @@ function MyPageView({
                 콘텐츠 자동 재생 허용
               </Label>
               <p className="text-sm text-muted-foreground mt-1">
-                AI 상담 중 추천 콘텐츠를 자동으로 재생합니다
+                AI 상담 중 추천 콘텐츠를 자동으로 재생합니다. 유튜브는 브라우저 정책상 처음에 음소거로
+                시작할 수 있어요(플레이어에서 음소거 해제).
               </p>
             </div>
             <Switch
