@@ -890,6 +890,14 @@ export function MoodPickDashboard() {
 
       setMessages((prev) => [...prev, aiResponse])
 
+      if (response?.fallback) {
+        setSyncWarningMessage("AI 응답이 일시적으로 불안정해 기본 상담 응답으로 안내했어요.")
+      } else if (recommended && !recommended.video_id) {
+        setSyncWarningMessage("추천 영상을 불러오지 못했어요. 상담은 계속 이용할 수 있고, 잠시 후 다시 요청해 주세요.")
+      } else {
+        setSyncWarningMessage(null)
+      }
+
       // Update content player if recommendation includes a playable media
       if (recommended?.video_id) {
         const contentId = recommended.video_id.toString()
@@ -907,13 +915,17 @@ export function MoodPickDashboard() {
         })
         setIsPlaying(true)
       }
-    } catch {
-      setSyncWarningMessage("상담 메시지 전송에 실패했어요. 백엔드 연결 상태를 확인해 주세요.")
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error && error.message
+          ? error.message
+          : "상담 메시지 전송에 실패했어요. 잠시 후 다시 시도해 주세요."
+      setSyncWarningMessage(errorMessage)
 
       const fallbackResponse: Message = {
         id: Date.now() + 1,
         sender: "ai",
-        text: "현재 서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.",
+        text: errorMessage,
         timestamp: new Date().toLocaleTimeString("ko-KR", {
           hour: "numeric",
           minute: "2-digit",

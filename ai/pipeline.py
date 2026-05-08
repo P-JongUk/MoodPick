@@ -9,12 +9,21 @@ Flow:
   3. Content Recommender → personalized search query (conditional)
 """
 
+import logging
+
 from ai.state import CounselingState
 from ai.utils import load_crisis_response
 from ai.agents.orchestrator import orchestrator_agent
 from ai.agents.counselor import counselor_agent
 from ai.agents.content_recommender import content_recommender_agent
 from ai.tools.content_history import _get_supabase
+
+
+logger = logging.getLogger(__name__)
+
+
+def _short_id(value: str | None) -> str:
+    return value[:8] if value else "-"
 
 
 async def run_counseling_pipeline(
@@ -71,7 +80,17 @@ async def run_counseling_pipeline(
                     if media_url:
                         row["media_url"] = media_url
 
-                    supabase.table("watched_content_records").insert(row).execute()
+                    existing = (
+                        supabase.table("watched_content_records")
+                        .select("id")
+                        .eq("user_id", state.user_id)
+                        .eq("session_id", state.session_id)
+                        .eq("content_id", video_id)
+                        .limit(1)
+                        .execute()
+                    )
+                    if not existing.data:
+                        supabase.table("watched_content_records").insert(row).execute()
 
                     emotion = state.emotion_score.get("emotion_description", "")
                     intensity = float(state.emotion_score.get("intensity", 0.0))
@@ -94,6 +113,12 @@ async def run_counseling_pipeline(
                     ).execute()
                 except Exception as e:
                     # Non-fatal: don't break pipeline for a save failure
-                    print(f"Failed to save recommendation log/history: {e}")
+                    logger.warning(
+                        "Recommendation log save failed user_id=%s session_id=%s content_id=%s error_type=%s",
+                        _short_id(state.user_id),
+                        _short_id(state.session_id),
+                        _short_id(str(video_id)),
+                        type(e).__name__,
+                    )
 
     return state

@@ -8,6 +8,33 @@ const API_BASE_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL ||
   "http://localhost:8000"
 
+async function readErrorDetail(response: Response): Promise<string | null> {
+  try {
+    const data = await response.json()
+    if (typeof data?.detail === "string") return data.detail
+    if (typeof data?.message === "string") return data.message
+  } catch {
+    // Ignore body parsing errors and fall back to status-based messages.
+  }
+  return null
+}
+
+async function buildCounselingError(response: Response): Promise<Error> {
+  const detail = await readErrorDetail(response)
+
+  if (response.status === 400 || response.status === 404 || response.status === 409) {
+    return new Error(detail ?? "상담 세션을 다시 시작한 뒤 메시지를 보내 주세요.")
+  }
+  if (response.status === 429) {
+    return new Error("요청이 잠시 많아요. 조금 뒤에 다시 시도해 주세요.")
+  }
+  if (response.status >= 500) {
+    return new Error("AI 상담 응답을 만드는 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요.")
+  }
+
+  return new Error(detail ?? "상담 메시지 전송에 실패했어요. 잠시 후 다시 시도해 주세요.")
+}
+
 // ============ Session API ============
 
 export interface SessionResponse {
@@ -182,7 +209,8 @@ export async function submitContentFeedback(
   })
 
   if (!response.ok) {
-    throw new Error(`Content feedback failed: ${response.statusText}`)
+    const detail = await readErrorDetail(response)
+    throw new Error(detail ?? "콘텐츠 피드백 저장에 실패했어요. 잠시 후 다시 시도해 주세요.")
   }
 
   return response.json()
@@ -212,7 +240,8 @@ export async function recordWatchedContent(
   })
 
   if (!response.ok) {
-    throw new Error(`Record watched content failed: ${response.statusText}`)
+    const detail = await readErrorDetail(response)
+    throw new Error(detail ?? "콘텐츠 시청 기록 저장에 실패했어요. 잠시 후 다시 시도해 주세요.")
   }
 
   return response.json()
@@ -376,18 +405,23 @@ export async function getUserStats(userId: string): Promise<any> {
 // ============ Counseling API ============
 
 export async function sendCounselingMessage(userId: string, message: string, sessionId?: string): Promise<any> {
-  const response = await fetch(`${API_BASE_URL}/counseling/message`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      user_id: userId,
-      message,
-      session_id: sessionId,
-    }),
-  })
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE_URL}/counseling/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: userId,
+        message,
+        session_id: sessionId,
+      }),
+    })
+  } catch {
+    throw new Error("백엔드 서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.")
+  }
 
   if (!response.ok) {
-    throw new Error(`Send counseling message failed: ${response.statusText}`)
+    throw await buildCounselingError(response)
   }
 
   return response.json()

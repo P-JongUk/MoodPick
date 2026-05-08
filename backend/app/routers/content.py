@@ -1,3 +1,5 @@
+import logging
+
 from pydantic import BaseModel
 from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
@@ -7,6 +9,7 @@ from datetime import datetime, timezone
 
 
 router = APIRouter(prefix="/content", tags=["content"])
+logger = logging.getLogger(__name__)
 
 # 비AI 시드 추천 (YouTube 영상 + Spotify 트랙). 이후 검색 API·개인화로 대체 가능.
 _SEED_RECOMMENDATIONS: list[dict] = [
@@ -94,6 +97,29 @@ class ContentRecommendationItem(BaseModel):
     session_id: Optional[str] = None
 
 
+def _short_id(value: str | None) -> str:
+    return value[:8] if value else "-"
+
+
+def _validate_session_owner(supabase: Client, session_id: Optional[str], user_id: str) -> None:
+    if not session_id:
+        return
+
+    result = (
+        supabase.table("counseling_sessions")
+        .select("id")
+        .eq("id", session_id)
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="상담 세션을 찾을 수 없어요. 새 상담을 시작해 주세요.",
+        )
+
+
 @router.post("/feedback")
 async def submit_content_feedback(
     payload: ContentFeedbackRequest,
@@ -107,6 +133,7 @@ async def submit_content_feedback(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="feedback must be 'like' or 'dislike'"
             )
+        _validate_session_owner(supabase, payload.session_id, payload.user_id)
 
         result = supabase.table("content_feedback").upsert(
             {
@@ -132,10 +159,19 @@ async def submit_content_feedback(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to save feedback"
             )
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.warning(
+            "Content feedback save failed user_id=%s session_id=%s content_id=%s error_type=%s",
+            _short_id(payload.user_id),
+            _short_id(payload.session_id),
+            _short_id(payload.content_id),
+            type(e).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="콘텐츠 피드백 저장에 실패했어요. 잠시 후 다시 시도해 주세요."
         )
 
 
@@ -163,9 +199,15 @@ async def remove_content_feedback(
 
         return {"deleted": deleted, "user_id": user_id, "content_id": content_id}
     except Exception as e:
+        logger.warning(
+            "Content feedback remove failed user_id=%s content_id=%s error_type=%s",
+            _short_id(user_id),
+            _short_id(content_id),
+            type(e).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="콘텐츠 피드백 삭제에 실패했어요. 잠시 후 다시 시도해 주세요.",
         )
 
 
@@ -176,6 +218,8 @@ async def record_watched_content(
 ):
     """시청한 콘텐츠 기록"""
     try:
+        _validate_session_owner(supabase, payload.session_id, payload.user_id)
+
         row: dict = {
             "user_id": payload.user_id,
             "session_id": payload.session_id,
@@ -212,10 +256,19 @@ async def record_watched_content(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to record watched content"
             )
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.warning(
+            "Watched content save failed user_id=%s session_id=%s content_id=%s error_type=%s",
+            _short_id(payload.user_id),
+            _short_id(payload.session_id),
+            _short_id(payload.content_id),
+            type(e).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="콘텐츠 시청 기록 저장에 실패했어요. 잠시 후 다시 시도해 주세요."
         )
 
 
@@ -235,9 +288,14 @@ async def get_content_history(
             return [WatchedContentResponse(**item) for item in result.data]
         return []
     except Exception as e:
+        logger.warning(
+            "Content history fetch failed user_id=%s error_type=%s",
+            _short_id(user_id),
+            type(e).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="콘텐츠 시청 기록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요."
         )
 
 
@@ -302,7 +360,12 @@ async def get_feedback_summary(
             "total": likes + dislikes
         }
     except Exception as e:
+        logger.warning(
+            "Content feedback summary fetch failed user_id=%s error_type=%s",
+            _short_id(user_id),
+            type(e).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="콘텐츠 피드백 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."
         )

@@ -16,6 +16,7 @@ Flow:
 """
 
 import json
+import logging
 
 from openai import OpenAI
 
@@ -26,6 +27,13 @@ from ai.tools.rag_search import search_rag_context
 from ai.tools.user_profile import get_user_profile
 from ai.tools.emotion_record import save_emotion_record
 from ai.tools.emotion_va_map import get_nearest_emotion
+
+
+logger = logging.getLogger(__name__)
+
+
+def _short_id(value: str | None) -> str:
+    return value[:8] if value else "-"
 
 
 def _build_emotion_score(args: dict) -> dict:
@@ -128,8 +136,13 @@ def _execute_tool_call(tool_call, state: CounselingState) -> str:
     fn_name = tool_call.function.name
     fn_args = json.loads(tool_call.function.arguments)
 
-    # Log tool calls to terminal for debugging
-    print(f"\n>>> [AI TOOL CALL] {fn_name}({fn_args})\n")
+    logger.info(
+        "AI tool call fn=%s user_id=%s session_id=%s arg_keys=%s",
+        fn_name,
+        _short_id(state.user_id),
+        _short_id(state.session_id),
+        sorted(fn_args.keys()),
+    )
 
     if fn_name == "search_rag_context":
         result = search_rag_context(
@@ -278,7 +291,12 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
                     except (json.JSONDecodeError, TypeError):
                         pass
         except Exception as e:
-            print(f"[WARN] Forced emotion save failed: {e}")
+            logger.warning(
+                "Forced emotion save failed user_id=%s session_id=%s error_type=%s",
+                _short_id(state.user_id),
+                _short_id(state.session_id),
+                type(e).__name__,
+            )
 
     # Check if counselor suggests recommendation in the response
     recommendation_signals = ["추천해드릴까요", "추천해 드릴까요", "들려드릴까요", "틀어드릴까요"]

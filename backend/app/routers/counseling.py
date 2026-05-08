@@ -1,3 +1,5 @@
+import logging
+
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client
@@ -7,12 +9,17 @@ from app.services.ai_service import get_ai_response
 
 
 router = APIRouter(prefix="/counseling", tags=["counseling"])
+logger = logging.getLogger(__name__)
 
 
 class CounselingMessageRequest(BaseModel):
     user_id: str
     message: str
     session_id: str | None = None
+
+
+def _short_id(value: str | None) -> str:
+    return value[:8] if value else "-"
 
 
 MOOD_MESSAGE_MAP = {
@@ -56,10 +63,32 @@ async def get_initial_counseling_message(
             "status": "ok",
         }
     except Exception as e:
+        logger.warning(
+            "Initial counseling message failed session_id=%s error_type=%s",
+            _short_id(session_id),
+            type(e).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="초기 상담 메시지를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
         )
+
+
+def _get_session_for_user(supabase: Client, session_id: str, user_id: str) -> dict:
+    result = (
+        supabase.table("counseling_sessions")
+        .select("id,user_id,status")
+        .eq("id", session_id)
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="상담 세션을 찾을 수 없어요. 새 상담을 시작해 주세요.",
+        )
+    return result.data[0]
 
 
 def _fetch_session_messages(supabase: Client, session_id: str) -> list[dict]:
@@ -90,21 +119,42 @@ async def send_counseling_message(
     if not payload.session_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="session_id is required. Start a counseling session before sending messages.",
+            detail="상담 시작 후 메시지를 보내 주세요.",
         )
 
-    # 1. Fetch conversation history
-    history = _fetch_session_messages(supabase, payload.session_id)
+    try:
+        session = _get_session_for_user(supabase, payload.session_id, payload.user_id)
+        if session.get("status") == "ended":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="이미 종료된 상담이에요. 새 상담을 시작해 주세요.",
+            )
 
-    # 2. Run AI pipeline
-    result = await get_ai_response(
-        user_id=payload.user_id,
-        session_id=payload.session_id,
-        message=payload.message,
-        messages=history,
-    )
+        # 1. Fetch conversation history
+        history = _fetch_session_messages(supabase, payload.session_id)
 
-    # 3. Save this turn to DB
-    _save_message(supabase, payload.session_id, payload.message, result["message"])
+        # 2. Run AI pipeline
+        result = await get_ai_response(
+            user_id=payload.user_id,
+            session_id=payload.session_id,
+            message=payload.message,
+            messages=history,
+        )
 
-    return {**result, "status": "ok"}
+        # 3. Save this turn to DB
+        _save_message(supabase, payload.session_id, payload.message, result["message"])
+
+        return {**result, "status": "ok"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(
+            "Counseling message failed user_id=%s session_id=%s error_type=%s",
+            _short_id(payload.user_id),
+            _short_id(payload.session_id),
+            type(e).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="상담 메시지 처리 중 오류가 발생했어요. 잠시 후 다시 시도해 주세요.",
+        )

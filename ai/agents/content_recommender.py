@@ -12,6 +12,7 @@ ai/agents/content_recommender.py
 """
 import os
 import json
+import logging
 from pathlib import Path
 
 from openai import OpenAI
@@ -28,6 +29,12 @@ try:
     from ai.tools.podcast_catalog import recommend_podcast_episode
 except Exception:  # optional dependency during merges
     recommend_podcast_episode = None  # type: ignore[assignment]
+
+logger = logging.getLogger(__name__)
+
+
+def _short_id(value: str | None) -> str:
+    return value[:8] if value else "-"
 
 # MCP 서버 경로 (환경 변수로 오버라이드 가능)
 _DEFAULT_MCP_SERVER_PATH = str(Path(__file__).parent.parent.parent / "mcp_servers" / "server.py")
@@ -147,7 +154,12 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
             if videos and "error" in videos[0]:
                 videos = []
     except Exception as e:
-        print(f"MCP Call Failed: {e}")
+        logger.warning(
+            "MCP YouTube search failed user_id=%s session_id=%s error_type=%s",
+            _short_id(state.user_id),
+            _short_id(state.session_id),
+            type(e).__name__,
+        )
 
     # ── 6. 하이브리드 재랭킹 (NEW) ──────────────────────────────────────
     video = None
