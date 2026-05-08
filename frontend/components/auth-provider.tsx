@@ -16,7 +16,13 @@ type AuthProviderValue = {
   isAuthLoading: boolean
   authErrorMessage: string | null
   setAuthErrorMessage: (message: string | null) => void
-  signUpWithPassword: (email: string, password: string, displayName: string) => Promise<void>
+  signUpWithPassword: (
+    email: string,
+    password: string,
+    displayName: string,
+    gender?: string | null,
+    birthYear?: number | null
+  ) => Promise<void>
   signInWithPassword: (email: string, password: string) => Promise<void>
   signInWithOAuth: (provider: 'google' | 'kakao') => Promise<void>
   signOut: () => Promise<void>
@@ -125,7 +131,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setIsAuthLoading(false)
   }
 
-  const signUpWithPassword = async (email: string, password: string, displayName: string) => {
+  const signUpWithPassword = async (
+    email: string,
+    password: string,
+    displayName: string,
+    gender?: string | null,
+    birthYear?: number | null
+  ) => {
     const supabase = getSupabaseClient()
     setIsAuthLoading(true)
     setAuthErrorMessage(null)
@@ -136,6 +148,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       options: {
         data: {
           display_name: displayName,
+          gender: gender ?? null,
+          birth_year: birthYear ?? null,
           onboarding_completed: false,
           onboarding_profile: null,
         },
@@ -150,7 +164,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     if (data.user?.id) {
       try {
-        await upsertUserProfile(data.user.id, displayName)
+        await upsertUserProfile(data.user.id, displayName, gender ?? null, birthYear ?? null)
       } catch {
         // Profile sync failure should not block signup.
       }

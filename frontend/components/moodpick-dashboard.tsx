@@ -257,6 +257,8 @@ export function MoodPickDashboard() {
   // Login form state
   const [loginEmail, setLoginEmail] = useState("")
   const [signupDisplayName, setSignupDisplayName] = useState("")
+  const [signupGender, setSignupGender] = useState("")
+  const [signupBirthYear, setSignupBirthYear] = useState("")
   const [loginPassword, setLoginPassword] = useState("")
   const [authSuccessMessage, setAuthSuccessMessage] = useState<string | null>(null)
 
@@ -319,7 +321,8 @@ export function MoodPickDashboard() {
 
         setUserStats(stats as UserStats)
         setEmotionSummary(summary as EmotionSummary)
-        setProfileDisplayName((profile as { name?: string | null } | null)?.name ?? null)
+        const userProfile = profile as { name?: string | null; display_name?: string | null } | null
+        setProfileDisplayName(userProfile?.name ?? userProfile?.display_name ?? null)
 
         const emotionRecords = (emotionRecordsRaw as EmotionRecordItem[]) || []
         const groupedByDay = new Map<string, number[]>()
@@ -509,11 +512,31 @@ export function MoodPickDashboard() {
       return
     }
 
+    const normalizedBirthYear = signupBirthYear.trim()
+    const parsedBirthYear = normalizedBirthYear ? Number(normalizedBirthYear) : null
+    const currentYear = new Date().getFullYear()
+
+    if (
+      normalizedBirthYear &&
+      (!Number.isInteger(parsedBirthYear) || parsedBirthYear < 1900 || parsedBirthYear > currentYear)
+    ) {
+      setAuthErrorMessage("출생년도는 1900년부터 현재 연도 사이의 숫자로 입력해 주세요.")
+      return
+    }
+
     try {
-      await signUpWithPassword(loginEmail, loginPassword, signupDisplayName.trim())
+      await signUpWithPassword(
+        loginEmail,
+        loginPassword,
+        signupDisplayName.trim(),
+        signupGender || null,
+        parsedBirthYear
+      )
       setAuthSuccessMessage("회원가입이 완료되었습니다. 이제 같은 계정으로 로그인해 주세요.")
       setAuthErrorMessage(null)
       setSignupDisplayName("")
+      setSignupGender("")
+      setSignupBirthYear("")
     } catch {
       return
     }
@@ -562,6 +585,8 @@ export function MoodPickDashboard() {
     await signOut()
     setLoginEmail("")
     setSignupDisplayName("")
+    setSignupGender("")
+    setSignupBirthYear("")
     setLoginPassword("")
     setCurrentSessionId(null)
     setSyncWarningMessage(null)
@@ -950,6 +975,10 @@ export function MoodPickDashboard() {
         setEmail={setLoginEmail}
         displayName={signupDisplayName}
         setDisplayName={setSignupDisplayName}
+        gender={signupGender}
+        setGender={setSignupGender}
+        birthYear={signupBirthYear}
+        setBirthYear={setSignupBirthYear}
         password={loginPassword}
         setPassword={setLoginPassword}
         onLogin={handleLogin}
@@ -1999,6 +2028,10 @@ function LoginScreen({
   setEmail,
   displayName,
   setDisplayName,
+  gender,
+  setGender,
+  birthYear,
+  setBirthYear,
   password,
   setPassword,
   onLogin,
@@ -2012,6 +2045,10 @@ function LoginScreen({
   setEmail: (value: string) => void
   displayName: string
   setDisplayName: (value: string) => void
+  gender: string
+  setGender: (value: string) => void
+  birthYear: string
+  setBirthYear: (value: string) => void
   password: string
   setPassword: (value: string) => void
   onLogin: () => Promise<void>
@@ -2045,7 +2082,7 @@ function LoginScreen({
   }
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+    <div className="min-h-screen bg-background flex items-start justify-center overflow-y-auto p-4 py-8">
       <div className="w-full max-w-md">
         <Card className="border-0 shadow-2xl">
           <CardContent className="p-8">
@@ -2084,6 +2121,45 @@ function LoginScreen({
                     className="mt-1.5 rounded-xl bg-muted border-0 h-12"
                     onKeyDown={(e) => e.key === "Enter" && handleAuthSubmit()}
                   />
+                </div>
+              )}
+
+              {isSignUpMode && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="flex min-w-0 flex-col">
+                    <Label htmlFor="signup-gender" className="text-sm leading-5 text-muted-foreground">
+                      성별
+                    </Label>
+                    <Select value={gender} onValueChange={setGender}>
+                      <SelectTrigger
+                        id="signup-gender"
+                        className="mt-1.5 !h-12 !min-h-12 w-full box-border rounded-xl border-0 bg-muted py-0 data-[size=default]:!h-12"
+                      >
+                        <SelectValue placeholder="선택 안 함" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="female">여성</SelectItem>
+                        <SelectItem value="male">남성</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex min-w-0 flex-col">
+                    <Label htmlFor="signup-birth-year" className="text-sm leading-5 text-muted-foreground">
+                      출생년도
+                    </Label>
+                    <Input
+                      id="signup-birth-year"
+                      type="number"
+                      inputMode="numeric"
+                      min={1900}
+                      max={new Date().getFullYear()}
+                      placeholder="예: 2001"
+                      value={birthYear}
+                      onChange={(e) => setBirthYear(e.target.value)}
+                      className="mt-1.5 !h-12 !min-h-12 w-full box-border rounded-xl border-0 bg-muted py-0"
+                      onKeyDown={(e) => e.key === "Enter" && handleAuthSubmit()}
+                    />
+                  </div>
                 </div>
               )}
 
@@ -2221,6 +2297,8 @@ function LoginScreen({
                   setIsSignUpMode((prev) => !prev)
                   setConfirmPassword("")
                   setDisplayName("")
+                  setGender("")
+                  setBirthYear("")
                 }}
               >
                 {isSignUpMode ? "로그인" : "회원가입"}

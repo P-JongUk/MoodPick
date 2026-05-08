@@ -14,6 +14,15 @@ docker compose down
 
 Once the containers are running, editing files on your machine should be reflected automatically in the browser because the backend and frontend source folders are bind-mounted into the containers.
 
+Hot reload / refresh behavior:
+- `frontend` runs `pnpm exec next dev --webpack --hostname 0.0.0.0`.
+- Next.js is intentionally run with webpack in Docker because webpack polling is more reliable than Turbopack on Windows bind mounts.
+- `frontend` enables polling (`WATCHPACK_POLLING=true`, `CHOKIDAR_USEPOLLING=true`) so file changes on Windows Docker bind mounts are detected more reliably.
+- `backend` runs `uvicorn app.main:app --reload`.
+- `backend` sets `WATCHFILES_FORCE_POLLING=true` for reliable reload behavior on bind mounts.
+- After editing frontend code, refreshing `http://localhost:3000` should show the latest code. Many UI edits also update through Next dev refresh automatically.
+- After editing backend code, the API container should reload automatically; retry the API call or refresh the page.
+
 If you change dependencies or Dockerfiles, run:
 
 ```bash

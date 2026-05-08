@@ -12,6 +12,9 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 RUN pnpm install --no-frozen-lockfile
 
 ENV HOST=0.0.0.0
+ENV WATCHPACK_POLLING=true
+ENV CHOKIDAR_USEPOLLING=true
+ENV NEXT_TELEMETRY_DISABLED=1
 EXPOSE 3000
 
-CMD ["sh", "-c", "pnpm dev"]
+CMD ["sh", "-c", "pnpm exec next dev --webpack --hostname 0.0.0.0"]

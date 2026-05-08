@@ -44,7 +44,7 @@ def get_user_profile(user_id: str) -> dict:
     # ── 1. Fetch user_profiles row ─────────────────────────────────────────
     profile_res = (
         supabase.table("user_profiles")
-        .select("display_name, onboarding_profile")
+        .select("display_name, gender, birth_year, onboarding_profile")
         .eq("user_id", user_id)
         .limit(1)
         .execute()
@@ -83,6 +83,8 @@ def get_user_profile(user_id: str) -> dict:
 
     return {
         "display_name": profile_row.get("display_name", ""),
+        "gender": profile_row.get("gender"),
+        "birth_year": profile_row.get("birth_year"),
         "concerns": onboarding.get("concerns", []),
         "comfort_style": onboarding.get("comfort_style", []),
         "recent_emotions": recent_emotions,

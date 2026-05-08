@@ -18,6 +18,7 @@ services:
       - backend/.env.local
     environment:
       DATABASE_URL: postgres://postgres:postgres@db:5432/moodpick
+      WATCHFILES_FORCE_POLLING: "true"
     volumes:
       - ./backend:/app
       - ./ai:/app/ai
@@ -32,6 +33,10 @@ services:
       dockerfile: frontend/Dockerfile
     env_file:
       - frontend/.env.local
+    environment:
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
     volumes:
       - ./frontend:/app
       - frontend-node-modules:/app/node_modules
@@ -39,6 +44,7 @@ services:
       - "3000:3000"
     depends_on:
       - backend
+    command: pnpm exec next dev --webpack --hostname 0.0.0.0
 
 volumes:
   db-data:
