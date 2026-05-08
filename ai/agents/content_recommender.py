@@ -19,6 +19,7 @@ from ai.state import CounselingState
 from ai.utils import load_prompt
 from ai.tools.content_history import get_content_history, _get_supabase, get_recent_liked_titles
 from ai.tools.user_profile import get_user_profile
+from ai.tools.emotion_va_map import compute_emotion_ambiguity
 from ai.agents.reranker import compute_emotion_trend, hybrid_rerank
 
 # MCP 서버 경로 (환경 변수로 오버라이드 가능)
@@ -64,11 +65,18 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
     # ── 3. Build prompt with template substitution ──────────────────────
     emotion = state.emotion_score.get("emotion", "스트레스")
     intensity = state.emotion_score.get("intensity", 0.5)
-    # 수정 필요
+    valence = state.emotion_score.get("valence", 0.0)
+    arousal = state.emotion_score.get("arousal", 0.0)
+
+    # 좌표 기반 감정 분류 모호성 — 두 라벨 사이에 끼어 있을 때 secondary 채워짐
+    ambiguity_info = compute_emotion_ambiguity(valence, arousal)
+    secondary_emotion = ambiguity_info["secondary"] or "없음"
+    ambiguity = ambiguity_info["ambiguity"]
 
     prompt_template = load_prompt("content_recommender_prompt.md")
     user_prompt = prompt_template.format(
         emotion=emotion,
+        secondary_emotion=secondary_emotion,
         intensity=intensity,
         concerns=concerns,
         comfort_style=comfort_style,
@@ -88,7 +96,7 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
                 "role": "user",
                 "content": (
                     f"사용자 요청: {state.message}\n"
-                    f"현재 감정: {emotion} (강도: {intensity}, 트렌드: {trend})\n"
+                    f"현재 감정: {emotion} (인접 감정: {secondary_emotion}, 강도: {intensity}, 트렌드: {trend})\n"
                     f"고민: {concerns}\n"
                     f"위로 방식: {comfort_style}\n"
                     f"좋아한 콘텐츠 제목들: {liked_hints}\n"
@@ -151,6 +159,7 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
             candidate_pool = [{"video_id": v.get("content_id"), "score": v.get("score", 0.0)} for v in ranked_videos]
 
     # ── 7. Store result ─────────────────────────────────────────────────
+    secondary_for_log = ambiguity_info["secondary"]  # None일 수 있음 (모호 임계 미충족)
     if video:
         state.recommended_content = {
             "video_id": video.get("content_id") or video.get("video_id"),
@@ -160,12 +169,16 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
             "reason": reason,
             "search_query": search_query,
             "candidate_pool": candidate_pool,
-            "selected_score": selected_score
+            "selected_score": selected_score,
+            "ambiguity": ambiguity,
+            "secondary_emotion": secondary_for_log,
         }
     else:
         state.recommended_content = {
             "search_query": search_query,
             "reason": reason,
+            "ambiguity": ambiguity,
+            "secondary_emotion": secondary_for_log,
         }
 
     return state

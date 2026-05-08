@@ -1,5 +1,12 @@
 # MoodPick AI 구현 계획 (3-에이전트 구조 + FastMCP) — 최종
 
+> **⚠️ 현재 구현 상태 (2026-05-08 갱신)**
+> 본 문서는 설계 시점의 계획서입니다. `emotion_score`와 `intensity` 관련 표현(예: `{"emotion": "불안", "intensity": 0.7}`, `save_emotion_record(..., intensity)` 시그니처, prompt format 인자)은 **현재 구현과 다음 차이가 있습니다**:
+> - `save_emotion_record()`는 `intensity`를 인자로 받지 않음. 시그니처: `(user_id, session_id, valence, arousal, emotion_description, raw_message)`. ([ai/tools/emotion_record.py](tools/emotion_record.py))
+> - `state.emotion_score["intensity"]`는 [counselor.py:_build_emotion_score()](agents/counselor.py)에서 즉석 계산: `min(1, max(0,-V)*0.6 + |A|*0.4)` (케어 시급도, 0~1).
+> - DB의 `emotion_records.intensity` 컬럼은 마이그레이션 009로 제거됨. 추천 시점 강도 신호는 `recommendation_log.intensity`에만 적재.
+> - `va_radius`(EMOTION_VA_MAP의 confidence_radius, 0.15~0.30)와 `intensity`는 **별개 개념**이며 동일성 비교 대상이 아님.
+
 ## 확정 아키텍처
 
 | 구성 요소 | 역할 |

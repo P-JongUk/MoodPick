@@ -16,7 +16,6 @@ Flow:
 """
 
 import json
-import math
 
 from openai import OpenAI
 
@@ -34,7 +33,7 @@ def _build_emotion_score(args: dict) -> dict:
     valence = float(args.get("valence", 0.0))
     arousal = float(args.get("arousal", 0.0))
     emotion_label, _ = get_nearest_emotion(valence, arousal)
-    intensity = min(1.0, math.sqrt(valence * valence + arousal * arousal))
+    intensity = min(1.0, max(0.0, -valence) * 0.6 + abs(arousal) * 0.4)
     return {
         "valence": valence,
         "arousal": arousal,
