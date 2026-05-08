@@ -3,8 +3,11 @@ ai/agents/content_recommender.py
 
 유저 의도에 따라 콘텐츠 추천을 수행합니다.
 
-  - intent == "추천": 좋아요/선호 기반 YouTube 추천 (기존 방식)
-  - 그 외(상담/감정 개선): RSS 큐레이션(A, 검색 없음) 기반 팟캐스트 추천
+  - intent == "추천": 기본 YouTube; 웰니스(명상·수면·가이드 등)면 팟캐스트 우선 시도
+  - 특정 곡·플레이리스트·일반 음악으로 보이면(`likely_music_search_request`) 팟캐스트 스킵
+  - intent != "추천": 웰니스 맥락에서 팟캐스트 우선(음악 검색으로 보이면 스킵)
+  - 사용자가 말/가이드 없이 음악·BGM만 원하면(`wants_music_only_bgm`) 팟캐스트를 건너뛰고
+    YouTube 검색 쿼리에 인스트루멘탈·no talking 등을 반영
 
 - GPT를 이용해 검색 쿼리 생성
 - MCP YouTube 서버를 통해 후보군 검색
@@ -25,6 +28,8 @@ from ai.tools.content_history import get_content_history, _get_supabase, get_rec
 from ai.tools.user_profile import get_user_profile
 from ai.tools.emotion_va_map import compute_emotion_ambiguity
 from ai.agents.reranker import compute_emotion_trend, hybrid_rerank
+from ai.meditation_audio_clarify import meditation_audio_format_applies_to_current_message
+from ai.meditation_audio_signals import likely_music_search_request, wants_music_only_bgm, wants_podcast
 try:
     from ai.tools.podcast_catalog import recommend_podcast_episode
 except Exception:  # optional dependency during merges
@@ -88,7 +93,25 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
     ambiguity = ambiguity_info["ambiguity"]
 
     # ── 3.5 팟캐스트 추천 (선택) ───────────────────────────────────────────
-    if state.intent != "추천" and recommend_podcast_episode is not None:
+    applies = meditation_audio_format_applies_to_current_message(state) or (
+        state.meditation_format_resolved_this_turn and bool(state.meditation_audio_format)
+    )
+    stored_music = state.meditation_audio_format == "music_only" and applies
+    stored_guided = state.meditation_audio_format == "guided" and applies
+    wants_music_only = wants_music_only_bgm(state.message) or stored_music
+    likely_music = likely_music_search_request(state.message)
+    # stored_guided: 확인 질문 직후 짧은 답 등에서 wants_podcast가 약할 때 보강
+    prefer_podcast = (
+        (wants_podcast(state.message) or stored_guided) and not wants_music_only and not likely_music
+    )
+    # 추천 intent라도 prefer_podcast면 팟캐스트 시도 (가이드만 말한 경우 등)
+    try_podcast = (
+        recommend_podcast_episode is not None
+        and not wants_music_only
+        and not likely_music
+        and (prefer_podcast or state.intent != "추천")
+    )
+    if try_podcast:
         try:
             episode = recommend_podcast_episode(
                 emotion=emotion,
@@ -117,6 +140,15 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
         liked_hints=liked_hints,
     )
 
+    music_only_note = ""
+    if wants_music_only:
+        music_only_note = (
+            "\n[중요] 사용자는 말·내레이션·가이드 멘트 없이 "
+            "**순수 음악·배경음(인스트루멘탈)** 위주를 원합니다. "
+            "검색 쿼리에 `instrumental`, `no talking`, `피아노`, `자연`, `ambient`, `힐링 음악` 등을 "
+            "적절히 넣어 주세요. `guided meditation`, `명상 가이드` 같은 표현은 피하세요.\n"
+        )
+
     # ── 4. GPT call for query generation (Trend 반영) ───────────────────
     client = _get_openai()
     response = client.chat.completions.create(
@@ -134,6 +166,7 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
                     f"고민: {concerns}\n"
                     f"위로 방식: {comfort_style}\n"
                     f"좋아한 콘텐츠 제목들: {liked_hints}\n"
+                    f"{music_only_note}"
                 ),
             },
         ],
