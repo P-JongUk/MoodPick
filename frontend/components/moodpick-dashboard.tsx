@@ -20,6 +20,7 @@ import {
   getSurveyDelta,
   getUserSessions,
   getUserStats,
+  getUserProfile,
   sendCounselingMessage,
   getReminderPreference,
   upsertReminderPreference,
@@ -178,7 +179,6 @@ function mapContentHistoryRow(row: Record<string, unknown>): ContentHistoryItem 
         ? row.media_provider
         : null,
     media_url: row.media_url != null ? String(row.media_url) : null,
-    getUserProfile,
     watched_at: String(row.watched_at ?? new Date().toISOString()),
     session_id: row.session_id != null ? String(row.session_id) : null,
   }
@@ -211,6 +211,10 @@ const scoreToCalendarColor = (score: number) => {
   if (score >= 3) return "bg-sky-200"
   return "bg-blue-200"
 }
+
+const formatEmotionDayKey = (date: Date) => date.toLocaleDateString("en-CA")
+
+const formatEmotionDayLabel = (date: Date) => `${date.getMonth() + 1}/${date.getDate()}`
 
 export function MoodPickDashboard() {
   const {
@@ -245,9 +249,11 @@ export function MoodPickDashboard() {
   const [syncWarningMessage, setSyncWarningMessage] = useState<string | null>(null)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
   const [lastSurveyDelta, setLastSurveyDelta] = useState<SurveyDeltaSummary | null>(null)
+  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0)
   const [userStats, setUserStats] = useState<UserStats | null>(null)
   const [emotionSummary, setEmotionSummary] = useState<EmotionSummary | null>(null)
   const [emotionData, setEmotionData] = useState<{ date: string; score: number; label: string }[]>([])
+  const [recentEmotionRecords, setRecentEmotionRecords] = useState<EmotionRecordItem[]>([])
   const [calendarMoods, setCalendarMoods] = useState<Record<number, { emoji: string; color: string }>>({})
   const [sessionHistory, setSessionHistory] = useState<SessionHistory[]>([])
   const [contentHistory, setContentHistory] = useState<ContentHistoryItem[]>([])
@@ -321,6 +327,7 @@ export function MoodPickDashboard() {
         setUserStats(null)
         setEmotionSummary(null)
         setEmotionData([])
+        setRecentEmotionRecords([])
         setCalendarMoods({})
         setSessionHistory([])
         setContentHistory([])
@@ -332,65 +339,106 @@ export function MoodPickDashboard() {
 
       try {
         const mediaQuery = mediaPreferenceToQueryParam(mediaPreference)
-        const [stats, emotionRecordsRaw, summary, sessionsRaw, contentsRaw, recsRaw, profile] =
-          await Promise.all([
-            getUserStats(user.id),
-            getEmotionRecords(user.id, 30),
-            getEmotionSummary(user.id, 30),
-            getUserSessions(user.id, 10),
-            getContentHistory(user.id, 20),
-            getContentRecommendations(user.id, { limit: 10, media: mediaQuery }).catch(
-              () => [] as unknown[]
-            ),
-            getUserProfile(user.id).catch(() => null),
-          ])
+        const [
+          statsResult,
+          emotionRecordsResult,
+          summaryResult,
+          sessionsResult,
+          contentsResult,
+          recsResult,
+          profileResult,
+        ] = await Promise.allSettled([
+          getUserStats(user.id),
+          getEmotionRecords(user.id, 30),
+          getEmotionSummary(user.id, 30),
+          getUserSessions(user.id, 10),
+          getContentHistory(user.id, 20),
+          getContentRecommendations(user.id, { limit: 10, media: mediaQuery }),
+          getUserProfile(user.id),
+        ])
 
-        setUserStats(stats as UserStats)
-        setEmotionSummary(summary as EmotionSummary)
-        const userProfile = profile as { name?: string | null; display_name?: string | null } | null
+        setUserStats(statsResult.status === "fulfilled" ? (statsResult.value as UserStats) : null)
+        setEmotionSummary(
+          summaryResult.status === "fulfilled" ? (summaryResult.value as EmotionSummary) : null
+        )
+        const userProfile =
+          profileResult.status === "fulfilled"
+            ? (profileResult.value as { name?: string | null; display_name?: string | null } | null)
+            : null
         setProfileDisplayName(userProfile?.name ?? userProfile?.display_name ?? null)
 
-        const emotionRecords = (emotionRecordsRaw as EmotionRecordItem[]) || []
-        const groupedByDay = new Map<string, number[]>()
-        const dayMoodMap: Record<number, { emoji: string; color: string }> = {}
+        const emotionRecords =
+          emotionRecordsResult.status === "fulfilled"
+            ? ((emotionRecordsResult.value as EmotionRecordItem[]) ?? [])
+            : []
+        const validEmotionRecords = emotionRecords
+          .filter((record) => record?.recorded_at && Number.isFinite(Number(record.score)))
+          .sort(
+            (a, b) =>
+              new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime()
+          )
+        const groupedByDay = new Map<string, { label: string; timestamp: number; scores: number[] }>()
+        const latestMoodByDay = new Map<
+          number,
+          { recordedAt: number; mood: { emoji: string; color: string } }
+        >()
 
-        emotionRecords.forEach((record) => {
+        validEmotionRecords.forEach((record) => {
           const date = new Date(record.recorded_at)
-          const dayKey = `${date.getMonth() + 1}/${date.getDate()}`
-          const scores = groupedByDay.get(dayKey) ?? []
-          scores.push(record.score)
-          groupedByDay.set(dayKey, scores)
+          const dayKey = formatEmotionDayKey(date)
+          const grouped = groupedByDay.get(dayKey) ?? {
+            label: formatEmotionDayLabel(date),
+            timestamp: date.getTime(),
+            scores: [],
+          }
+          grouped.scores.push(record.score)
+          grouped.timestamp = Math.min(grouped.timestamp, date.getTime())
+          groupedByDay.set(dayKey, grouped)
 
           if (
             date.getFullYear() === calendarYear &&
             date.getMonth() + 1 === currentMonth &&
             record.question === "mood_general"
           ) {
-            dayMoodMap[date.getDate()] = {
-              emoji: scoreToEmoji(record.score),
-              color: scoreToCalendarColor(record.score),
+            const day = date.getDate()
+            const recordedAt = date.getTime()
+            const existing = latestMoodByDay.get(day)
+            if (!existing || recordedAt > existing.recordedAt) {
+              latestMoodByDay.set(day, {
+                recordedAt,
+                mood: {
+                  emoji: scoreToEmoji(record.score),
+                  color: scoreToCalendarColor(record.score),
+                },
+              })
             }
           }
         })
 
-        const emotionChartData = Array.from(groupedByDay.entries())
-          .map(([date, scores]) => {
+        const emotionChartData = Array.from(groupedByDay.values())
+          .map(({ label, timestamp, scores }) => {
             const avg = scores.reduce((sum, score) => sum + score, 0) / scores.length
             return {
-              date,
+              date: label,
+              timestamp,
               score: Math.round((avg / 5) * 100),
               label: scoreToLabel(avg),
             }
           })
-          .sort((a, b) => {
-            const [aMonth, aDay] = a.date.split("/").map(Number)
-            const [bMonth, bDay] = b.date.split("/").map(Number)
-            if (aMonth === bMonth) return aDay - bDay
-            return aMonth - bMonth
-          })
+          .sort((a, b) => a.timestamp - b.timestamp)
+          .map(({ timestamp, ...record }) => record)
 
         setEmotionData(emotionChartData)
-        setCalendarMoods(dayMoodMap)
+        setRecentEmotionRecords(validEmotionRecords.slice(0, 5))
+        setCalendarMoods(
+          Object.fromEntries(
+            Array.from(latestMoodByDay.entries()).map(([day, value]) => [day, value.mood])
+          )
+        )
+
+        const contentsRaw = contentsResult.status === "fulfilled" ? contentsResult.value : []
+        const recsRaw = recsResult.status === "fulfilled" ? recsResult.value : []
+        const sessionsRaw = sessionsResult.status === "fulfilled" ? sessionsResult.value : null
 
         const contentItems = ((contentsRaw as unknown[]) ?? []).map((r) =>
           mapContentHistoryRow(r as Record<string, unknown>)
@@ -431,14 +479,18 @@ export function MoodPickDashboard() {
         }))
 
         setSessionHistory(mappedSessionHistory)
-      } catch {
+      } catch (error) {
+        console.error("Failed to load dashboard data", error)
         setUserStats(null)
         setEmotionSummary(null)
+        setEmotionData([])
+        setRecentEmotionRecords([])
+        setCalendarMoods({})
       }
     }
 
     void loadDashboardData()
-  }, [currentMonth, calendarYear, user?.id, mediaPreference])
+  }, [currentMonth, calendarYear, user?.id, mediaPreference, dashboardRefreshKey])
 
   useEffect(() => {
     const loadReminderPreference = async () => {
@@ -691,11 +743,13 @@ export function MoodPickDashboard() {
     if (!postSurveyMood) return
 
     const endedSessionId = currentSessionId
+    let shouldRefreshDashboard = false
 
     if (currentSessionId) {
       try {
         await saveSurveyResponse(currentSessionId, "post", postSurveyMood)
         await endCounselingSession(currentSessionId)
+        shouldRefreshDashboard = true
 
         const deltaResponse = await getSurveyDelta(currentSessionId)
         if (deltaResponse?.delta && typeof deltaResponse.delta === "object") {
@@ -721,6 +775,9 @@ export function MoodPickDashboard() {
     setPostSurveyMood(null)
     setPreSurveyMood(null)
     setMediaFeedback(null)
+    if (shouldRefreshDashboard) {
+      setDashboardRefreshKey((value) => value + 1)
+    }
     setActiveTab(endedSessionId ? "dashboard" : "home")
   }
 
@@ -1159,6 +1216,7 @@ export function MoodPickDashboard() {
             getDaysInMonth={getDaysInMonth}
             calendarMoods={calendarMoods}
             emotionData={emotionData}
+            recentEmotionRecords={recentEmotionRecords}
             sessionHistory={sessionHistory}
             contentHistory={contentHistory}
             lastSurveyDelta={lastSurveyDelta}
@@ -1817,6 +1875,7 @@ function DashboardView({
   getDaysInMonth,
   calendarMoods,
   emotionData,
+  recentEmotionRecords,
   sessionHistory,
   contentHistory,
   lastSurveyDelta,
@@ -1830,6 +1889,7 @@ function DashboardView({
   getDaysInMonth: () => (number | null)[]
   calendarMoods: Record<number, { emoji: string; color: string }>
   emotionData: { date: string; score: number; label: string }[]
+  recentEmotionRecords: EmotionRecordItem[]
   sessionHistory: SessionHistory[]
   contentHistory: ContentHistoryItem[]
   lastSurveyDelta: SurveyDeltaSummary | null
@@ -1945,38 +2005,69 @@ function DashboardView({
           </CardHeader>
           <CardContent>
             <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={emotionData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fontSize: 12 }}
-                    stroke="var(--muted-foreground)"
-                  />
-                  <YAxis
-                    domain={[0, 100]}
-                    tick={{ fontSize: 12 }}
-                    stroke="var(--muted-foreground)"
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "var(--card)",
-                      border: "1px solid var(--border)",
-                      borderRadius: "0.75rem",
-                    }}
-                    labelStyle={{ color: "var(--foreground)" }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="score"
-                    stroke="var(--primary)"
-                    strokeWidth={3}
-                    dot={{ fill: "var(--primary)", strokeWidth: 2, r: 4 }}
-                    activeDot={{ r: 6 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+              {emotionData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={emotionData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fontSize: 12 }}
+                      stroke="var(--muted-foreground)"
+                    />
+                    <YAxis
+                      domain={[0, 100]}
+                      tick={{ fontSize: 12 }}
+                      stroke="var(--muted-foreground)"
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "var(--card)",
+                        border: "1px solid var(--border)",
+                        borderRadius: "0.75rem",
+                      }}
+                      labelStyle={{ color: "var(--foreground)" }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="score"
+                      stroke="var(--primary)"
+                      strokeWidth={3}
+                      dot={{ fill: "var(--primary)", strokeWidth: 2, r: 4 }}
+                      activeDot={{ r: 6 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex h-full items-center justify-center rounded-lg bg-muted/30 text-sm text-muted-foreground">
+                  아직 표시할 감정 기록이 없습니다.
+                </div>
+              )}
             </div>
+            {recentEmotionRecords.length > 0 && (
+              <div className="mt-4 space-y-2">
+                {recentEmotionRecords.slice(0, 3).map((record, index) => (
+                  <div
+                    key={`${record.session_id}-${record.phase ?? "record"}-${record.recorded_at}-${index}`}
+                    className="flex items-center justify-between rounded-lg bg-muted/30 px-3 py-2 text-sm"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span>{scoreToEmoji(record.score)}</span>
+                      <span className="font-medium text-foreground">
+                        {record.phase === "post" ? "상담 후" : "상담 전"}
+                      </span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {new Date(record.recorded_at).toLocaleString("ko-KR", {
+                        month: "long",
+                        day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="flex justify-center gap-4 mt-4">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">😢 낮음</span>

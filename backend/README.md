@@ -19,8 +19,6 @@ backend/
 ```
 
 ## 주요 API 엔드포인트
-- `POST /auth/register` - 회원가입
-- `POST /auth/login` - 로그인
 - `POST /counseling/message` - 상담 요청
 - `POST /emotion/analyze` - 감정 분석
 - `GET /emotion/records` - 감정 기록 조회

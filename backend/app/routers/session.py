@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -36,7 +36,7 @@ async def start_session(
         result = supabase.table("counseling_sessions").insert({
             "user_id": payload.user_id,
             "status": "active",
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
 
         if result.data and len(result.data) > 0:
@@ -63,7 +63,7 @@ async def end_session(
     try:
         result = supabase.table("counseling_sessions").update({
             "status": "ended",
-            "ended_at": datetime.utcnow().isoformat(),
+            "ended_at": datetime.now(timezone.utc).isoformat(),
         }).eq("id", payload.session_id).execute()
 
         if result.data and len(result.data) > 0:

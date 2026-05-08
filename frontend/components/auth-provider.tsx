@@ -94,7 +94,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       setIsAuthLoading(false)
-      setAuthErrorMessage((prev) => prev ?? '인증 확인이 지연되어 로그인 화면으로 이동합니다.')
     }, 7000)
 
     void initializeSession()
