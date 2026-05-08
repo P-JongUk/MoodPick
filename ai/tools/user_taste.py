@@ -8,12 +8,17 @@ ai/tools/user_taste.py
 - refresh_user_taste_vector: 벡터 갱신 및 DB 저장
 - get_onboarding_vector: 콜드스타트 유저를 위한 온보딩 기반 임시 벡터 생성
 """
+import ast
+import logging
 from datetime import datetime, timezone
+
 import numpy as np
 from supabase import create_client, Client
 from ai.config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 from ai.tools.embedding_service import get_or_compute_content_embedding, embed_text
 from ai.tools.user_profile import get_user_profile
+
+logger = logging.getLogger(__name__)
 
 MIN_LIKES_FOR_VECTOR = 3
 HALF_LIFE_DAYS = 90
@@ -27,44 +32,54 @@ async def get_user_taste_vector(user_id: str) -> dict | None:
     """user_taste_vectors 테이블에서 조회."""
     supabase = _get_supabase()
     result = supabase.table("user_taste_vectors").select("*").eq("user_id", user_id).execute()
-    
-    if result.data:
-        row = result.data[0]
-        emb = row["embedding"]
-        if isinstance(emb, str):
-            import ast
-            try:
-                row["embedding"] = ast.literal_eval(emb)
-            except:
-                pass
-        return row
-    return None
+
+    if not result.data:
+        return None
+
+    row = result.data[0]
+    emb = row.get("embedding")
+    if isinstance(emb, str):
+        try:
+            row["embedding"] = ast.literal_eval(emb)
+        except (ValueError, SyntaxError) as e:
+            logger.warning(
+                "Failed to parse user_taste_vector embedding for user_id=%s: %s",
+                user_id,
+                e,
+            )
+            row["embedding"] = None
+    return row
 
 async def compute_user_taste_vector(user_id: str) -> tuple[list[float], int] | None:
     """좋아요 영상들로 시간 가중 평균 계산. None이면 콜드스타트."""
     supabase = _get_supabase()
-    
+
     # 1. 좋아요 이력 가져오기
-    liked = supabase.table("content_feedback") \
+    liked_result = supabase.table("content_feedback") \
         .select("content_id, created_at") \
         .eq("user_id", user_id).eq("feedback", "like") \
-        .execute().data
-        
+        .execute()
+    liked = liked_result.data or []
+
     if len(liked) < MIN_LIKES_FOR_VECTOR:
         return None
-        
+
     embeddings = []
     weights = []
-    now = datetime.utcnow()
-    
+    now = datetime.now(timezone.utc)
+
     # 2. 임베딩 조회 및 가중치 적용
     for row in liked:
         # 캐시가 있는 경우에만 가져오고, 없으면 일단 스킵 (비동기 병목 방지 위해)
         emb = await get_or_compute_content_embedding(row["content_id"])
         if emb is None:
             continue
-            
-        age_days = (now - datetime.fromisoformat(row["created_at"]).replace(tzinfo=None)).days
+
+        # created_at이 naive인 경우 UTC로 간주해 tz 정보 보존.
+        created_at = datetime.fromisoformat(row["created_at"])
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        age_days = max(0, (now - created_at).days)
         weight = 0.5 ** (age_days / HALF_LIFE_DAYS)
         embeddings.append(emb)
         weights.append(weight)
@@ -93,10 +108,10 @@ async def refresh_user_taste_vector(user_id: str) -> None:
             "embedding_model": "text-embedding-3-small",
             "source_count": count,
             "strategy": "time_weighted_avg",
-            "updated_at": datetime.utcnow().isoformat()
+            "updated_at": datetime.now(timezone.utc).isoformat()
         }).execute()
     except Exception as e:
-        print(f"Failed to refresh user_taste_vector for {user_id}: {e}")
+        logger.warning("Failed to refresh user_taste_vector for %s: %s", user_id, e)
 
 async def get_onboarding_vector(user_id: str) -> list[float] | None:
     """콜드스타트 폴백: 온보딩 정보 임베딩."""

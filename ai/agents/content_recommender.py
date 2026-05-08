@@ -145,7 +145,7 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
     if video:
         state.recommended_content = {
             "video_id": video.get("content_id") or video.get("video_id"),
-            "title": video["title"],
+            "title": video.get("title", ""),
             "url": video.get("url", ""),
             "thumbnail": video.get("thumbnail", ""),
             "reason": reason,
