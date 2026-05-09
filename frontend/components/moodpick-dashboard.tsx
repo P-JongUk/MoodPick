@@ -1711,6 +1711,8 @@ function CounselingView({
                 </div>
               </div>
             ))}
+            {messages.at(-1)?.sender !=='ai' &&
+              <div className="w-8 h-8 border-[3px] border-primary border-t-transparent rounded-full animate-spin" />}
             <div ref={bottomRef} />
           </div>
         </ScrollArea>
