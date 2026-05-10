@@ -996,6 +996,7 @@ export function MoodPickDashboard() {
         onComplete={handleCompleteOnboarding}
         isSaving={isSavingOnboarding}
         errorMessage={onboardingErrorMessage}
+        activeTab={activeTab}
       />
     )
   }
@@ -1143,6 +1144,7 @@ export function MoodPickDashboard() {
             onExportMyData={handleExportMyData}
             isExportingMyData={isExportingMyData}
             exportMyDataMessage={exportMyDataMessage}
+            setHasCompletedOnboarding={setHasCompletedOnboarding}
           />
         )}
       </main>
@@ -2238,6 +2240,7 @@ function OnboardingScreen({
   onComplete,
   isSaving,
   errorMessage,
+  activeTab
 }: {
   selectedConcerns: string[]
   setSelectedConcerns: (value: string[]) => void
@@ -2246,6 +2249,7 @@ function OnboardingScreen({
   onComplete: () => void
   isSaving: boolean
   errorMessage: string | null
+  activeTab: TabType
 }) {
   const concerns = [
     { id: "study", label: "학업/취업" },
@@ -2352,7 +2356,7 @@ function OnboardingScreen({
               className="w-full h-12 rounded-xl text-base font-medium"
               disabled={(selectedConcerns.length === 0 && selectedComfortStyle.length === 0) || isSaving}
             >
-              {isSaving ? "저장 중..." : "시작하기"}
+              {isSaving ? "저장 중..." : activeTab==="mypage"? "저장" : "시작하기"}
             </Button>
 
             {/* Skip Option */}
@@ -2602,6 +2606,7 @@ function MyPageView({
   onExportMyData,
   isExportingMyData,
   exportMyDataMessage,
+  setHasCompletedOnboarding
 }: {
   autoPlayEnabled: boolean
   setAutoPlayEnabled: (value: boolean) => void
@@ -2629,6 +2634,7 @@ function MyPageView({
   onExportMyData: () => Promise<void>
   isExportingMyData: boolean
   exportMyDataMessage: string | null
+  setHasCompletedOnboarding: (value: boolean)=>void
 }) {
   const [profileOpen, setProfileOpen] = useState(false)
   const [draftDisplayName, setDraftDisplayName] = useState("")
@@ -2729,8 +2735,9 @@ function MyPageView({
 
       {/* Preferences Section */}
       <Card className="border-0 shadow-lg mb-6">
-        <CardHeader>
+        <CardHeader className="flex justify-between">
           <CardTitle className="text-lg">맞춤 설정</CardTitle>
+          <Button variant="outline" className="rounded-xl shrink-0" type="button" onClick={()=>setHasCompletedOnboarding(false)}>온보딩</Button>
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Auto-play Toggle */}
