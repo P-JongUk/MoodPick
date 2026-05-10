@@ -96,6 +96,8 @@ import {
 
 type TabType = "home" | "counseling" | "dashboard" | "mypage"
 
+type SurveyType = "GAD" | "PHQ" | "PSS";
+
 interface RecommendedContent {
   video_id?: string
   title?: string
@@ -158,6 +160,19 @@ interface EmotionSummary {
   average_score: number
   trend: "improving" | "declining" | "stable"
 }
+
+interface SurveyState  {
+  scores: number[];
+  isDone: boolean;
+};
+
+interface SurveyConfig  {
+  title: string;
+  description: string;
+  questions: string[];
+  scoreDescription: string;
+  scoreOptions: number[];
+};
 
 const defaultContentItem: ContentHistoryItem = {
   id: "default-content",
@@ -381,6 +396,13 @@ export function MoodPickDashboard() {
   useEffect(() => {
     setMediaFeedback(null)
   }, [currentContent.content_id])
+
+  //문진
+  const [gad, setGad]=useState({scores: [-1, -1, -1, -1, -1, -1, -1], isDone: false,})
+  const [phq, setPhq]=useState({scores: [-1, -1, -1, -1, -1, -1, -1, -1, -1], isDone: false,})
+  const [pss, setPss]=useState({scores: [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1], isDone: false,})
+  const [isSavingSurvey, setIsSavingSurvey] = useState(false)
+  const [surveyErrorMessage, setsurveyErrorMessage] = useState<string | null>(null)
 
   useEffect(() => {
     const loadDashboardData = async () => {
@@ -1185,6 +1207,7 @@ export function MoodPickDashboard() {
         onComplete={handleCompleteOnboarding}
         isSaving={isSavingOnboarding}
         errorMessage={onboardingErrorMessage}
+        activeTab={activeTab}
       />
     )
   }
@@ -1361,6 +1384,7 @@ export function MoodPickDashboard() {
             onExportMyData={handleExportMyData}
             isExportingMyData={isExportingMyData}
             exportMyDataMessage={exportMyDataMessage}
+            setHasCompletedOnboarding={setHasCompletedOnboarding}
           />
         )}
       </main>
@@ -2110,6 +2134,7 @@ function CounselingView({
   onSelectRecommendedContent: (value: ContentHistoryItem) => void
 }) {
   const [contentFullscreen, setContentFullscreen] = useState(false)
+  const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!contentFullscreen) return
@@ -2124,6 +2149,12 @@ function CounselingView({
       window.removeEventListener("keydown", onKey)
     }
   }, [contentFullscreen])
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({
+      behavior: "smooth",
+    })
+  }, [messages])
 
   const mediaProps = {
     currentContent,
@@ -2159,7 +2190,7 @@ function CounselingView({
           </div>
         </div>
 
-        <ScrollArea className="flex-1 p-4">
+        <ScrollArea className="flex-1 p-4 overflow-y-auto">
           <div className="space-y-4">
             {messages.map((message) => (
               <div
@@ -2204,6 +2235,9 @@ function CounselingView({
                 </div>
               </div>
             ))}
+            {messages.at(-1)?.sender !=='ai' &&
+              <div className="w-8 h-8 border-[3px] border-primary border-t-transparent rounded-full animate-spin" />}
+            <div ref={bottomRef} />
           </div>
         </ScrollArea>
 
@@ -2232,28 +2266,20 @@ function CounselingView({
         </div>
       </div>
 
-      <div className="w-96 shrink-0 bg-card p-6 overflow-y-auto flex flex-col min-h-0">
+      <div className={cn(
+        contentFullscreen ? "fixed inset-0 z-50 bg-background p-4 sm:p-6" : "w-96 shrink-0 bg-card p-6 min-h-0", "overflow-y-auto flex flex-col")}
+        role={contentFullscreen ? "dialog" : undefined}
+        aria-modal={contentFullscreen? "true" : undefined}
+        aria-label={contentFullscreen? "추천 콘텐츠 전체 화면" : undefined}
+      >
         <ContentMediaPanel
-          variant="sidebar"
+          variant={contentFullscreen ? "fullscreen" : "sidebar"}
           {...mediaProps}
-          onRequestFullscreen={() => setContentFullscreen(true)}
+          onRequestFullscreen={contentFullscreen ? undefined : () => setContentFullscreen(true)}
+          onExitFullscreen={contentFullscreen ? () => setContentFullscreen(false) : undefined}
         />
       </div>
 
-      {contentFullscreen && (
-        <div
-          className="fixed inset-0 z-50 flex flex-col bg-background p-4 sm:p-6 overflow-y-auto"
-          role="dialog"
-          aria-modal="true"
-          aria-label="추천 콘텐츠 전체 화면"
-        >
-          <ContentMediaPanel
-            variant="fullscreen"
-            {...mediaProps}
-            onExitFullscreen={() => setContentFullscreen(false)}
-          />
-        </div>
-      )}
     </div>
   )
 }
@@ -2843,6 +2869,7 @@ function OnboardingScreen({
   onComplete,
   isSaving,
   errorMessage,
+  activeTab
 }: {
   selectedConcerns: string[]
   setSelectedConcerns: (value: string[]) => void
@@ -2851,6 +2878,7 @@ function OnboardingScreen({
   onComplete: () => void
   isSaving: boolean
   errorMessage: string | null
+  activeTab: TabType
 }) {
   const concerns = [
     { id: "study", label: "학업/취업" },
@@ -2957,7 +2985,7 @@ function OnboardingScreen({
               className="w-full h-12 rounded-xl text-base font-medium"
               disabled={(selectedConcerns.length === 0 && selectedComfortStyle.length === 0) || isSaving}
             >
-              {isSaving ? "저장 중..." : "시작하기"}
+              {isSaving ? "저장 중..." : activeTab==="mypage"? "저장" : "시작하기"}
             </Button>
 
             {/* Skip Option */}
@@ -2967,6 +2995,213 @@ function OnboardingScreen({
               className="w-full mt-4 text-sm text-muted-foreground hover:text-foreground transition-colors"
             >
               나중에 설정할게요
+            </button>
+
+            {errorMessage && <p className="mt-3 text-center text-xs text-destructive">{errorMessage}</p>}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+function SurveyScreen({
+  gad,
+  setGad,
+  phq,
+  setPhq,
+  pss,
+  setPss,
+  onSave,
+  isSaving,
+  errorMessage,
+}: {
+  gad: SurveyState;
+  setGad: React.Dispatch<React.SetStateAction<SurveyState>>;
+  phq: SurveyState;
+  setPhq: React.Dispatch<React.SetStateAction<SurveyState>>;
+  pss: SurveyState;
+  setPss: React.Dispatch<React.SetStateAction<SurveyState>>;
+  onSave: (submit: boolean) => void;
+  isSaving: boolean;
+  errorMessage: string | null;
+}) {
+  const surveyConfigs: Record<SurveyType, SurveyConfig> = {
+  GAD: {
+    title: "GAD-7",
+    description: "지난 2주 동안 당신은 다음의 문제들로 인해서 얼마나 자주 방해를 받았습니까?",
+    questions: [
+      "초조하거나 불안하거나 조마조마하게 느낀다.",
+      "걱정하는 것을 멈추거나 조절할 수가 없다.",
+      "여러 가지 것들에 대해 걱정을 너무 많이한다.",
+      "편하게 있기가 어렵다.",
+      "너무 안절부절 못해서 가만히 있기가 힘들다.",
+      "쉽게 짜증이 나거나 쉽게 성을 내게 된다.",
+      "마치 끔찍한 일이 생길 것처럼 두렵게 느껴진다.",
+    ],
+    scoreDescription: "전혀 아니다(0점), 몇일 동안(1점), 2주 중 절반 이상(2점), 거의 매일(3점), 매우 자주(4점)",
+    scoreOptions: [0, 1, 2, 3, 4],
+  },
+
+  PHQ: {
+    title: "PHQ-9",
+    description: "아래의 문항을 잘 읽으신 후, 지난 2주 동안 자신을 가장 잘 설명하는 칸에 체크 해 주세요.",
+    questions: [
+      "기분이 가라앉거나, 우울하거나, 희망이 없다고 느꼈다.",
+      "평소 하던 일에 대한 흥미가 없어지거나 즐거움을 느끼지 못했다.",
+      "잠들기가 어렵거나 자꾸 깼다/혹은 너무 많이 잤다.",
+      "평소보다 식욕이 줄었다/혹은 평소보다 많이 먹었다.",
+      "다른 사람들이 눈치 챌 정도로 평소보다 말과 행동이 느려졌다 / 혹은 너무 안절부절 못해서 가만히 앉아있을 수 없었다.",
+      "피곤하고 기운이 없었다.",
+      "내가 잘 못했거나, 실패했다는 생각이 들었다 / 혹은 자신과 가족을 실망시켰다고 생각했다.",
+      "신문을 읽거나 TV를 보는 것과 같은 일상적인 일에도 집중할 수가 없었다.",
+      "차라리 죽는 것이 더 낫겠다고 생각했다 / 혹은 자해할 생각을 했다.",
+    ],
+    scoreDescription: "전혀 아니다(0점), 여러 날 동안(1점), 일주일 이상(2점), 거의 매일(3점)",
+    scoreOptions: [0, 1, 2, 3],
+  },
+
+  PSS: {
+    title: "PSS",
+    description: "아래의 문항을 잘 읽으신 후, 지난 1개월 동안 자신의 상태를 가장 잘 나타내는 문항을 선택하여 주십시오.",
+    questions: [
+      "예상치 못했던 일 때문에 당황했던 적이 얼마나 있었습니까?",
+      "인생에서 중요한 일들을 조절할 수 없다는 느낌을 얼마나 경험하였습니까?",
+      "신경이 예민해지고 스트레스를 받고 있다는 느낌을 얼마나 경험하였습니까?",
+      "당신의 개인적 문제들을 다루는데 있어서 얼마나 자주 자신감을 느끼셨습니까?",
+      "일상의 일들이 당신의 생각대로 진행되고 있다는 느낌을 얼마나 경험하였습니까?",
+      "당신이 꼭 해야 하는 일을 처리할 수 없다고 생각한 적이 얼마나 있었습니까?",
+      "일상생활의 짜증을 얼마나 자주 잘 다스릴 수 있었습니까?",
+      "최상의 컨디션이라고 얼마나 자주 느끼셨습니까?",
+      "당신이 통제할 수 없는 일 때문에 화가 난 경험이 얼마나 있었습니까?",
+      "어려운 일들이 너무 많이 쌓여서 극복하지 못할 것 같은 느낌을 얼마나 자주 경험하셨습니까?",
+    ],
+    scoreDescription: "전혀 없었다(0점), 거의 없었다(1점), 때때로 있었다(2점), 자주 있었다(3점), 매우 자주 있었다(4점)",
+    scoreOptions: [0, 1, 2, 3, 4],
+  },
+};
+
+  const [surveyType, setSurveyType] = useState<SurveyType>("GAD");
+  const currentConfig = surveyConfigs[surveyType];
+  const currentSurvey = surveyType === "GAD" ? gad : surveyType === "PHQ" ? phq : pss;
+  const currentSetSurvey =surveyType === "GAD" ? setGad : surveyType === "PHQ" ? setPhq : setPss;
+  const [surveyIndex, setSurveyIndex] = useState(0)
+  const completedCount = currentSurvey.scores.filter((score) => score !== -1).length;
+  const isCompleted = currentSurvey.scores.every((score) => score !== -1);
+  const isSubmitted = currentSurvey.isDone;
+  const handleSaveSurvey=(submit: boolean)=>{
+    if (submit) {
+    currentSetSurvey((prev) => ({...prev, isDone: true,}));
+    }
+    onSave(submit);
+  }
+
+  return(
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <div className="w-full max-w-lg">
+        <Card className="border-0 shadow-2xl">
+          <CardContent className="p-8">
+            {/* Logo */}
+            <div className="text-center mb-6">
+              <div className="w-42 h-14 rounded-2xl bg-primary flex items-center overflow-hidden justify-evenly mx-auto mb-4">
+                <button className="flex-1 h-full flex items-center justify-center transition-colors hover:bg-primary-foreground/10 cursor-pointer"
+                key="GAD" onClick={() => {setSurveyType("GAD"); setSurveyIndex(0); }}>
+                  <Heart className={`w-7 h-7 ${surveyType === "GAD" ? "text-black" : "text-primary-foreground"}`} />
+                </button>
+                <button className="flex-1 h-full flex items-center justify-center transition-colors hover:bg-primary-foreground/10 cursor-pointer"
+                key="PHQ" onClick={() => {setSurveyType("PHQ"); setSurveyIndex(0); }}>
+                  <Heart className={`w-7 h-7 ${surveyType === "PHQ" ? "text-black" : "text-primary-foreground"}`} />
+                </button>
+                <button className="flex-1 h-full flex items-center justify-center transition-colors hover:bg-primary-foreground/10 cursor-pointer"
+                key="PSS" onClick={() => {setSurveyType("PSS"); setSurveyIndex(0); }}>
+                  <Heart className={`w-7 h-7 ${surveyType === "PSS" ? "text-black" : "text-primary-foreground"}`} />
+                </button>
+              </div>
+              <h1 className="text-2xl font-bold text-foreground mb-2">
+                {currentConfig.title}
+              </h1>
+              <p className="text-muted-foreground text-sm">
+                {currentConfig.description}
+              </p>
+            </div>
+
+            {/* Question */}
+            <div className="mb-8">
+              <h3 className="text-base font-semibold text-foreground mb-3">
+                {surveyIndex + 1}. {currentConfig.questions[surveyIndex]}
+              </h3>
+              <p className="text-xs text-muted-foreground mb-4">
+                {currentConfig.scoreDescription}
+              </p>
+              <div className="flex flex-col gap-2">
+                <div className="grid grid-cols-5 gap-2">
+                  {currentConfig.scoreOptions.map((score) => (
+                    <label key={score}
+                    className="flex items-center justify-center gap-2 rounded-xl border p-3 cursor-pointer
+                    transition hover: hover:-translate-y-0.5 hover:shadow-md">
+                      <input
+                        type="radio"
+                        name={`survey-${surveyType}-${surveyIndex}`}
+                        checked={currentSurvey.scores[surveyIndex] === score}
+                        disabled={isSubmitted}
+                        onChange={() => {
+                          currentSetSurvey((prev) => ({
+                            ...prev,
+                            scores: prev.scores.map((item, index) =>
+                            index === surveyIndex ? score : item),}));
+                        }}
+                      />
+                      {score}점
+                    </label>
+                  ))}
+                </div>
+                <div><progress className="w-full" value={completedCount} max={currentConfig.questions.length}/></div>
+                <div className="grid grid-cols-10 gap-2">
+                {currentConfig.questions.map((_, index) => (
+                  <button key={index} className={`w-9 h-9 cursor-pointer ${currentSurvey.scores[index] !== -1 ? "bg-blue-500" : "bg-gray-200"}`} onClick={() => {setSurveyIndex(index);}}>
+                    {index + 1}
+                  </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Next and Submit Button */}
+            <Button
+              onClick={() => {
+                if(isSubmitted)
+                  return
+                if(isCompleted){
+                  handleSaveSurvey(true);
+                  return
+                }
+                const nextUnansweredIndex = currentSurvey.scores.findIndex(
+                  (score, index) => index > surveyIndex && score === -1
+                );
+                if (nextUnansweredIndex !== -1) {
+                  setSurveyIndex(nextUnansweredIndex);
+                  return;
+                }
+                const firstUnansweredIndex = currentSurvey.scores.findIndex(
+                  (score) => score === -1
+                );
+                if (firstUnansweredIndex !== -1) {
+                  setSurveyIndex(firstUnansweredIndex);
+                }
+              }}
+              className="w-full h-12 rounded-xl text-base font-medium cursor-pointer"
+              disabled={isSaving || isSubmitted}
+            >
+              {isSubmitted ? "제출 완료" : !isCompleted ? "다음" : isSaving ? "저장 중..." : "제출하기"}
+            </Button>
+
+            {/* Save Option */}
+            <button
+              onClick={() => handleSaveSurvey(false)}
+              disabled={isSaving || isSubmitted}
+              className="w-full mt-4 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+            >
+              임시저장
             </button>
 
             {errorMessage && <p className="mt-3 text-center text-xs text-destructive">{errorMessage}</p>}
@@ -3004,6 +3239,7 @@ function MyPageView({
   onExportMyData,
   isExportingMyData,
   exportMyDataMessage,
+  setHasCompletedOnboarding
 }: {
   autoPlayEnabled: boolean
   setAutoPlayEnabled: (value: boolean) => void
@@ -3031,6 +3267,7 @@ function MyPageView({
   onExportMyData: () => Promise<void>
   isExportingMyData: boolean
   exportMyDataMessage: string | null
+  setHasCompletedOnboarding: (value: boolean)=>void
 }) {
   const [profileOpen, setProfileOpen] = useState(false)
   const [draftDisplayName, setDraftDisplayName] = useState("")
@@ -3131,8 +3368,9 @@ function MyPageView({
 
       {/* Preferences Section */}
       <Card className="border-0 shadow-lg mb-6">
-        <CardHeader>
+        <CardHeader className="flex justify-between">
           <CardTitle className="text-lg">맞춤 설정</CardTitle>
+          <Button variant="outline" className="rounded-xl shrink-0" type="button" onClick={()=>setHasCompletedOnboarding(false)}>온보딩</Button>
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Auto-play Toggle */}
