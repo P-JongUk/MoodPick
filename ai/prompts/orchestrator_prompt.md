@@ -33,10 +33,20 @@ false 예시 (대상이 자기 생명이 아님):
 - "잡담": 날씨, 음식, 일상 등 감정/상담과 무관한 대화
 
 ### 3. needs_recommendation (boolean)
-사용자가 콘텐츠(음악, 영상, 유튜브 등)를 명시적으로 요청했으면 true.
-"추천해줘", "노래 틀어줘", "뭔가 볼 거 없어?" 등.
-**직전 상담사가 명상/오디오 형식(가이드 vs 음악만)을 물었고**, 사용자가 **「가이드」「음악만」「1」「2」**처럼 짧게만 답한 경우에도 **콘텐츠 추천을 이어가는 턴**이므로 true.
-is_crisis가 true이면 반드시 false.
+대화 맥락(직전 어시스턴트 응답 + 현재 사용자 메시지)을 함께 보고 판단한다.
+다음 케이스 중 하나라도 해당하면 **true**:
+
+(a) **명시 요청**: "추천해줘", "노래 틀어줘", "뭔가 볼 거 없어?" 등 콘텐츠를 직접 요구.
+(b) **콘텐츠 취향 자발적 언급**: 카테고리("음악·영상·게임 좋아해"), 아티스트·앨범·장르("포스트말론 자주 들어", "Austin 앨범 좋더라"), 특정 곡 + 감상("Speedometer 신나고 좋아") 등을 자발적으로 꺼냄.
+(c) **추천 의사 응답에 동의**: 직전 어시스턴트가 "추천해드릴까요/들려드릴까요/추천해드릴 수 있" 등 의문형 추천 제안을 했고 사용자가 "응/네/좋아/그래/해줘" 등으로 동의.
+(d) **명상·오디오 형식 답변**: 직전에 상담사가 가이드 vs 음악만을 물었고 사용자가 "가이드"/"음악만"/"1"/"2"로 답함.
+
+다음 케이스는 **false**:
+- 콘텐츠 언급 없는 순수 감정 토로 ("힘들어", "졸려").
+- 직전 추천 제안에 거절·회피 ("괜찮아", "아니 됐어", "별로").
+- 모호한 답변 ("음...", "글쎄").
+
+is_crisis가 true이면 반드시 false (안전 우선).
 
 ## 응답 형식 (이 형식만 허용)
 {"is_crisis": false, "intent": "상담", "needs_recommendation": false}
@@ -45,20 +55,19 @@ is_crisis가 true이면 반드시 false.
 사용자: "요즘 너무 힘들어서 죽고 싶다는 생각이 자꾸 들어"
 → {"is_crisis": true, "intent": "상담", "needs_recommendation": false}
 
-사용자: "내 인생 끝내고 싶다"
-→ {"is_crisis": true, "intent": "상담", "needs_recommendation": false}
-
-사용자: "이 프로젝트 다 끝내고 싶어"
-→ {"is_crisis": false, "intent": "잡담", "needs_recommendation": false}
-
 사용자: "이 관계 끝내고 싶어"
-→ {"is_crisis": false, "intent": "상담", "needs_recommendation": false}
-
-사용자: "오늘 친구랑 싸워서 너무 속상해"
 → {"is_crisis": false, "intent": "상담", "needs_recommendation": false}
 
 사용자: "기분이 좀 나아지는 노래 추천해줄 수 있어?"
 → {"is_crisis": false, "intent": "추천", "needs_recommendation": true}
 
-사용자: "오늘 점심 뭐 먹을까"
-→ {"is_crisis": false, "intent": "잡담", "needs_recommendation": false}
+사용자: "Speedometer 진짜 신나고 좋은 것 같아"
+→ {"is_crisis": false, "intent": "추천", "needs_recommendation": true}
+
+[직전 어시스턴트] "비슷한 분위기의 곡 하나 추천해드릴까요?"
+사용자: "응 좋아"
+→ {"is_crisis": false, "intent": "추천", "needs_recommendation": true}
+
+[직전 어시스턴트] "원하시면 한 곡 들려드릴까요?"
+사용자: "지금은 괜찮아"
+→ {"is_crisis": false, "intent": "상담", "needs_recommendation": false}

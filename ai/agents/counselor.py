@@ -309,9 +309,4 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
                 type(e).__name__,
             )
 
-    # Check if counselor suggests recommendation in the response
-    recommendation_signals = ["추천해드릴까요", "추천해 드릴까요", "들려드릴까요", "틀어드릴까요"]
-    if any(signal in final_content for signal in recommendation_signals):
-        state.needs_recommendation = True
-
     return state
