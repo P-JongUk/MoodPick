@@ -27,6 +27,13 @@ def _has_wellness_context(message: str) -> bool:
     return any(w in m for w in _WELLNESS_CONTEXT_HINTS)
 
 
+def has_wellness_context(message: str | None) -> bool:
+    """추천 분기 등에서 웰니스(명상·수면 등) 맥락 여부."""
+    if not message or not message.strip():
+        return False
+    return _has_wellness_context(message.strip())
+
+
 def wants_music_only_bgm(message: str | None) -> bool:
     if not message:
         return False
