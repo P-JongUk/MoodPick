@@ -10,7 +10,7 @@ ai/agents/content_recommender.py
     건너뛰고 YouTube 쿼리에 인스트루멘탈·no talking 등을 반영
 
 - GPT를 이용해 검색 쿼리 생성 (사용자 요청 키워드를 우선 보존)
-- MCP YouTube 서버를 통해 후보군 검색
+- MCP 서버를 통해 YouTube 검색 및 팟캐스트(RSS 큐레이션) 추천
 - reranker를 통한 하이브리드 재랭킹 수행
 """
 import os
@@ -32,14 +32,17 @@ from ai.tools.emotion_va_map import compute_emotion_ambiguity
 from ai.agents.reranker import compute_emotion_trend, hybrid_rerank
 from ai.meditation_audio_clarify import meditation_audio_format_applies_to_current_message
 from ai.meditation_audio_signals import (
+    has_wellness_context,
     is_audio_content,
     is_video_content,
+    likely_music_search_request,
     wants_music_only_bgm,
+    wants_podcast,
 )
 try:
-    from ai.tools.podcast_catalog import recommend_podcast_episode
-except Exception:  # optional dependency during merges
-    recommend_podcast_episode = None  # type: ignore[assignment]
+    from ai.tools.podcast_catalog import recommend_podcast_episode as _recommend_podcast_direct
+except Exception:  # pragma: no cover
+    _recommend_podcast_direct = None  # type: ignore[misc, assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +54,43 @@ def _short_id(value: str | None) -> str:
 _DEFAULT_MCP_SERVER_PATH = str(Path(__file__).parent.parent.parent / "mcp_servers" / "server.py")
 _MCP_SERVER_PATH = os.getenv("MCP_SERVER_PATH", _DEFAULT_MCP_SERVER_PATH)
 _MODEL = "gpt-4o-mini"
+
+
+async def _recommend_podcast_via_mcp(emotion: str, intensity: float, watched_ids: list[str]) -> dict | None:
+    async with MCPClient(_MCP_SERVER_PATH) as mcp:
+        mcp_result = await mcp.call_tool(
+            "recommend_podcast_episode",
+            {
+                "emotion": emotion,
+                "intensity": float(intensity),
+                "watched_content_ids": watched_ids,
+            },
+        )
+        raw_text = mcp_result.content[0].text if mcp_result.content else "null"
+        episode = json.loads(raw_text)
+        if episode and isinstance(episode, dict) and episode.get("content_id"):
+            return episode
+    return None
+
+
+def _recommend_podcast_direct_sync(emotion: str, intensity: float, watched_ids: list[str]) -> dict | None:
+    if _recommend_podcast_direct is None:
+        return None
+    try:
+        ep = _recommend_podcast_direct(
+            emotion=emotion,
+            intensity=float(intensity),
+            watched_content_ids=watched_ids,
+        )
+        if ep and ep.get("content_id"):
+            return ep
+    except Exception as e:
+        logger.warning(
+            "Direct podcast catalog failed error_type=%s",
+            type(e).__name__,
+        )
+    return None
+
 
 def _get_openai() -> AsyncOpenAI:
     if not OPENAI_API_KEY:
@@ -126,25 +166,48 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
         state.meditation_format_resolved_this_turn and bool(state.meditation_audio_format)
     )
     stored_music = state.meditation_audio_format == "music_only" and applies
+    # 확인 질문으로 guided 확정된 같은 턴(meditation_format_resolved_this_turn)에는 applies가 비어도 반영
+    # 세션 guided + 추천 intent + 웰니스 맥락이면 직전에 고른 가이드형 유지
+    stored_guided = bool(state.meditation_audio_format == "guided") and (
+        applies
+        or state.meditation_format_resolved_this_turn
+        or (
+            state.needs_recommendation
+            and state.intent == "추천"
+            and has_wellness_context(state.message)
+        )
+    )
     wants_music_only = wants_music_only_bgm(state.message) or stored_music
+    likely_music = likely_music_search_request(state.message)
+    # stored_guided: 확인 질문 직후 짧은 답 등에서 wants_podcast가 약할 때 보강
+    prefer_podcast = (
+        (wants_podcast(state.message) or stored_guided) and not wants_music_only and not likely_music
+    )
+    # 추천 intent일 때도 가이드형 세션/선호가 있으면 팟캐스트 후보 시도 (유튜브만 나가는 회귀 방지)
     try_podcast = (
-        recommend_podcast_episode is not None
+        _recommend_podcast_direct is not None
         and is_audio_content(state.content_format)
         and not wants_music_only
+        and not likely_music
+        and (prefer_podcast or state.intent != "추천")
     )
     if try_podcast:
         _t = time.perf_counter()
+        episode = None
         try:
-            episode = recommend_podcast_episode(
-                emotion=emotion,
-                intensity=intensity,
-                watched_content_ids=watched_ids,
+            episode = await _recommend_podcast_via_mcp(emotion, intensity, watched_ids)
+        except Exception as e:
+            logger.warning(
+                "MCP podcast recommendation failed user_id=%s session_id=%s error_type=%s",
+                _short_id(state.user_id),
+                _short_id(state.session_id),
+                type(e).__name__,
             )
-        except Exception:
-            episode = None
+        if not episode:
+            episode = _recommend_podcast_direct_sync(emotion, intensity, watched_ids)
 
         logger.info("[PERF] recommender.podcast=%.3fs", time.perf_counter() - _t)
-        if episode:
+        if episode and isinstance(episode, dict) and episode.get("content_id"):
             state.recommended_content = {
                 "video_id": episode.get("content_id"),
                 "title": episode.get("title", ""),
