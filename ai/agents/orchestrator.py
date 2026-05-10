@@ -55,7 +55,7 @@ async def orchestrator_agent(state: CounselingState) -> CounselingState:
     response = client.chat.completions.create(
         model=_MODEL,
         temperature=0,
-        max_tokens=100,
+        max_tokens=150,
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": system_prompt},
@@ -70,6 +70,17 @@ async def orchestrator_agent(state: CounselingState) -> CounselingState:
     state.is_crisis = bool(result.get("is_crisis", False))
     state.intent = result.get("intent", "상담")
     state.needs_recommendation = bool(result.get("needs_recommendation", False))
+
+    fmt = result.get("content_format", "unspecified")
+    if fmt not in ("video", "music", "audio", "unspecified"):
+        fmt = "unspecified"
+    state.content_format = fmt
+
+    hints = result.get("content_query_hints", [])
+    if isinstance(hints, list):
+        state.content_query_hints = [h for h in hints if isinstance(h, str) and h.strip()]
+    else:
+        state.content_query_hints = []
 
     # Safety: crisis overrides recommendation
     if state.is_crisis:

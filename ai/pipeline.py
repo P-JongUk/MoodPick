@@ -72,20 +72,15 @@ async def run_counseling_pipeline(
     state = await counselor_agent(state)
     logger.info("[PERF] counselor=%.3fs", time.perf_counter() - _t)
 
-    # 오케스트레이터는 직전 맥락 없이 보므로 「가이드」「음악만」만 오면 needs_recommendation=false가 되기 쉬움.
-    # 확인 질문에 답하는 턴은 반드시 추천 파이프로 진입해야 함.
+    # 직전 클라리피 응답에 답하는 턴 처리.
+    # 명확한 "가이드"/"음악만" 답변일 때만 세션 저장하고 추천 진입을 강제한다.
+    # 모호한 답이면 새 요청으로 해석되도록 그대로 통과 — 오케스트레이터 판단 신뢰.
     replying_meditation_format = is_reply_to_meditation_format_clarification(
         state.messages, state.message
     )
     if replying_meditation_format:
-        state.needs_recommendation = True
-
-    # ③ Content Recommender (conditional)
-    if state.needs_recommendation:
-        if replying_meditation_format:
-            _reply_fmt = parse_meditation_format_reply(state.message)
-            if _reply_fmt is None:
-                _reply_fmt = "guided"
+        _reply_fmt = parse_meditation_format_reply(state.message)
+        if _reply_fmt is not None:
             try:
                 set_session_meditation_audio_format(session_id, _reply_fmt)
             except Exception as e:
@@ -97,7 +92,14 @@ async def run_counseling_pipeline(
             state.meditation_audio_format = _reply_fmt
             state.needs_recommendation = True
             state.meditation_format_resolved_this_turn = True
+            # 한 단어 답변("가이드"/"음악만")을 오케스트레이터가 unspecified로 잘못
+            # 분류하더라도 라우팅이 깨지지 않도록 content_format을 강제 설정한다.
+            # - "guided" → audio (팟캐스트 가이드 에피소드)
+            # - "music_only" → music (YouTube 인스트루멘탈/BGM 검색)
+            state.content_format = "audio" if _reply_fmt == "guided" else "music"
 
+    # ③ Content Recommender (conditional)
+    if state.needs_recommendation:
         if should_ask_meditation_format_clarification(state):
             state.response += MEDITATION_FORMAT_CLARIFICATION
             logger.info("[PERF] total(clarify)=%.3fs", time.perf_counter() - _perf_t0)

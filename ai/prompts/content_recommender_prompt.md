@@ -8,6 +8,8 @@
 - 사용자 고민 카테고리: {concerns}
 - 선호 위로 방식: {comfort_style}
 - 사용자가 최근 좋아한 콘텐츠 제목들: {liked_hints}
+- 콘텐츠 형식 (video|music|audio|unspecified): {content_format}
+- 사용자 발화 핵심 키워드 (Orchestrator가 추출): {content_query_hints}
 
 ## 쿼리 생성 규칙
 
@@ -18,6 +20,25 @@
   예: "BTS 노래" → `"BTS 노래 모음"`
 - 사용자가 구체적으로 요청한 경우, 아래의 감정/케어 시급도 기반 규칙을 무시하고 요청 내용을 따른다
 - 사용자의 요청이 모호할 때만 감정 기반 규칙을 적용한다
+
+#### 1.1 콘텐츠 형식 (content_format) 보존
+- content_format이 `"video"`이면 검색 쿼리에서 다음 키워드는 **절대 사용하지 않는다**:
+  `플레이리스트`, `노래`, `곡`, `모음`, `playlist`, `music`, `BGM`, `힐링 음악`,
+  `잔잔한`, `차분한`, `명상`, `meditation`, `가이드`, `guided`, `lo-fi`, `ambient`, `chill`.
+  대신 영상 형식 키워드를 적어도 하나 포함한다:
+  `영상`, `예능`, `풀영상`, `편`, `하이라이트`, `클립`, `리액션`, `쇼츠`, `리뷰`, `vlog`,
+  `mukbang`, `gameplay`, `드라마`, `영화` 등.
+- content_format이 `"music"`이면 영상 전용 키워드(`예능`/`풀영상`/`클립`/`리액션`/`먹방` 등)는
+  쓰지 않는다.
+- content_format이 `"audio"`이면 `podcast`/`명상`/`가이드`/`오디오북` 키워드를 우선 사용한다.
+- content_format이 `"unspecified"`이면 아래 #2~#3 규칙(좋아요 이력 + 감정 기반)을 따른다.
+
+#### 1.2 사용자 핵심 키워드 (content_query_hints) 보존
+- content_query_hints가 `"없음"`이 아니면 그 키워드들을 **검색 쿼리의 처음 두 토큰 안에 반드시 포함**한다.
+  예: hints=`"워크돌, 프로미스나인"`, format=`video` → `"워크돌 프로미스나인 풀영상"`.
+  예: hints=`"BTS"`, format=`music` → `"BTS 플레이리스트"`.
+- hints에 등장하는 고유명사는 형용사로 덮어쓰지 말 것.
+- hints가 `"없음"`이고 사용자 요청이 모호할 때만 감정 기반 규칙(#2~#3)을 적용한다.
 
 ### 2. 좋아요 이력 반영 (liked_hints가 "없음"이 아닐 때 적용 — 역할 분담 모델)
 

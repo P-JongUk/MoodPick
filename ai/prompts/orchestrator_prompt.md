@@ -48,26 +48,59 @@ false 예시 (대상이 자기 생명이 아님):
 
 is_crisis가 true이면 반드시 false (안전 우선).
 
+### 4. content_format (string)
+사용자가 콘텐츠를 요청하거나 언급할 때 어떤 형식을 원하는지 분류한다.
+- "video": 영상·예능·드라마·영화·게임 실황·유튜브·뮤비·하이라이트·쇼츠·풀영상·클립·리액션·먹방 등 움직이는 시각 콘텐츠를 명시했거나, 특정 프로그램·예능·캐릭터명을 언급한 경우.
+- "music": 노래·플레이리스트·곡·앨범·BGM·인스트루멘탈 등 음악 위주를 명시.
+- "audio": 팟캐스트·오디오북·명상 가이드·ASMR·수면 가이드 등 말·오디오 트랙 위주.
+- "unspecified": 콘텐츠 형식을 추정할 단서가 없는 경우(순수 감정 토로, 모호한 요청 등).
+
+판단 규칙:
+- 형식 키워드(영상/노래/팟캐스트 등)와 도메인 키워드(예능명·아티스트명·게임명·영화명) 둘 다 단서로 사용.
+- 도메인 명사 + "보고싶어"/"볼만한"/"재밌는"/"웃긴" 결합은 거의 항상 video.
+- 도메인 명사 + "듣고싶어"/"틀어줘" + 노래 의미 결합은 music.
+- 형식이 충돌하면("BTS 영상에서 노래 듣고 싶어") 사용자가 더 구체적으로 명시한 쪽을 우선 — 보통 마지막 형식 키워드.
+- needs_recommendation이 false면 "unspecified"로 둔다.
+
+### 5. content_query_hints (string array)
+사용자가 검색에 직접 사용할 만한 핵심 키워드를 추출. 다음 항목을 보존한다:
+- 아티스트·그룹·인물명 (워크돌, 프로미스나인, 손흥민 등)
+- 프로그램·예능·드라마·게임·영화 명칭
+- 사용자가 강하게 명시한 형식·태그 (워크돌, 풀영상, 하이라이트, 라이브 등)
+- 장르·분위기 (인디, 발라드, 어쿠스틱 — 음악 의도일 때)
+
+명시되지 않은 감정 형용사(우울/잔잔/차분 등)는 hints에 넣지 말 것 — 그건 감정 분석 쪽이 처리.
+hints가 없으면 빈 배열.
+
 ## 응답 형식 (이 형식만 허용)
-{"is_crisis": false, "intent": "상담", "needs_recommendation": false}
+{"is_crisis": false, "intent": "상담", "needs_recommendation": false, "content_format": "unspecified", "content_query_hints": []}
 
 ## 예시
 사용자: "요즘 너무 힘들어서 죽고 싶다는 생각이 자꾸 들어"
-→ {"is_crisis": true, "intent": "상담", "needs_recommendation": false}
+→ {"is_crisis": true, "intent": "상담", "needs_recommendation": false, "content_format": "unspecified", "content_query_hints": []}
 
 사용자: "이 관계 끝내고 싶어"
-→ {"is_crisis": false, "intent": "상담", "needs_recommendation": false}
+→ {"is_crisis": false, "intent": "상담", "needs_recommendation": false, "content_format": "unspecified", "content_query_hints": []}
 
 사용자: "기분이 좀 나아지는 노래 추천해줄 수 있어?"
-→ {"is_crisis": false, "intent": "추천", "needs_recommendation": true}
+→ {"is_crisis": false, "intent": "추천", "needs_recommendation": true, "content_format": "music", "content_query_hints": []}
 
 사용자: "Speedometer 진짜 신나고 좋은 것 같아"
-→ {"is_crisis": false, "intent": "추천", "needs_recommendation": true}
+→ {"is_crisis": false, "intent": "추천", "needs_recommendation": true, "content_format": "music", "content_query_hints": ["Speedometer"]}
+
+사용자: "오늘 뭔가 우울한데 재밌는 영상 보고 싶어"
+→ {"is_crisis": false, "intent": "추천", "needs_recommendation": true, "content_format": "video", "content_query_hints": []}
+
+사용자: "워크돌 프로미스나인 편 보고싶어"
+→ {"is_crisis": false, "intent": "추천", "needs_recommendation": true, "content_format": "video", "content_query_hints": ["워크돌", "프로미스나인"]}
+
+사용자: "잠 안 와 명상 가이드 좀 틀어줘"
+→ {"is_crisis": false, "intent": "추천", "needs_recommendation": true, "content_format": "audio", "content_query_hints": []}
 
 [직전 어시스턴트] "비슷한 분위기의 곡 하나 추천해드릴까요?"
 사용자: "응 좋아"
-→ {"is_crisis": false, "intent": "추천", "needs_recommendation": true}
+→ {"is_crisis": false, "intent": "추천", "needs_recommendation": true, "content_format": "music", "content_query_hints": []}
 
 [직전 어시스턴트] "원하시면 한 곡 들려드릴까요?"
 사용자: "지금은 괜찮아"
-→ {"is_crisis": false, "intent": "상담", "needs_recommendation": false}
+→ {"is_crisis": false, "intent": "상담", "needs_recommendation": false, "content_format": "unspecified", "content_query_hints": []}

@@ -3,13 +3,13 @@ ai/agents/content_recommender.py
 
 유저 의도에 따라 콘텐츠 추천을 수행합니다.
 
-  - intent == "추천": 기본 YouTube; 웰니스(명상·수면·가이드 등)면 팟캐스트 우선 시도
-  - 특정 곡·플레이리스트·일반 음악으로 보이면(`likely_music_search_request`) 팟캐스트 스킵
-  - intent != "추천": 웰니스 맥락에서 팟캐스트 우선(음악 검색으로 보이면 스킵)
-  - 사용자가 말/가이드 없이 음악·BGM만 원하면(`wants_music_only_bgm`) 팟캐스트를 건너뛰고
-    YouTube 검색 쿼리에 인스트루멘탈·no talking 등을 반영
+라우팅(audio/video/music)은 Orchestrator의 `state.content_format`이 결정한다.
+  - content_format == "audio": 팟캐스트(큐레이션 RSS) 우선, 실패 시 YouTube 폴백
+  - content_format == "video" / "music" / "unspecified": YouTube 검색
+  - 사용자가 말/가이드 없이 음악·BGM만 원하면(`wants_music_only_bgm`) audio여도 팟캐스트
+    건너뛰고 YouTube 쿼리에 인스트루멘탈·no talking 등을 반영
 
-- GPT를 이용해 검색 쿼리 생성
+- GPT를 이용해 검색 쿼리 생성 (사용자 요청 키워드를 우선 보존)
 - MCP YouTube 서버를 통해 후보군 검색
 - reranker를 통한 하이브리드 재랭킹 수행
 """
@@ -31,7 +31,11 @@ from ai.tools.user_profile import get_user_profile
 from ai.tools.emotion_va_map import compute_emotion_ambiguity
 from ai.agents.reranker import compute_emotion_trend, hybrid_rerank
 from ai.meditation_audio_clarify import meditation_audio_format_applies_to_current_message
-from ai.meditation_audio_signals import likely_music_search_request, wants_music_only_bgm, wants_podcast
+from ai.meditation_audio_signals import (
+    is_audio_content,
+    is_video_content,
+    wants_music_only_bgm,
+)
 try:
     from ai.tools.podcast_catalog import recommend_podcast_episode
 except Exception:  # optional dependency during merges
@@ -88,7 +92,15 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
     emotion_records = [] if isinstance(emotion_result, Exception) else (emotion_result or [])
 
     concerns = ", ".join(profile.get("concerns", [])) or "없음"
-    comfort_style = ", ".join(profile.get("comfort_style", [])) or "음악"
+    profile_styles = profile.get("comfort_style", []) or []
+    if is_video_content(state.content_format):
+        comfort_style = "영상"
+    elif profile_styles:
+        comfort_style = ", ".join(profile_styles)
+    elif is_audio_content(state.content_format):
+        comfort_style = "오디오"
+    else:
+        comfort_style = "음악"
     watched_ids = history.get("watched_ids", [])
     liked_hints = " | ".join(t[:60] for t in liked_titles) or "없음"
 
@@ -108,23 +120,17 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
     ambiguity = ambiguity_info["ambiguity"]
 
     # ── 3.5 팟캐스트 추천 (선택) ───────────────────────────────────────────
+    # 라우팅은 content_format=audio일 때만 팟캐스트 시도. video/music/unspecified는 YouTube 직진.
+    # wants_music_only: 사용자가 보컬·내레이션 없는 BGM/인스트루멘탈만 원하면 팟캐스트 스킵.
     applies = meditation_audio_format_applies_to_current_message(state) or (
         state.meditation_format_resolved_this_turn and bool(state.meditation_audio_format)
     )
     stored_music = state.meditation_audio_format == "music_only" and applies
-    stored_guided = state.meditation_audio_format == "guided" and applies
     wants_music_only = wants_music_only_bgm(state.message) or stored_music
-    likely_music = likely_music_search_request(state.message)
-    # stored_guided: 확인 질문 직후 짧은 답 등에서 wants_podcast가 약할 때 보강
-    prefer_podcast = (
-        (wants_podcast(state.message) or stored_guided) and not wants_music_only and not likely_music
-    )
-    # 추천 intent라도 prefer_podcast면 팟캐스트 시도 (가이드만 말한 경우 등)
     try_podcast = (
         recommend_podcast_episode is not None
+        and is_audio_content(state.content_format)
         and not wants_music_only
-        and not likely_music
-        and (prefer_podcast or state.intent != "추천")
     )
     if try_podcast:
         _t = time.perf_counter()
@@ -147,6 +153,7 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
                 "reason": episode.get("reason", "지금의 감정에 맞춰 마음을 정리해주는 가이드를 추천드려요."),
             }
             return state
+    hints_str = ", ".join(state.content_query_hints) if state.content_query_hints else "없음"
     prompt_template = load_prompt("content_recommender_prompt.md")
     user_prompt = prompt_template.format(
         emotion=emotion,
@@ -155,6 +162,8 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
         concerns=concerns,
         comfort_style=comfort_style,
         liked_hints=liked_hints,
+        content_format=state.content_format or "unspecified",
+        content_query_hints=hints_str,
     )
 
     music_only_note = ""

@@ -21,6 +21,8 @@ class CounselingState(BaseModel):
     is_crisis: bool = False
     intent: str = "상담"                                # "상담" | "추천" | "잡담"
     needs_recommendation: bool = False
+    content_format: str = "unspecified"                 # "video" | "music" | "audio" | "unspecified"
+    content_query_hints: list[str] = Field(default_factory=list)
 
     # 세션 DB(counseling_sessions.meditation_audio_format)와 동기: guided | music_only
     meditation_audio_format: Optional[str] = None
