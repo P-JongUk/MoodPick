@@ -2475,15 +2475,18 @@ function SurveyScreen({
           <CardContent className="p-8">
             {/* Logo */}
             <div className="text-center mb-6">
-              <div className="w-42 h-14 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4">
-                <button key="GAD" onClick={() => {setSurveyType("GAD"); setSurveyIndex(0); }}>
-                  <Heart className="w-7 h-7 text-primary-foreground" />
+              <div className="w-42 h-14 rounded-2xl bg-primary flex items-center overflow-hidden justify-evenly mx-auto mb-4">
+                <button className="flex-1 h-full flex items-center justify-center transition-colors hover:bg-primary-foreground/10 cursor-pointer" 
+                key="GAD" onClick={() => {setSurveyType("GAD"); setSurveyIndex(0); }}>
+                  <Heart className={`w-7 h-7 ${surveyType === "GAD" ? "text-black" : "text-primary-foreground"}`} />
                 </button>
-                <button key="PHQ" onClick={() => {setSurveyType("PHQ"); setSurveyIndex(0); }}>
-                  <Heart className="w-7 h-7 text-primary-foreground" />
+                <button className="flex-1 h-full flex items-center justify-center transition-colors hover:bg-primary-foreground/10 cursor-pointer" 
+                key="PHQ" onClick={() => {setSurveyType("PHQ"); setSurveyIndex(0); }}>
+                  <Heart className={`w-7 h-7 ${surveyType === "PHQ" ? "text-black" : "text-primary-foreground"}`} />
                 </button>
-                <button key="PSS" onClick={() => {setSurveyType("PSS"); setSurveyIndex(0); }}>
-                  <Heart className="w-7 h-7 text-primary-foreground" />
+                <button className="flex-1 h-full flex items-center justify-center transition-colors hover:bg-primary-foreground/10 cursor-pointer" 
+                key="PSS" onClick={() => {setSurveyType("PSS"); setSurveyIndex(0); }}>
+                  <Heart className={`w-7 h-7 ${surveyType === "PSS" ? "text-black" : "text-primary-foreground"}`} />
                 </button> 
               </div>
               <h1 className="text-2xl font-bold text-foreground mb-2">
@@ -2503,9 +2506,11 @@ function SurveyScreen({
                 {currentConfig.scoreDescription}
               </p>
               <div className="flex flex-col gap-2">
-                <div>
+                <div className="grid grid-cols-5 gap-2">
                   {currentConfig.scoreOptions.map((score) => (
-                    <label key={score}>
+                    <label key={score} 
+                    className="flex items-center justify-center gap-2 rounded-xl border p-3 cursor-pointer
+                    transition hover: hover:-translate-y-0.5 hover:shadow-md">
                       <input
                         type="radio"
                         name={`survey-${surveyType}-${surveyIndex}`}
@@ -2522,13 +2527,13 @@ function SurveyScreen({
                     </label>
                   ))}
                 </div>
-                <div><progress value={completedCount} max={currentConfig.questions.length}/></div>
-                <div className="flex gap-2">
+                <div><progress className="w-full" value={completedCount} max={currentConfig.questions.length}/></div>
+                <div className="grid grid-cols-10 gap-2">
                 {currentConfig.questions.map((_, index) => (
-                  <button key={index} className={currentSurvey.scores[index] !== -1 ? "bg-blue-500" : "bg-gray-200"} onClick={() => {setSurveyIndex(index);}}>
+                  <button key={index} className={`w-9 h-9 cursor-pointer ${currentSurvey.scores[index] !== -1 ? "bg-blue-500" : "bg-gray-200"}`} onClick={() => {setSurveyIndex(index);}}>
                     {index + 1}
                   </button>
-                ))}
+                  ))}
                 </div>
               </div>
             </div>
@@ -2556,7 +2561,7 @@ function SurveyScreen({
                   setSurveyIndex(firstUnansweredIndex);
                 }
               }}
-              className="w-full h-12 rounded-xl text-base font-medium"
+              className="w-full h-12 rounded-xl text-base font-medium cursor-pointer"
               disabled={isSaving || isSubmitted}
             >
               {isSubmitted ? "제출 완료" : !isCompleted ? "다음" : isSaving ? "저장 중..." : "제출하기"}
@@ -2566,7 +2571,7 @@ function SurveyScreen({
             <button
               onClick={() => handleSaveSurvey(false)}
               disabled={isSaving || isSubmitted}
-              className="w-full mt-4 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              className="w-full mt-4 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
             >
               임시저장
             </button>
