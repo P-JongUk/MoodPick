@@ -17,6 +17,7 @@ Flow:
 
 import json
 import logging
+import time
 
 from openai import OpenAI
 
@@ -215,7 +216,8 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
     max_iterations = 5  # safety limit to prevent infinite loops
     save_emotion_called = False  # track if save_emotion_record was invoked
 
-    for _ in range(max_iterations):
+    for _round in range(max_iterations):
+        _t = time.perf_counter()
         response = client.chat.completions.create(
             model=_MODEL,
             temperature=0.7,
@@ -223,6 +225,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
             tools=_TOOL_DEFINITIONS,
             messages=messages,
         )
+        logger.info("[PERF] counselor.llm[%d]=%.3fs", _round, time.perf_counter() - _t)
 
         choice = response.choices[0]
 
@@ -235,7 +238,13 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
 
         # Execute each tool call and append results
         for tool_call in choice.message.tool_calls:
+            _t = time.perf_counter()
             result_str = _execute_tool_call(tool_call, state)
+            logger.info(
+                "[PERF] counselor.tool[%s]=%.3fs",
+                tool_call.function.name,
+                time.perf_counter() - _t,
+            )
 
             # Cache user_profile in state if fetched
             if tool_call.function.name == "get_user_profile":
@@ -274,6 +283,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
     # would be missing. Force a single save_emotion_record call via tool_choice.
     if not save_emotion_called:
         try:
+            _t = time.perf_counter()
             forced = _get_openai().chat.completions.create(
                 model=_MODEL,
                 temperature=0.0,
@@ -282,6 +292,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
                 tool_choice={"type": "function", "function": {"name": "save_emotion_record"}},
                 messages=messages,
             )
+            logger.info("[PERF] counselor.forced_emotion_llm=%.3fs", time.perf_counter() - _t)
             for tc in (forced.choices[0].message.tool_calls or []):
                 if tc.function.name == "save_emotion_record":
                     _execute_tool_call(tc, state)

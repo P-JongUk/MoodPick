@@ -15,10 +15,12 @@ ai/agents/content_recommender.py
 """
 import os
 import json
+import asyncio
 import logging
+import time
 from pathlib import Path
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 from fastmcp import Client as MCPClient
 
 from ai.config import OPENAI_API_KEY
@@ -46,40 +48,53 @@ _DEFAULT_MCP_SERVER_PATH = str(Path(__file__).parent.parent.parent / "mcp_server
 _MCP_SERVER_PATH = os.getenv("MCP_SERVER_PATH", _DEFAULT_MCP_SERVER_PATH)
 _MODEL = "gpt-4o-mini"
 
-def _get_openai() -> OpenAI:
+def _get_openai() -> AsyncOpenAI:
     if not OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY is not set. Check backend/.env.local")
-    return OpenAI(api_key=OPENAI_API_KEY)
+    return AsyncOpenAI(api_key=OPENAI_API_KEY)
+
+
+def _fetch_recent_emotion_records(user_id: str, limit: int = 3) -> list[dict]:
+    supabase = _get_supabase()
+    result = supabase.table("emotion_records").select("*") \
+        .eq("user_id", user_id).order("created_at", desc=True).limit(limit).execute()
+    return result.data if result.data else []
 
 async def content_recommender_agent(state: CounselingState) -> CounselingState:
-    # ── 1. User profile ─────────────
+    # ── 1~2.5. 독립 조회 병렬화 (profile / history / liked / emotion) ──
+    _t = time.perf_counter()
     profile = state.user_profile
-    if not profile:
-        profile = get_user_profile(state.user_id)
+    profile_task = None if profile else asyncio.to_thread(get_user_profile, state.user_id)
+    history_task = asyncio.to_thread(get_content_history, state.user_id)
+    liked_task = asyncio.to_thread(get_recent_liked_titles, state.user_id, 5)
+    emotion_task = asyncio.to_thread(_fetch_recent_emotion_records, state.user_id, 3)
+
+    pending = [t for t in (profile_task, history_task, liked_task, emotion_task) if t]
+    results = await asyncio.gather(*pending, return_exceptions=True)
+    results_iter = iter(results)
+
+    if profile_task is not None:
+        profile_result = next(results_iter)
+        profile = {} if isinstance(profile_result, Exception) else (profile_result or {})
         state.user_profile = profile
+
+    history_result = next(results_iter)
+    history = {} if isinstance(history_result, Exception) else (history_result or {})
+
+    liked_result = next(results_iter)
+    liked_titles = [] if isinstance(liked_result, Exception) else (liked_result or [])
+
+    emotion_result = next(results_iter)
+    emotion_records = [] if isinstance(emotion_result, Exception) else (emotion_result or [])
 
     concerns = ", ".join(profile.get("concerns", [])) or "없음"
     comfort_style = ", ".join(profile.get("comfort_style", [])) or "음악"
-
-    # ── 2. Content history ──────────────────────────────────────────────
-    history = get_content_history(state.user_id)
     watched_ids = history.get("watched_ids", [])
-
-    # 최근 좋아요 영상 제목을 검색 쿼리 생성용 힌트로 사용
-    liked_titles = get_recent_liked_titles(state.user_id, limit=5)
     liked_hints = " | ".join(t[:60] for t in liked_titles) or "없음"
 
-    # print(f"[DEBUG] user={state.user_id[:8]} liked_hints={liked_hints!r}", flush=True) # for debug
-
-
-    # ── 2.5 감정 궤적(Trend) 파악 ───────────────────────────────────────
-    supabase = _get_supabase()
-    emotion_result = supabase.table("emotion_records").select("*") \
-        .eq("user_id", state.user_id).order("created_at", desc=True).limit(3).execute()
-    emotion_records = emotion_result.data if emotion_result.data else []
-    
     trend_info = compute_emotion_trend(emotion_records)
     trend = trend_info["trend"]
+    logger.info("[PERF] recommender.gather4=%.3fs", time.perf_counter() - _t)
 
     # ── 3. Build prompt with template substitution ──────────────────────
     emotion = state.emotion_score.get("emotion", "스트레스")
@@ -112,6 +127,7 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
         and (prefer_podcast or state.intent != "추천")
     )
     if try_podcast:
+        _t = time.perf_counter()
         try:
             episode = recommend_podcast_episode(
                 emotion=emotion,
@@ -121,6 +137,7 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
         except Exception:
             episode = None
 
+        logger.info("[PERF] recommender.podcast=%.3fs", time.perf_counter() - _t)
         if episode:
             state.recommended_content = {
                 "video_id": episode.get("content_id"),
@@ -150,8 +167,9 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
         )
 
     # ── 4. GPT call for query generation (Trend 반영) ───────────────────
+    _t = time.perf_counter()
     client = _get_openai()
-    response = client.chat.completions.create(
+    response = await client.chat.completions.create(
         model=_MODEL,
         temperature=0.7,
         max_tokens=200,
@@ -176,7 +194,10 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
     result = json.loads(raw)
     search_query = result.get("search_query", "healing music relaxing")
     reason = result.get("reason", "마음을 편안하게 해줄 콘텐츠를 추천드려요.")
+    logger.info("[PERF] recommender.gpt_query=%.3fs", time.perf_counter() - _t)
+
     videos = []
+    _t = time.perf_counter()
     try:
         async with MCPClient(_MCP_SERVER_PATH) as mcp:
             mcp_result = await mcp.call_tool(
@@ -193,6 +214,7 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
             _short_id(state.session_id),
             type(e).__name__,
         )
+    logger.info("[PERF] recommender.mcp_youtube=%.3fs", time.perf_counter() - _t)
 
     # ── 6. 하이브리드 재랭킹 (NEW) ──────────────────────────────────────
     video = None
@@ -209,7 +231,8 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
             formatted_cands.append(v_copy)
             
         emotion_description = state.emotion_score.get("emotion_description", "")
-            
+
+        _t = time.perf_counter()
         ranked_videos = await hybrid_rerank(
             formatted_cands, 
             state.user_id, 
@@ -220,7 +243,8 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
             comfort_style,
             emotion_description=emotion_description
         )
-        
+        logger.info("[PERF] recommender.hybrid_rerank=%.3fs", time.perf_counter() - _t)
+
         if ranked_videos:
             video = ranked_videos[0]
             selected_score = video.get("score", 0.0)

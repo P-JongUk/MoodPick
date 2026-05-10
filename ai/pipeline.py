@@ -10,6 +10,7 @@ Flow:
 """
 
 import logging
+import time
 
 from ai.state import CounselingState
 from ai.utils import load_crisis_response
@@ -43,6 +44,7 @@ async def run_counseling_pipeline(
     messages: list[dict] | None = None,
 ) -> CounselingState:
 
+    _perf_t0 = time.perf_counter()
     state = CounselingState(
         user_id=user_id,
         session_id=session_id,
@@ -57,13 +59,18 @@ async def run_counseling_pipeline(
         pass
 
     # ① Orchestrator
+    _t = time.perf_counter()
     state = await orchestrator_agent(state)
+    logger.info("[PERF] orchestrator=%.3fs", time.perf_counter() - _t)
     if state.is_crisis:
         state.response = load_crisis_response()
+        logger.info("[PERF] total(crisis)=%.3fs", time.perf_counter() - _perf_t0)
         return state
 
     # ② Counselor
+    _t = time.perf_counter()
     state = await counselor_agent(state)
+    logger.info("[PERF] counselor=%.3fs", time.perf_counter() - _t)
 
     # 오케스트레이터는 직전 맥락 없이 보므로 「가이드」「음악만」만 오면 needs_recommendation=false가 되기 쉬움.
     # 확인 질문에 답하는 턴은 반드시 추천 파이프로 진입해야 함.
@@ -93,9 +100,12 @@ async def run_counseling_pipeline(
 
         if should_ask_meditation_format_clarification(state):
             state.response += MEDITATION_FORMAT_CLARIFICATION
+            logger.info("[PERF] total(clarify)=%.3fs", time.perf_counter() - _perf_t0)
             return state
 
+        _t = time.perf_counter()
         state = await content_recommender_agent(state)
+        logger.info("[PERF] content_recommender=%.3fs", time.perf_counter() - _t)
 
         # ④ Post-processing: append recommendation info to counselor response
         if state.recommended_content:
@@ -113,6 +123,7 @@ async def run_counseling_pipeline(
                     if isinstance(video_id, str) and video_id.lower().startswith("podcast:"):
                         media_url = state.recommended_content.get("url")
 
+                    _t_db = time.perf_counter()
                     supabase = _get_supabase()
                     row = {
                         "user_id": state.user_id,
@@ -155,6 +166,7 @@ async def run_counseling_pipeline(
                             "strategy_version": "v2.1",
                         }
                     ).execute()
+                    logger.info("[PERF] post_db_save=%.3fs", time.perf_counter() - _t_db)
                 except Exception as e:
                     # Non-fatal: don't break pipeline for a save failure
                     logger.warning(
@@ -165,4 +177,5 @@ async def run_counseling_pipeline(
                         type(e).__name__,
                     )
 
+    logger.info("[PERF] total=%.3fs", time.perf_counter() - _perf_t0)
     return state

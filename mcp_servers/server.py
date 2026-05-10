@@ -11,6 +11,7 @@ Future:
   - search_spotify: Spotify Web API
 """
 
+import asyncio
 import os
 from pathlib import Path
 
@@ -65,7 +66,7 @@ async def search_youtube(
         relevanceLanguage="ko",
         safeSearch="strict",
     )
-    response = request.execute()
+    response = await asyncio.to_thread(request.execute)
 
     results = []
     for item in response.get("items", []):

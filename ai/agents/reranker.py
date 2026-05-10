@@ -7,6 +7,7 @@ ai/agents/reranker.py
 - hybrid_score: 취향/감정/다양성 가중치를 조합한 점수 산출
 - hybrid_rerank: 후보군 임베딩 및 최종 정렬 수행
 """
+import asyncio
 import numpy as np
 from ai.tools.embedding_service import batch_embed_contents, embed_text
 from ai.tools.user_taste import get_user_taste_vector, get_onboarding_vector
@@ -110,17 +111,18 @@ async def hybrid_rerank(
     trend_info = compute_emotion_trend(emotion_records)
     trend = trend_info["trend"]
     
-    # 2. 감정 임베딩 (감정 + 위로 방식)
+    # 2~3. 감정 임베딩 + 취향 벡터 병렬 조회
     if emotion_description:
         emotion_text = f"{emotion_description} | 선호: {comfort_style}"
     else:
         emotion_text = f"감정: {emotion}, 위로: {comfort_style}"
-    emotion_vec = await embed_text(emotion_text)
-    
-    # 3. 취향 벡터 및 이력 가져오기
-    user_taste_data = await get_user_taste_vector(user_id)
+
+    emotion_vec, user_taste_data = await asyncio.gather(
+        embed_text(emotion_text),
+        get_user_taste_vector(user_id),
+    )
     user_vec = user_taste_data["embedding"] if user_taste_data else None
-    
+
     onboarding_vec = None
     if not user_vec:
         onboarding_vec = await get_onboarding_vector(user_id)
