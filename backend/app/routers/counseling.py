@@ -6,6 +6,7 @@ from supabase import Client
 
 from app.services.supabase_service import get_supabase_client
 from app.services.ai_service import get_ai_response
+from app.services.session_summary import prepare_session_context
 
 
 router = APIRouter(prefix="/counseling", tags=["counseling"])
@@ -91,18 +92,6 @@ def _get_session_for_user(supabase: Client, session_id: str, user_id: str) -> di
     return result.data[0]
 
 
-def _fetch_session_messages(supabase: Client, session_id: str) -> list[dict]:
-    """Fetch previous conversation history for the session."""
-    result = (
-        supabase.table("counseling_history")
-        .select("role, content")
-        .eq("session_id", session_id)
-        .order("created_at")
-        .execute()
-    )
-    return [{"role": r["role"], "content": r["content"]} for r in (result.data or [])]
-
-
 def _save_message(supabase: Client, session_id: str, user_msg: str, ai_msg: str) -> None:
     """Persist the user message and AI response to DB."""
     supabase.table("counseling_history").insert([
@@ -130,8 +119,8 @@ async def send_counseling_message(
                 detail="이미 종료된 상담이에요. 새 상담을 시작해 주세요.",
             )
 
-        # 1. Fetch conversation history
-        history = _fetch_session_messages(supabase, payload.session_id)
+        # 1. Build conversation context (recent N turns + summary if threshold exceeded)
+        summary, history = prepare_session_context(supabase, payload.session_id)
 
         # 2. Run AI pipeline
         result = await get_ai_response(
@@ -139,6 +128,7 @@ async def send_counseling_message(
             session_id=payload.session_id,
             message=payload.message,
             messages=history,
+            session_summary=summary,
         )
 
         # 3. Save this turn to DB

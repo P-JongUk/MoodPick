@@ -22,6 +22,7 @@ async def get_ai_response(
     session_id: str,
     message: str,
     messages: list[dict] | None = None,
+    session_summary: str | None = None,
 ) -> dict:
     try:
         state = await run_counseling_pipeline(
@@ -29,6 +30,7 @@ async def get_ai_response(
             session_id=session_id,
             message=message,
             messages=messages,
+            session_summary=session_summary,
         )
         return {
             "message": state.response,

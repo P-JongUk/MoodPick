@@ -17,6 +17,9 @@ class CounselingState(BaseModel):
     # Format: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
     messages: list[dict] = Field(default_factory=list)
 
+    # 임계치 초과 세션의 오래된 부분을 압축한 누적 요약 (없으면 None)
+    session_summary: Optional[str] = None
+
     # --- Orchestrator fills these ---
     is_crisis: bool = False
     intent: str = "상담"                                # "상담" | "추천" | "잡담"

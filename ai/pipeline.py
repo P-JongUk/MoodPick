@@ -42,6 +42,7 @@ async def run_counseling_pipeline(
     session_id: str,
     message: str,
     messages: list[dict] | None = None,
+    session_summary: str | None = None,
 ) -> CounselingState:
 
     _perf_t0 = time.perf_counter()
@@ -50,6 +51,7 @@ async def run_counseling_pipeline(
         session_id=session_id,
         message=message,
         messages=messages or [],
+        session_summary=session_summary,
     )
     try:
         _fmt = get_session_meditation_audio_format(session_id)

@@ -189,7 +189,18 @@ def _build_system_message(state: CounselingState) -> str:
         f"- session_id: {state.session_id}\n"
     )
 
-    return base_prompt + session_context
+    # 임계치 초과 세션이라면 오래된 대화 요약을 주입한다.
+    # state.messages에는 최근 N턴 원문만 들어있으므로, 그 이전 맥락은 이 블록으로 보존한다.
+    summary_block = ""
+    if state.session_summary:
+        summary_block = (
+            f"\n\n### [Module 0.5: Previous Conversation Summary]\n"
+            f"이전 대화의 요약입니다. 사용자의 맥락 이해에 활용하되, "
+            f"요약 자체를 사용자에게 직접 인용하거나 \"요약하면\"식으로 언급하지 마세요.\n"
+            f"{state.session_summary}\n"
+        )
+
+    return base_prompt + session_context + summary_block
 
 
 
