@@ -15,13 +15,12 @@ Flow:
   4. Extract final response + emotion analysis from GPT output
 """
 
+import asyncio
 import json
 import logging
 import time
 
-from openai import OpenAI
-
-from ai.config import OPENAI_API_KEY
+from ai.clients import get_openai
 from ai.state import CounselingState
 from ai.utils import load_prompt
 from ai.tools.rag_search import search_rag_context
@@ -132,8 +131,11 @@ _TOOL_DEFINITIONS = [
 
 # ── Tool dispatcher ─────────────────────────────────────────────────────────
 
-def _execute_tool_call(tool_call, state: CounselingState) -> str:
-    """Execute a single tool call and return the result as a JSON string."""
+async def _execute_tool_call(tool_call, state: CounselingState) -> str:
+    """Execute a single tool call and return the result as a JSON string.
+
+    동기 도구(Supabase/OpenAI sync SDK)는 asyncio.to_thread로 감싸 이벤트 루프를 막지 않는다.
+    """
     fn_name = tool_call.function.name
     fn_args = json.loads(tool_call.function.arguments)
 
@@ -146,16 +148,19 @@ def _execute_tool_call(tool_call, state: CounselingState) -> str:
     )
 
     if fn_name == "search_rag_context":
-        result = search_rag_context(
+        result = await asyncio.to_thread(
+            search_rag_context,
             query_text=fn_args["query_text"],
             top_k=fn_args.get("top_k", 3),
         )
     elif fn_name == "get_user_profile":
-        result = get_user_profile(
+        result = await asyncio.to_thread(
+            get_user_profile,
             user_id=fn_args["user_id"],
         )
     elif fn_name == "save_emotion_record":
-        result = save_emotion_record(
+        result = await asyncio.to_thread(
+            save_emotion_record,
             user_id=fn_args["user_id"],
             session_id=fn_args["session_id"],
             valence=fn_args.get("valence", 0.0),
@@ -170,12 +175,6 @@ def _execute_tool_call(tool_call, state: CounselingState) -> str:
         return json.dumps(result, ensure_ascii=False, default=str)
     except Exception as e:
         return json.dumps({"error": str(e)})
-
-
-def _get_openai() -> OpenAI:
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not set. Check backend/.env.local")
-    return OpenAI(api_key=OPENAI_API_KEY)
 
 
 def _build_system_message(state: CounselingState) -> str:
@@ -211,7 +210,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
     The model may call tools (RAG search, user profile, emotion record)
     as many times as it needs before producing the final text response.
     """
-    client = _get_openai()
+    client = get_openai()
 
     # Build message list: system + history + current user message
     messages = [{"role": "system", "content": _build_system_message(state)}]
@@ -229,7 +228,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
 
     for _round in range(max_iterations):
         _t = time.perf_counter()
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=_MODEL,
             temperature=0.7,
             max_tokens=500,
@@ -250,7 +249,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
         # Execute each tool call and append results
         for tool_call in choice.message.tool_calls:
             _t = time.perf_counter()
-            result_str = _execute_tool_call(tool_call, state)
+            result_str = await _execute_tool_call(tool_call, state)
             logger.info(
                 "[PERF] counselor.tool[%s]=%.3fs",
                 tool_call.function.name,
@@ -295,7 +294,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
     if not save_emotion_called:
         try:
             _t = time.perf_counter()
-            forced = _get_openai().chat.completions.create(
+            forced = await get_openai().chat.completions.create(
                 model=_MODEL,
                 temperature=0.0,
                 max_tokens=150,
@@ -306,7 +305,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
             logger.info("[PERF] counselor.forced_emotion_llm=%.3fs", time.perf_counter() - _t)
             for tc in (forced.choices[0].message.tool_calls or []):
                 if tc.function.name == "save_emotion_record":
-                    _execute_tool_call(tc, state)
+                    await _execute_tool_call(tc, state)
                     try:
                         args = json.loads(tc.function.arguments)
                         state.emotion_score = _build_emotion_score(args)

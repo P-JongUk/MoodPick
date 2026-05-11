@@ -20,10 +20,8 @@ import logging
 import time
 from pathlib import Path
 
-from openai import AsyncOpenAI
 from fastmcp import Client as MCPClient
 
-from ai.config import OPENAI_API_KEY
 from ai.state import CounselingState
 from ai.utils import load_prompt
 from ai.tools.content_history import get_content_history, _get_supabase, get_recent_liked_titles
@@ -92,10 +90,7 @@ def _recommend_podcast_direct_sync(emotion: str, intensity: float, watched_ids: 
     return None
 
 
-def _get_openai() -> AsyncOpenAI:
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not set. Check backend/.env.local")
-    return AsyncOpenAI(api_key=OPENAI_API_KEY)
+from ai.clients import get_openai as _get_openai  # noqa: E402  싱글톤 위임
 
 
 def _fetch_recent_emotion_records(user_id: str, limit: int = 3) -> list[dict]:

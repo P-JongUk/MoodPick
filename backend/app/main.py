@@ -20,6 +20,7 @@ from app.routers.rag import router as rag_router
 from app.routers.reminder import router as reminder_router
 from app.config import get_settings
 from app.services.reminder_scheduler import reminder_scheduler_loop
+from ai.clients import close_clients
 
 
 @asynccontextmanager
@@ -39,6 +40,7 @@ async def lifespan(app: FastAPI):
         if reminder_stop_event is not None and reminder_task is not None:
             reminder_stop_event.set()
             await reminder_task
+        await close_clients()
 
 
 app = FastAPI(title="MoodPick Backend", version="0.1.0", lifespan=lifespan)
