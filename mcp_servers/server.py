@@ -13,11 +13,33 @@ Future:
 """
 
 import asyncio
+import logging
 import os
+import re
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastmcp import FastMCP
+
+logger = logging.getLogger(__name__)
+
+_ISO_DURATION_RE = re.compile(r"^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$")
+
+
+def _parse_iso8601_duration(value: str) -> int:
+    """Return total seconds for an ISO 8601 duration like 'PT1M30S'.
+
+    Returns 0 for parse failures or non-standard values (live streams, etc.).
+    Callers should treat 0 as 'unknown' and apply conservative filtering.
+    """
+    if not value:
+        return 0
+    match = _ISO_DURATION_RE.match(value)
+    if not match:
+        return 0
+    hours, minutes, seconds = (int(g) if g else 0 for g in match.groups())
+    return hours * 3600 + minutes * 60 + seconds
 
 # Load .env.local from this directory
 _env_path = Path(__file__).parent / ".env.local"
@@ -34,6 +56,7 @@ async def search_youtube(
     query: str,
     watched_ids: list[str] | None = None,
     max_results: int = 5,
+    allow_shorts: bool = False,
 ) -> list[dict]:
     """
     YouTube에서 영상을 검색하고 기술적 필터링만 수행한다.
@@ -43,9 +66,11 @@ async def search_youtube(
         query: 검색 쿼리 (에이전트가 생성한 영어 쿼리)
         watched_ids: 제외할 영상 ID 목록
         max_results: 반환할 최대 영상 수
+        allow_shorts: True면 60초 미만 쇼츠도 포함 (사용자가 명시적으로 쇼츠 요청 시).
+                      False(기본)이면 videos.list로 duration을 확인해 60초 미만을 제외.
 
     Returns:
-        [{"video_id": ..., "title": ..., "url": ..., "thumbnail": ...}]
+        [{"video_id": ..., "title": ..., "url": ..., "thumbnail": ..., "duration_seconds": ...}]
     """
     from googleapiclient.discovery import build
 
@@ -55,35 +80,108 @@ async def search_youtube(
 
     exclude = set(watched_ids or [])
 
-    # Request extra results to compensate for filtered-out videos
-    fetch_count = max_results + len(exclude)
+    # 쇼츠 필터 후 부족분을 흡수하려고 여유분 확보. 쇼츠 비율은 보통 20% 미만이므로 2배면 충분.
+    fetch_count = min(max_results * 2 + len(exclude), 50)
 
     youtube = build("youtube", "v3", developerKey=api_key)
-    request = youtube.search().list(
+    search_request = youtube.search().list(
         q=query,
         part="snippet",
         type="video",
-        maxResults=min(fetch_count, 25),
+        maxResults=fetch_count,
         relevanceLanguage="ko",
         safeSearch="strict",
     )
-    response = await asyncio.to_thread(request.execute)
+    _t = time.perf_counter()
+    search_response = await asyncio.to_thread(search_request.execute)
+    t_search_list = time.perf_counter() - _t
 
-    results = []
-    for item in response.get("items", []):
+    candidates: list[dict] = []
+    for item in search_response.get("items", []):
         video_id = item["id"]["videoId"]
         if video_id in exclude:
             continue
-
-        results.append({
+        candidates.append({
             "video_id": video_id,
             "title": item["snippet"]["title"],
             "url": f"https://www.youtube.com/watch?v={video_id}",
             "thumbnail": item["snippet"]["thumbnails"].get("high", {}).get("url", ""),
         })
 
+    if not candidates:
+        return [{"_perf": {
+            "search_list_s": round(t_search_list, 3),
+            "videos_list_s": None,
+            "post_s": 0.0,
+            "filtered": 0,
+            "kept": 0,
+        }}]
+
+    if allow_shorts:
+        return [
+            *candidates[:max_results],
+            {"_perf": {
+                "search_list_s": round(t_search_list, 3),
+                "videos_list_s": None,  # skipped
+                "post_s": 0.0,
+                "filtered": 0,
+                "kept": len(candidates[:max_results]),
+            }},
+        ]
+
+    # 2단계: videos.list로 duration 조회해 60초 미만 제외
+    ids = [c["video_id"] for c in candidates]
+    t_videos_list: float | None = None
+    try:
+        videos_request = youtube.videos().list(
+            part="contentDetails",
+            id=",".join(ids),
+            fields="items(id,contentDetails/duration)",
+            maxResults=50,
+        )
+        _t = time.perf_counter()
+        videos_response = await asyncio.to_thread(videos_request.execute)
+        t_videos_list = time.perf_counter() - _t
+    except Exception as e:
+        logger.warning("videos.list failed, falling back to unfiltered results: %s", type(e).__name__)
+        return [
+            *candidates[:max_results],
+            {"_perf": {
+                "search_list_s": round(t_search_list, 3),
+                "videos_list_s": "failed",
+                "post_s": 0.0,
+                "filtered": 0,
+                "kept": len(candidates[:max_results]),
+            }},
+        ]
+
+    _t = time.perf_counter()
+    durations: dict[str, int] = {
+        item["id"]: _parse_iso8601_duration(item.get("contentDetails", {}).get("duration", ""))
+        for item in videos_response.get("items", [])
+    }
+
+    results: list[dict] = []
+    filtered_out = 0
+    for c in candidates:
+        dur = durations.get(c["video_id"], 0)
+        # 0(파싱 실패·라이브 등)이나 60초 미만은 보수적으로 제외
+        if dur < 60:
+            filtered_out += 1
+            continue
+        c["duration_seconds"] = dur
+        results.append(c)
         if len(results) >= max_results:
             break
+    t_post = time.perf_counter() - _t
+
+    results.append({"_perf": {
+        "search_list_s": round(t_search_list, 3),
+        "videos_list_s": round(t_videos_list, 3) if t_videos_list is not None else None,
+        "post_s": round(t_post, 3),
+        "filtered": filtered_out,
+        "kept": len([r for r in results if "video_id" in r]),
+    }})
 
     return results
 
