@@ -1198,15 +1198,6 @@ export function MoodPickDashboard() {
     )
   }
 
-//   console.log("SCREEN CHECK", {
-//   hasCompletedOnboarding,
-//   surveySave,
-//   surveyEnter,
-//   gadDone: gad.isDone,
-//   phqDone: phq.isDone,
-//   pssDone: pss.isDone,
-// })
-
   // Show onboarding if first time after login
   if (!hasCompletedOnboarding) {
     return (
