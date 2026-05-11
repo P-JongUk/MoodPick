@@ -7,9 +7,6 @@ Each content platform is registered as a separate tool on the same server.
 Currently supported:
   - search_youtube: YouTube Data API v3
   - recommend_podcast_episode: 큐레이션 RSS에서 에피소드 1개 선택 (ai.tools.podcast_catalog)
-
-Future:
-  - search_spotify: Spotify Web API
 """
 
 import asyncio
@@ -26,6 +23,26 @@ if _env_path.exists():
 
 mcp = FastMCP("moodpick-content")
 
+_YT_VIDEOS_LIST_CHUNK = 50
+
+
+async def _youtube_embeddable_ids(youtube, video_ids: list[str]) -> set[str]:
+    """videos.list(status)로 타 사이트 임베드가 허용된 영상 ID만 반환한다."""
+    allowed: set[str] = set()
+    for i in range(0, len(video_ids), _YT_VIDEOS_LIST_CHUNK):
+        chunk = video_ids[i : i + _YT_VIDEOS_LIST_CHUNK]
+        req = youtube.videos().list(part="status", id=",".join(chunk))
+        resp = await asyncio.to_thread(req.execute)
+        for item in resp.get("items", []):
+            vid = item.get("id")
+            if not vid:
+                continue
+            status = item.get("status") or {}
+            if status.get("embeddable") is False:
+                continue
+            allowed.add(vid)
+    return allowed
+
 
 # ── YouTube ─────────────────────────────────────────────────────────────────
 
@@ -38,6 +55,7 @@ async def search_youtube(
     """
     YouTube에서 영상을 검색하고 기술적 필터링만 수행한다.
     개인화 판단은 하지 않음 — 에이전트가 이미 쿼리에 반영했음.
+    임베드 비허용(status.embeddable=false) 영상은 제외하여 앱 내 재생과 맞춘다.
 
     Args:
         query: 검색 쿼리 (에이전트가 생성한 영어 쿼리)
@@ -55,37 +73,39 @@ async def search_youtube(
 
     exclude = set(watched_ids or [])
 
-    # Request extra results to compensate for filtered-out videos
-    fetch_count = max_results + len(exclude)
+    # 검색은 최대 50건까지 받아 임베드 필터 후에도 max_results를 채울 여지를 둔다.
+    search_max = min(50, max(25, max_results + len(exclude) + 20))
 
     youtube = build("youtube", "v3", developerKey=api_key)
     request = youtube.search().list(
         q=query,
         part="snippet",
         type="video",
-        maxResults=min(fetch_count, 25),
+        maxResults=search_max,
         relevanceLanguage="ko",
         safeSearch="strict",
     )
     response = await asyncio.to_thread(request.execute)
 
-    results = []
+    candidates: list[dict] = []
     for item in response.get("items", []):
         video_id = item["id"]["videoId"]
         if video_id in exclude:
             continue
-
-        results.append({
+        candidates.append({
             "video_id": video_id,
             "title": item["snippet"]["title"],
             "url": f"https://www.youtube.com/watch?v={video_id}",
             "thumbnail": item["snippet"]["thumbnails"].get("high", {}).get("url", ""),
         })
 
-        if len(results) >= max_results:
-            break
+    if not candidates:
+        return []
 
-    return results
+    embed_ok = await _youtube_embeddable_ids(youtube, [c["video_id"] for c in candidates])
+
+    results = [c for c in candidates if c["video_id"] in embed_ok]
+    return results[:max_results]
 
 
 # ── Podcast (RSS 큐레이션) ─────────────────────────────────────────────────
@@ -120,12 +140,6 @@ async def recommend_podcast_episode(
         intensity=float(intensity),
         watched_content_ids=watched_content_ids,
     )
-
-
-# ── Spotify (TODO) ──────────────────────────────────────────────────────────
-# @mcp.tool()
-# async def search_spotify(...) -> list[dict]:
-#     ...
 
 
 if __name__ == "__main__":

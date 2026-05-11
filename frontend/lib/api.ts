@@ -222,7 +222,7 @@ export async function recordWatchedContent(
   contentTitle: string,
   thumbnailUrl?: string,
   sessionId?: string,
-  mediaProvider?: "youtube" | "spotify" | "podcast" | null,
+  mediaProvider?: "youtube" | "podcast" | null,
   mediaUrl?: string | null
 ): Promise<any> {
   const response = await fetch(`${API_BASE_URL}/content/watched`, {
@@ -247,7 +247,7 @@ export async function recordWatchedContent(
   return response.json()
 }
 
-export type ContentMediaPreferenceQuery = "all" | "youtube" | "spotify" | "podcast"
+export type ContentMediaPreferenceQuery = "all" | "youtube" | "podcast"
 
 export async function getContentRecommendations(
   userId: string,

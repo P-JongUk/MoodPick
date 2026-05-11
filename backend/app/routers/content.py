@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 router = APIRouter(prefix="/content", tags=["content"])
 logger = logging.getLogger(__name__)
 
-# 비AI 시드 추천 (YouTube 영상 + Spotify 트랙). 이후 검색 API·개인화로 대체 가능.
+# 비AI 시드 추천 (YouTube + 팟캐스트). 이후 검색 API·개인화로 대체 가능.
 _SEED_RECOMMENDATIONS: list[dict] = [
     {
         "id": "seed-rec-yt-lofi",
@@ -22,12 +22,12 @@ _SEED_RECOMMENDATIONS: list[dict] = [
         "media_url": None,
     },
     {
-        "id": "seed-rec-sp-1",
-        "content_id": "spotify:track:4iV5W9uYEdYUVa79Axb7Rh",
-        "content_title": "클래식 힐링 플레이리스트 샘플",
+        "id": "seed-rec-pc-demo",
+        "content_id": "podcast:episode:seed-demo-calm",
+        "content_title": "잔잔한 휴식 (데모 오디오)",
         "thumbnail_url": None,
-        "media_provider": "spotify",
-        "media_url": "https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh",
+        "media_provider": "podcast",
+        "media_url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
     },
     {
         "id": "seed-rec-yt-nature",
@@ -38,12 +38,12 @@ _SEED_RECOMMENDATIONS: list[dict] = [
         "media_url": None,
     },
     {
-        "id": "seed-rec-sp-2",
-        "content_id": "spotify:track:3YMgCpfrgrje64XnIAgYH7",
-        "content_title": "잔잔한 재즈 샘플",
-        "thumbnail_url": None,
-        "media_provider": "spotify",
-        "media_url": "https://open.spotify.com/track/3YMgCpfrgrje64XnIAgYH7",
+        "id": "seed-rec-yt-calm",
+        "content_id": "youtube:2OEL4P1Rz04",
+        "content_title": "명상·호흡 (데모)",
+        "thumbnail_url": "https://img.youtube.com/vi/2OEL4P1Rz04/mqdefault.jpg",
+        "media_provider": "youtube",
+        "media_url": None,
     },
 ]
 
@@ -61,7 +61,7 @@ class WatchedContentRequest(BaseModel):
     content_id: str
     content_title: str
     thumbnail_url: Optional[str] = None
-    media_provider: Optional[Literal["youtube", "spotify", "podcast"]] = None
+    media_provider: Optional[Literal["youtube", "podcast"]] = None
     media_url: Optional[str] = None
 
 
@@ -306,9 +306,9 @@ async def get_content_history(
 async def get_content_recommendations(
     user_id: str,
     limit: int = Query(8, ge=1, le=30),
-    media: Literal["all", "youtube", "spotify", "podcast"] = Query(
+    media: Literal["all", "youtube", "podcast"] = Query(
         "all",
-        description="youtube | spotify | podcast | all (혼합)",
+        description="youtube | podcast | all (혼합)",
     ),
 ):
     """자동 추천 콘텐츠 시드 목록. user_id는 향후 개인화 시 사용."""

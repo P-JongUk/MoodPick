@@ -82,7 +82,7 @@ export async function saveContentFeedback(params: {
   contentId: string
   contentTitle: string
   thumbnailUrl?: string
-  mediaProvider?: "youtube" | "spotify" | "podcast" | null
+  mediaProvider?: "youtube" | "podcast" | null
   mediaUrl?: string | null
 }): Promise<void> {
   const userId = await getCurrentUserId()
