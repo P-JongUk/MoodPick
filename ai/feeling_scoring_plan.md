@@ -1,5 +1,11 @@
 # MoodPick Emotion Scoring Plan
 
+> **⚠️ 현재 구현 상태 (2026-05-08 갱신)**
+> 이 문서는 **설계 시점의 계획서**이며, 실제 구현은 일부 항목에서 다음과 같이 다릅니다:
+> - **`intensity`** = `min(1, max(0,-V) * 0.6 + |A| * 0.4)` ([counselor.py:_build_emotion_score()](agents/counselor.py)). "감정 케어 시급도" 신호로, **추천 시점에 즉석 계산**되어 `recommendation_log.intensity`에만 적재됨. `emotion_records.intensity` 컬럼은 마이그레이션 009로 제거.
+> - **`va_radius`** = `EMOTION_VA_MAP` 룩업의 `confidence_radius` (0.15~0.30). 감정 클러스터의 VA 평면상 영역 크기. **`√(V² + A²)`가 아님.** `emotion_records.va_radius`에 저장되며 현재는 추천 로직에서 미사용.
+> - 두 값은 **별개 개념**이며 동일성 비교 대상이 아님. 본 문서 본문 중 `compute_va_score()`의 base_radius / 최종 radius / GPT 추정 intensity 관련 표현은 설계 의도이며 현재 코드는 위 정의를 따릅니다.
+
 ## 개요
 
 이 문서는 MoodPick의 감정 스코어링 시스템을 고도화하기 위한 구현 계획서입니다.

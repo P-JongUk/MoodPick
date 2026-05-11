@@ -29,6 +29,8 @@ class UserProfileResponse(BaseModel):
     id: str
     email: str
     name: Optional[str] = None
+    gender: Optional[str] = None
+    birth_year: Optional[int] = None
     avatar_url: Optional[str] = None
     created_at: str
 
@@ -36,6 +38,8 @@ class UserProfileResponse(BaseModel):
 class UserProfileUpsertRequest(BaseModel):
     user_id: str
     display_name: str
+    gender: Optional[str] = None
+    birth_year: Optional[int] = None
 
 
 @router.get("/profile/{user_id}", response_model=UserProfileResponse)
@@ -46,7 +50,7 @@ async def get_user_profile(
     """사용자 프로필 조회"""
     try:
         profile_result = supabase.table("user_profiles").select(
-            "display_name, created_at"
+            "display_name, gender, birth_year, created_at"
         ).eq("user_id", user_id).limit(1).execute()
 
         if profile_result.data and len(profile_result.data) > 0:
@@ -55,6 +59,8 @@ async def get_user_profile(
                 "id": user_id,
                 "email": f"user_{user_id[:8]}@moodpick.local",  # 임시
                 "name": profile.get("display_name") or f"User {user_id[:4]}",
+                "gender": profile.get("gender"),
+                "birth_year": profile.get("birth_year"),
                 "avatar_url": None,
                 "created_at": profile["created_at"],
             }
@@ -73,6 +79,8 @@ async def get_user_profile(
             "id": user_id,
             "email": f"user_{user_id[:8]}@moodpick.local",
             "name": f"User {user_id[:4]}",
+            "gender": None,
+            "birth_year": None,
             "avatar_url": None,
             "created_at": created_at,
         }
@@ -101,6 +109,8 @@ async def upsert_user_profile(
             {
                 "user_id": payload.user_id,
                 "display_name": display_name,
+                "gender": payload.gender,
+                "birth_year": payload.birth_year,
             },
             on_conflict="user_id",
         ).execute()
@@ -111,12 +121,17 @@ async def upsert_user_profile(
                 "status": "success",
                 "user_id": row["user_id"],
                 "display_name": row["display_name"],
+                "gender": row.get("gender"),
+                "birth_year": row.get("birth_year"),
             }
 
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to upsert user profile",
-        )
+        return {
+            "status": "success",
+            "user_id": payload.user_id,
+            "display_name": display_name,
+            "gender": payload.gender,
+            "birth_year": payload.birth_year,
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -272,7 +287,15 @@ async def get_daily_summary(
             .order("watched_at", desc=True)
             .execute()
         )
-        contents = watched_res.data or []
+        content_rows = watched_res.data or []
+        seen_content_keys: set[tuple[Optional[str], str]] = set()
+        contents = []
+        for row in content_rows:
+            key = (row.get("session_id"), row.get("content_id"))
+            if key in seen_content_keys:
+                continue
+            seen_content_keys.add(key)
+            contents.append(row)
 
         summary_lines = [
             "상담 대화 원문은 서버에 저장되지 않습니다. 아래는 해당 날짜의 문진·세션·콘텐츠 기록을 바탕으로 한 요약입니다.",

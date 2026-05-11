@@ -1,4 +1,4 @@
--- db/migrations/002_user_taste_vectors.sql
+-- db/migrations/012_user_taste_vectors.sql
 create table if not exists public.user_taste_vectors (
   user_id        uuid primary key references auth.users(id),
   embedding      vector(1536) not null,

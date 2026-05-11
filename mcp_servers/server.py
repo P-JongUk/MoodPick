@@ -6,11 +6,13 @@ Each content platform is registered as a separate tool on the same server.
 
 Currently supported:
   - search_youtube: YouTube Data API v3
+  - recommend_podcast_episode: 큐레이션 RSS에서 에피소드 1개 선택 (ai.tools.podcast_catalog)
 
 Future:
   - search_spotify: Spotify Web API
 """
 
+import asyncio
 import os
 from pathlib import Path
 
@@ -65,7 +67,7 @@ async def search_youtube(
         relevanceLanguage="ko",
         safeSearch="strict",
     )
-    response = request.execute()
+    response = await asyncio.to_thread(request.execute)
 
     results = []
     for item in response.get("items", []):
@@ -84,6 +86,40 @@ async def search_youtube(
             break
 
     return results
+
+
+# ── Podcast (RSS 큐레이션) ─────────────────────────────────────────────────
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+@mcp.tool()
+async def recommend_podcast_episode(
+    emotion: str,
+    intensity: float = 0.5,
+    watched_content_ids: list[str] | None = None,
+) -> dict | None:
+    """
+    고정 RSS 피드에서 감정·시청 이력을 반영해 팟캐스트 에피소드 1개를 고른다.
+    YouTube 검색과 동일하게 MCP 도구로만 외부 소스에 접근한다.
+
+    Returns:
+        {"content_id", "title", "audio_url", "thumbnail_url", "reason"} 또는 없으면 null
+    """
+    import sys
+
+    root = _repo_root()
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+
+    from ai.tools.podcast_catalog import recommend_podcast_episode as catalog_pick
+
+    return catalog_pick(
+        emotion=emotion,
+        intensity=float(intensity),
+        watched_content_ids=watched_content_ids,
+    )
 
 
 # ── Spotify (TODO) ──────────────────────────────────────────────────────────

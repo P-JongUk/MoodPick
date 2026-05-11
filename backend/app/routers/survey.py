@@ -3,7 +3,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.services.supabase_service import get_supabase_client
 from supabase import Client
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 router = APIRouter(prefix="/survey", tags=["survey"])
@@ -82,7 +82,7 @@ async def submit_survey_response(
             "question_key": payload.question_key,
             "emoji_value": payload.emoji_value,
             "score": score,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
 
         if result.data and len(result.data) > 0:

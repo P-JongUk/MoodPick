@@ -1,5 +1,12 @@
 # MoodPick 추천 로직 고도화 계획 v2.1 — 하이브리드 임베딩 + 감정 궤적 기반
 
+> **⚠️ 현재 구현 상태 (2026-05-08 갱신)**
+> 본 문서는 v2.1 설계 시점의 계획서입니다. **`intensity`의 의미·공식이 실제 구현에서 다음과 같이 바뀌었습니다**:
+> - 본문 중 "감정 강도(intensity, 0.0~1.0)" / "intensity 0.0 → w_taste=0.75 ..." 같은 표현은 설계 의도이며, **현재 코드의 `intensity`는 "감정 케어 시급도"** 신호: `min(1, max(0,-V) * 0.6 + |A| * 0.4)` ([counselor.py:_build_emotion_score()](agents/counselor.py)).
+> - `compute_emotion_trend`는 **valence 기반 trend가 우선**이며 `intensity` 기반 fallback은 dead code 상태(L420 부근). 마이그레이션 009로 `emotion_records.intensity` 컬럼이 제거되었기 때문.
+> - 가중치 공식 `w_taste = 0.75 - 0.35 * intensity`, `w_emotion = (0.25 + 0.35 * intensity) * trend_multiplier`는 그대로 유효. 단 `intensity` 분포가 새 공식 기준으로 바뀐 점에 유의(분노/공포 ~0.68, 슬픔/우울 ~0.50, 권태 ~0.42, 평안/행복 ~0.20).
+> - `va_radius`(EMOTION_VA_MAP의 confidence_radius, 0.15~0.30)와 `recommendation_log.intensity`는 **별개 개념**.
+
 > v1(`recommendation_plan.md`)과 별도로 진행되는 **임베딩 기반 하이브리드 아키텍처** 계획.
 > v1의 Phase 1-B(GPT 재랭킹)와 같은 자리(검색 후 재랭킹)에 들어가지만,
 > GPT 호출 대신 **벡터 유사도**로 재랭킹하는 구조.
@@ -389,9 +396,9 @@ def hybrid_score(candidate_emb, ctx) -> float:
 > 콜드스타트는 v1 GPT 재랭킹으로 폴백 (옵션 C 인터페이스).
 
 #### 1-1. 마이그레이션 (~30분)
-- `db/migrations/00X_content_embeddings.sql`
-- `db/migrations/00Y_user_taste_vectors.sql`
-- `db/migrations/00Z_recommendation_log.sql`
+- `db/migrations/011_content_embeddings.sql`
+- `db/migrations/012_user_taste_vectors.sql`
+- `db/migrations/013_recommendation_log.sql`
 - 인덱스 포함
 
 #### 1-2. 임베딩 도구 (~3시간)
@@ -637,9 +644,9 @@ async def _rerank(candidates, ctx) -> list[dict]:
 
 ### Phase 1 신규
 ```
-db/migrations/00X_content_embeddings.sql
-db/migrations/00Y_user_taste_vectors.sql
-db/migrations/00Z_recommendation_log.sql
+db/migrations/011_content_embeddings.sql
+db/migrations/012_user_taste_vectors.sql
+db/migrations/013_recommendation_log.sql
 ai/tools/embedding_service.py
 ai/tools/user_taste.py
 ai/agents/reranker.py

@@ -16,6 +16,8 @@ Flow:
 """
 
 import json
+import logging
+import time
 
 from openai import OpenAI
 
@@ -25,6 +27,29 @@ from ai.utils import load_prompt
 from ai.tools.rag_search import search_rag_context
 from ai.tools.user_profile import get_user_profile
 from ai.tools.emotion_record import save_emotion_record
+from ai.tools.emotion_va_map import get_nearest_emotion
+
+
+logger = logging.getLogger(__name__)
+
+
+def _short_id(value: str | None) -> str:
+    return value[:8] if value else "-"
+
+
+def _build_emotion_score(args: dict) -> dict:
+    """save_emotion_record 인자에서 후속 에이전트들이 쓰는 통합 emotion_score를 만든다."""
+    valence = float(args.get("valence", 0.0))
+    arousal = float(args.get("arousal", 0.0))
+    emotion_label, _ = get_nearest_emotion(valence, arousal)
+    intensity = min(1.0, max(0.0, -valence) * 0.6 + abs(arousal) * 0.4)
+    return {
+        "valence": valence,
+        "arousal": arousal,
+        "emotion_description": args.get("emotion_description", ""),
+        "emotion": emotion_label,
+        "intensity": intensity,
+    }
 
 _MODEL = "gpt-4o-mini"
 
@@ -112,8 +137,13 @@ def _execute_tool_call(tool_call, state: CounselingState) -> str:
     fn_name = tool_call.function.name
     fn_args = json.loads(tool_call.function.arguments)
 
-    # Log tool calls to terminal for debugging
-    print(f"\n>>> [AI TOOL CALL] {fn_name}({fn_args})\n")
+    logger.info(
+        "AI tool call fn=%s user_id=%s session_id=%s arg_keys=%s",
+        fn_name,
+        _short_id(state.user_id),
+        _short_id(state.session_id),
+        sorted(fn_args.keys()),
+    )
 
     if fn_name == "search_rag_context":
         result = search_rag_context(
@@ -159,7 +189,18 @@ def _build_system_message(state: CounselingState) -> str:
         f"- session_id: {state.session_id}\n"
     )
 
-    return base_prompt + session_context
+    # 임계치 초과 세션이라면 오래된 대화 요약을 주입한다.
+    # state.messages에는 최근 N턴 원문만 들어있으므로, 그 이전 맥락은 이 블록으로 보존한다.
+    summary_block = ""
+    if state.session_summary:
+        summary_block = (
+            f"\n\n### [Module 0.5: Previous Conversation Summary]\n"
+            f"이전 대화의 요약입니다. 사용자의 맥락 이해에 활용하되, "
+            f"요약 자체를 사용자에게 직접 인용하거나 \"요약하면\"식으로 언급하지 마세요.\n"
+            f"{state.session_summary}\n"
+        )
+
+    return base_prompt + session_context + summary_block
 
 
 
@@ -186,7 +227,8 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
     max_iterations = 5  # safety limit to prevent infinite loops
     save_emotion_called = False  # track if save_emotion_record was invoked
 
-    for _ in range(max_iterations):
+    for _round in range(max_iterations):
+        _t = time.perf_counter()
         response = client.chat.completions.create(
             model=_MODEL,
             temperature=0.7,
@@ -194,6 +236,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
             tools=_TOOL_DEFINITIONS,
             messages=messages,
         )
+        logger.info("[PERF] counselor.llm[%d]=%.3fs", _round, time.perf_counter() - _t)
 
         choice = response.choices[0]
 
@@ -206,7 +249,13 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
 
         # Execute each tool call and append results
         for tool_call in choice.message.tool_calls:
+            _t = time.perf_counter()
             result_str = _execute_tool_call(tool_call, state)
+            logger.info(
+                "[PERF] counselor.tool[%s]=%.3fs",
+                tool_call.function.name,
+                time.perf_counter() - _t,
+            )
 
             # Cache user_profile in state if fetched
             if tool_call.function.name == "get_user_profile":
@@ -222,11 +271,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
                 save_emotion_called = True
                 try:
                     args = json.loads(tool_call.function.arguments)
-                    state.emotion_score = {
-                        "valence": args.get("valence", 0.0),
-                        "arousal": args.get("arousal", 0.0),
-                        "emotion_description": args.get("emotion_description", ""),
-                    }
+                    state.emotion_score = _build_emotion_score(args)
                 except (json.JSONDecodeError, TypeError):
                     pass
 
@@ -237,7 +282,11 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
             })
 
     # ── Extract final response ──────────────────────────────────────────
-    final_content = response.choices[0].message.content or ""
+    # max_iterations에 도달했는데 마지막도 tool_calls인 경우 content가 비어 사용자에게
+    # 빈 메시지가 전달될 수 있어 안전장치를 둔다.
+    final_content = (response.choices[0].message.content or "").strip()
+    if not final_content:
+        final_content = "지금은 답변을 정리하기 어렵네요. 다시 한 번 말씀해 주실 수 있을까요?"
     state.response = final_content
 
     # ── Guarantee: save emotion even if GPT skipped the tool ────────────
@@ -245,6 +294,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
     # would be missing. Force a single save_emotion_record call via tool_choice.
     if not save_emotion_called:
         try:
+            _t = time.perf_counter()
             forced = _get_openai().chat.completions.create(
                 model=_MODEL,
                 temperature=0.0,
@@ -253,24 +303,21 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
                 tool_choice={"type": "function", "function": {"name": "save_emotion_record"}},
                 messages=messages,
             )
+            logger.info("[PERF] counselor.forced_emotion_llm=%.3fs", time.perf_counter() - _t)
             for tc in (forced.choices[0].message.tool_calls or []):
                 if tc.function.name == "save_emotion_record":
                     _execute_tool_call(tc, state)
                     try:
                         args = json.loads(tc.function.arguments)
-                        state.emotion_score = {
-                            "valence": args.get("valence", 0.0),
-                            "arousal": args.get("arousal", 0.0),
-                            "emotion_description": args.get("emotion_description", ""),
-                        }
+                        state.emotion_score = _build_emotion_score(args)
                     except (json.JSONDecodeError, TypeError):
                         pass
         except Exception as e:
-            print(f"[WARN] Forced emotion save failed: {e}")
-
-    # Check if counselor suggests recommendation in the response
-    recommendation_signals = ["추천해드릴까요", "추천해 드릴까요", "들려드릴까요", "틀어드릴까요"]
-    if any(signal in final_content for signal in recommendation_signals):
-        state.needs_recommendation = True
+            logger.warning(
+                "Forced emotion save failed user_id=%s session_id=%s error_type=%s",
+                _short_id(state.user_id),
+                _short_id(state.session_id),
+                type(e).__name__,
+            )
 
     return state

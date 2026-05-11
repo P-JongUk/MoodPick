@@ -3,7 +3,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.services.supabase_service import get_supabase_client
 from supabase import Client
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 router = APIRouter(prefix="/emotion", tags=["emotion"])
@@ -84,7 +84,7 @@ async def get_emotion_records(
 ):
     """사용자의 감정 기록 조회 (최근 N일)"""
     try:
-        days_ago = datetime.utcnow() - timedelta(days=days)
+        days_ago = datetime.now(timezone.utc) - timedelta(days=days)
 
         sessions_result = supabase.table("counseling_sessions").select("id").eq(
             "user_id", user_id
@@ -130,7 +130,7 @@ async def get_emotion_summary(
 ):
     """사용자의 감정 요약 (최근 N일 평균)"""
     try:
-        days_ago = datetime.utcnow() - timedelta(days=days)
+        days_ago = datetime.now(timezone.utc) - timedelta(days=days)
 
         sessions_result = supabase.table("counseling_sessions").select("id").eq(
             "user_id", user_id
@@ -194,10 +194,3 @@ async def get_emotion_summary(
         )
 
 
-@router.get("/records")
-async def get_emotion_records():
-    return {
-        "message": "감정 기록 조회 엔드포인트가 준비되었습니다.",
-        "records": [],
-        "status": "ok",
-    }

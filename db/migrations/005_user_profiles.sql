@@ -1,6 +1,8 @@
 create table if not exists public.user_profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   display_name text not null,
+  gender varchar(32),
+  birth_year integer,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
