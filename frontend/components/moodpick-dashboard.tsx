@@ -403,12 +403,7 @@ export function MoodPickDashboard() {
   const [pss, setPss]=useState({scores: [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1], isDone: false,})
   const [isSavingSurvey, setIsSavingSurvey] = useState(false)
   const [surveyErrorMessage, setsurveyErrorMessage] = useState<string | null>(null)
-  const [surveySave, setSurveySave] = useState(false)
-//   const [surveySave, _setSurveySave] = useState(false)
-//   const setSurveySave = (value: boolean) => {
-//   console.trace("setSurveySave called:", value)
-//   _setSurveySave(value)
-// }
+  const [surveySave, setSurveySave]=useState(false)
   const surveyEnter = !gad.isDone || !phq.isDone || !pss.isDone
 
   useEffect(() => {
@@ -3062,7 +3057,7 @@ function SurveyScreen({
   isSaving: boolean;
   errorMessage: string | null;
   setSurveySave: (value: boolean)=>void
-}) {
+}){
   
   const surveyConfigs: Record<SurveyType, SurveyConfig> = {
   GAD: {
