@@ -268,15 +268,36 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
     reason = result.get("reason", "마음을 편안하게 해줄 콘텐츠를 추천드려요.")
     logger.info("[PERF] recommender.gpt_query=%.3fs", time.perf_counter() - _t)
 
+    # 사용자 메시지·hints·생성 쿼리 어느 곳에라도 쇼츠 키워드가 있으면 60초 필터 bypass
+    _shorts_haystack = " ".join(
+        [state.message or "", *(state.content_query_hints or []), search_query]
+    ).lower()
+    allow_shorts = "쇼츠" in _shorts_haystack or "shorts" in _shorts_haystack
+
     videos = []
     _t = time.perf_counter()
     try:
         async with MCPClient(_MCP_SERVER_PATH) as mcp:
             mcp_result = await mcp.call_tool(
                 "search_youtube",
-                {"query": search_query, "watched_ids": watched_ids, "max_results": 10},
+                {
+                    "query": search_query,
+                    "watched_ids": watched_ids,
+                    "max_results": 10,
+                    "allow_shorts": allow_shorts,
+                },
             )
             videos = json.loads(mcp_result.content[0].text) if mcp_result.content else []
+            if videos and "_perf" in videos[-1]:
+                perf = videos.pop()["_perf"]
+                logger.info(
+                    "[PERF] search_youtube.detail search_list=%ss videos_list=%ss post=%ss filtered=%s kept=%s",
+                    perf.get("search_list_s"),
+                    perf.get("videos_list_s"),
+                    perf.get("post_s"),
+                    perf.get("filtered"),
+                    perf.get("kept"),
+                )
             if videos and "error" in videos[0]:
                 videos = []
     except Exception as e:

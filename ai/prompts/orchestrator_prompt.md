@@ -37,7 +37,7 @@ false 예시 (대상이 자기 생명이 아님):
 다음 케이스 중 하나라도 해당하면 **true**:
 
 (a) **명시 요청**: "추천해줘", "노래 틀어줘", "뭔가 볼 거 없어?" 등 콘텐츠를 직접 요구.
-(b) **콘텐츠 취향 자발적 언급**: 카테고리("음악·영상·게임 좋아해"), 아티스트·앨범·장르("포스트말론 자주 들어", "Austin 앨범 좋더라"), 특정 곡 + 감상("Speedometer 신나고 좋아") 등을 자발적으로 꺼냄.
+(b) **콘텐츠 취향 자발적 언급**: 카테고리("음악·영상·게임 좋아해"), 아티스트·앨범·장르("포스트말론 자주 들어", "Austin 앨범 좋더라"), 특정 곡 + 감상("Speedometer 신나고 좋아") 등을 자발적으로 꺼냄. 단, "X 알아?"·"X 들어봤어?" 같은 인지 확인형 의문문은 취향 표명이 아니므로 제외 — 그 경우 needs_recommendation=false.
 (c) **추천 의사 응답에 동의**: 직전 어시스턴트가 "추천해드릴까요/들려드릴까요/추천해드릴 수 있" 등 의문형 추천 제안을 했고 사용자가 "응/네/좋아/그래/해줘" 등으로 동의.
 (d) **명상·오디오 형식 답변**: 직전에 상담사가 가이드 vs 음악만을 물었고 사용자가 "가이드"/"음악만"/"1"/"2"로 답함.
 
@@ -45,6 +45,8 @@ false 예시 (대상이 자기 생명이 아님):
 - 콘텐츠 언급 없는 순수 감정 토로 ("힘들어", "졸려").
 - 직전 추천 제안에 거절·회피 ("괜찮아", "아니 됐어", "별로").
 - 모호한 답변 ("음...", "글쎄").
+- 콘텐츠/아티스트에 대한 **단순 인지 확인 의문문** ("위켄드 알아?", "뉴진스 들어봤어?", "오징어게임 봤어?") — 아직 좋아한다/추천해달라고 명시하지 않음. 상담사가 먼저 제안하고 동의가 와야 true.
+- 콘텐츠 명칭이 등장해도 **부정·과거형 회상·일반 정보 질문** ("예전엔 위켄드 좋아했지", "위켄드 누구야?").
 
 is_crisis가 true이면 반드시 false (안전 우선).
 
@@ -64,6 +66,9 @@ is_crisis가 true이면 반드시 false (안전 우선).
 
 ### 5. content_query_hints (string array)
 사용자가 검색에 직접 사용할 만한 핵심 키워드를 추출. 다음 항목을 보존한다:
+
+**강제 규칙**: needs_recommendation이 true인 응답에서, 사용자 메시지에 등장한 아티스트명/그룹/프로그램/게임/영화/고유명사가 하나라도 있으면 hints에 무조건 포함한다. hints 누락 시 검색 쿼리가 좋아요 이력으로 폴백되어 잘못된 추천이 발생한다.
+
 - 아티스트·그룹·인물명 (워크돌, 프로미스나인, 손흥민 등)
 - 프로그램·예능·드라마·게임·영화 명칭
 - 사용자가 강하게 명시한 형식·태그 (워크돌, 풀영상, 하이라이트, 라이브 등)
@@ -87,6 +92,19 @@ hints가 없으면 빈 배열.
 
 사용자: "Speedometer 진짜 신나고 좋은 것 같아"
 → {"is_crisis": false, "intent": "추천", "needs_recommendation": true, "content_format": "music", "content_query_hints": ["Speedometer"]}
+
+사용자: "위켄드 알아?"
+→ {"is_crisis": false, "intent": "잡담", "needs_recommendation": false, "content_format": "unspecified", "content_query_hints": []}
+
+사용자: "뉴진스 들어봤어?"
+→ {"is_crisis": false, "intent": "잡담", "needs_recommendation": false, "content_format": "unspecified", "content_query_hints": []}
+
+[직전 어시스턴트] "위켄드 좋아하시는군요. 어떤 곡 자주 들으세요?"
+사용자: "위켄드 노래 좋아"
+→ {"is_crisis": false, "intent": "추천", "needs_recommendation": true, "content_format": "music", "content_query_hints": ["위켄드"]}
+
+사용자: "위켄드 곡 하나 틀어줘"
+→ {"is_crisis": false, "intent": "추천", "needs_recommendation": true, "content_format": "music", "content_query_hints": ["위켄드"]}
 
 사용자: "오늘 뭔가 우울한데 재밌는 영상 보고 싶어"
 → {"is_crisis": false, "intent": "추천", "needs_recommendation": true, "content_format": "video", "content_query_hints": []}
