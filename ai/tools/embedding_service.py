@@ -11,9 +11,9 @@ import ast
 import asyncio
 import logging
 
-from openai import AsyncOpenAI
 from supabase import create_client, Client
-from ai.config import OPENAI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+from ai.config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+from ai.clients import get_openai as _get_openai
 
 
 logger = logging.getLogger(__name__)
@@ -41,11 +41,6 @@ def _parse_embedding(raw, content_id: str | None = None) -> list[float] | None:
                 e,
             )
     return None
-
-def _get_openai() -> AsyncOpenAI:
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not set.")
-    return AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 def _get_supabase() -> Client:
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:

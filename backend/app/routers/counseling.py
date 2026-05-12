@@ -120,7 +120,7 @@ async def send_counseling_message(
             )
 
         # 1. Build conversation context (recent N turns + summary if threshold exceeded)
-        summary, history = prepare_session_context(supabase, payload.session_id)
+        summary, history = await prepare_session_context(supabase, payload.session_id)
 
         # 2. Run AI pipeline
         result = await get_ai_response(

@@ -10,21 +10,13 @@ Output: state.is_crisis, state.intent, state.needs_recommendation
 
 import json
 
-from openai import OpenAI
-
-from ai.config import OPENAI_API_KEY
+from ai.clients import get_openai
 from ai.state import CounselingState
 from ai.utils import load_prompt
 
 _MODEL = "gpt-4o-mini"
 _HISTORY_TURNS = 4          # 직전 2턴분 (user/assistant 쌍 2개)
 _HISTORY_CHAR_LIMIT = 400   # 추천 제안 의문형은 응답 끝부분에 위치 → 뒤에서 자르기
-
-
-def _get_openai() -> OpenAI:
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not set. Check backend/.env.local")
-    return OpenAI(api_key=OPENAI_API_KEY)
 
 
 def _truncate_tail(text: str, limit: int) -> str:
@@ -51,8 +43,8 @@ async def orchestrator_agent(state: CounselingState) -> CounselingState:
             "content": _truncate_tail(msg.get("content") or "", _HISTORY_CHAR_LIMIT),
         })
 
-    client = _get_openai()
-    response = client.chat.completions.create(
+    client = get_openai()
+    response = await client.chat.completions.create(
         model=_MODEL,
         temperature=0,
         max_tokens=150,
