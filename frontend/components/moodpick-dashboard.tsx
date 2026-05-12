@@ -403,6 +403,8 @@ export function MoodPickDashboard() {
   const [pss, setPss]=useState({scores: [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1], isDone: false,})
   const [isSavingSurvey, setIsSavingSurvey] = useState(false)
   const [surveyErrorMessage, setsurveyErrorMessage] = useState<string | null>(null)
+  const [surveySave, setSurveySave]=useState(false)
+  const surveyEnter = !gad.isDone || !phq.isDone || !pss.isDone
 
   useEffect(() => {
     const loadDashboardData = async () => {
@@ -1212,6 +1214,23 @@ export function MoodPickDashboard() {
     )
   }
 
+  if (!surveySave && surveyEnter) {
+    return (
+      <SurveyScreen
+        gad={gad}
+        setGad={setGad}
+        phq={phq}
+        setPhq={setPhq}
+        pss={pss}
+        setPss={setPss}
+        onSave={() => {}}
+        isSaving={isSavingSurvey}
+        errorMessage={surveyErrorMessage}
+        setSurveySave={setSurveySave}
+      />
+    )
+  }
+
   return (
     <div className="flex h-screen bg-background">
       {/* Sidebar */}
@@ -1385,6 +1404,8 @@ export function MoodPickDashboard() {
             isExportingMyData={isExportingMyData}
             exportMyDataMessage={exportMyDataMessage}
             setHasCompletedOnboarding={setHasCompletedOnboarding}
+            setSurveySave={setSurveySave}
+            surveyEnter={surveyEnter}
           />
         )}
       </main>
@@ -3015,6 +3036,7 @@ function SurveyScreen({
   onSave,
   isSaving,
   errorMessage,
+  setSurveySave
 }: {
   gad: SurveyState;
   setGad: React.Dispatch<React.SetStateAction<SurveyState>>;
@@ -3025,7 +3047,9 @@ function SurveyScreen({
   onSave: (submit: boolean) => void;
   isSaving: boolean;
   errorMessage: string | null;
-}) {
+  setSurveySave: (value: boolean)=>void
+}){
+  
   const surveyConfigs: Record<SurveyType, SurveyConfig> = {
   GAD: {
     title: "GAD-7",
@@ -3092,6 +3116,9 @@ function SurveyScreen({
   const handleSaveSurvey=(submit: boolean)=>{
     if (submit) {
     currentSetSurvey((prev) => ({...prev, isDone: true,}));
+    }
+    if(!submit || (gad.isDone && phq.isDone && pss.isDone)){
+      setSurveySave(true)
     }
     onSave(submit);
   }
@@ -3198,7 +3225,7 @@ function SurveyScreen({
             {/* Save Option */}
             <button
               onClick={() => handleSaveSurvey(false)}
-              disabled={isSaving || isSubmitted}
+              disabled={isSaving}
               className="w-full mt-4 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
             >
               임시저장
@@ -3239,7 +3266,9 @@ function MyPageView({
   onExportMyData,
   isExportingMyData,
   exportMyDataMessage,
-  setHasCompletedOnboarding
+  setHasCompletedOnboarding,
+  setSurveySave,
+  surveyEnter
 }: {
   autoPlayEnabled: boolean
   setAutoPlayEnabled: (value: boolean) => void
@@ -3268,6 +3297,8 @@ function MyPageView({
   isExportingMyData: boolean
   exportMyDataMessage: string | null
   setHasCompletedOnboarding: (value: boolean)=>void
+  setSurveySave: (value: boolean)=>void
+  surveyEnter: boolean
 }) {
   const [profileOpen, setProfileOpen] = useState(false)
   const [draftDisplayName, setDraftDisplayName] = useState("")
@@ -3361,6 +3392,9 @@ function MyPageView({
             </div>
             <Button variant="outline" className="rounded-xl shrink-0" type="button" onClick={openProfileEdit}>
               프로필 수정
+            </Button>
+            <Button variant="outline" className="rounded-xl shrink-0" type="button" disabled={!surveyEnter} onClick={()=>setSurveySave(false)}>
+              설문
             </Button>
           </div>
         </CardContent>
