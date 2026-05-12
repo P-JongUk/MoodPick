@@ -3637,9 +3637,6 @@ function LoginScreen({
         </Card>
 
         {/* Footer */}
-        <p className="text-center text-xs text-muted-foreground mt-6">
-          로그인하면 무드픽의 이용약관 및 개인정보처리방침에 동의하게 됩니다.
-        </p>
       </div>
     </div>
   )
