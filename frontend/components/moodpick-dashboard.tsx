@@ -466,9 +466,15 @@ export function MoodPickDashboard() {
   const [phq, setPhq]=useState({scores: [-1, -1, -1, -1, -1, -1, -1, -1, -1], isDone: false,})
   const [pss, setPss]=useState({scores: [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1], isDone: false,})
   const [isSavingSurvey, setIsSavingSurvey] = useState(false)
-  const [surveyErrorMessage, setsurveyErrorMessage] = useState<string | null>(null)
+  const [surveyErrorMessage, setSurveyErrorMessage] = useState<string | null>(null)
   const [surveySave, setSurveySave]=useState(false)
   const surveyEnter = !gad.isDone || !phq.isDone || !pss.isDone
+
+  const handleSurveySave = (submit: boolean) => {
+    void submit
+    setSurveyErrorMessage(null)
+    setIsSavingSurvey(false)
+  }
 
   useEffect(() => {
     const loadDashboardData = async () => {
@@ -575,7 +581,7 @@ export function MoodPickDashboard() {
             }
           })
           .sort((a, b) => a.timestamp - b.timestamp)
-          .map(({ timestamp, ...record }) => record)
+          .map(({ date, score, label }) => ({ date, score, label }))
 
         setEmotionData(emotionChartData)
         setRecentEmotionRecords(validEmotionRecords.slice(0, 5))
@@ -718,7 +724,7 @@ export function MoodPickDashboard() {
     }
     if (prefs && typeof prefs.media_preference === "string") {
       const p = prefs.media_preference
-      setMediaPreference(p === "spotify" ? "mixed" : p)
+      setMediaPreference(p === "youtube" || p === "podcast" || p === "mixed" ? p : "mixed")
     }
   }, [user])
 
@@ -1351,7 +1357,7 @@ export function MoodPickDashboard() {
         setPhq={setPhq}
         pss={pss}
         setPss={setPss}
-        onSave={() => {}}
+        onSave={handleSurveySave}
         isSaving={isSavingSurvey}
         errorMessage={surveyErrorMessage}
         setSurveySave={setSurveySave}
@@ -1685,6 +1691,7 @@ function HomeView({
           <div className="flex gap-6">
             <div className="w-48 h-32 rounded-xl bg-muted flex items-center justify-center overflow-hidden shrink-0">
               {homeThumbUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img src={homeThumbUrl} alt="" className="w-full h-full object-cover" />
               ) : (
                 <div className="text-center">
@@ -2202,7 +2209,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
               aria-label="도움이 됐어요"
               aria-pressed={mediaFeedback === "like"}
             >
-              👍
+              <ThumbsUp className="h-7 w-7 sm:h-8 sm:w-8" aria-hidden="true" />
             </button>
             <span className="text-xs text-muted-foreground">도움이 됐어요</span>
           </div>
@@ -2219,7 +2226,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
               aria-label="아쉬워요"
               aria-pressed={mediaFeedback === "dislike"}
             >
-              👎
+              <ThumbsDown className="h-7 w-7 sm:h-8 sm:w-8" aria-hidden="true" />
             </button>
             <span className="text-xs text-muted-foreground">아쉬워요</span>
           </div>
@@ -2285,6 +2292,7 @@ const CounselChatBubble = memo(function CounselChatBubble({ message }: { message
           <div className="mt-3 p-3 rounded-xl bg-background/80 border">
             <div className="flex items-center gap-3">
               {message.recommendedContent.thumbnail && (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={message.recommendedContent.thumbnail}
                   alt={message.recommendedContent.title ?? ""}
