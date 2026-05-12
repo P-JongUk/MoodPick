@@ -102,6 +102,7 @@ import {
 } from "@/components/ui/alert-dialog"
 
 const REMINDER_FEATURE_ENABLED = process.env.NEXT_PUBLIC_REMINDER_ENABLED === "true"
+const DEMO_HIDE_ONBOARDING = true
 
 type TabType = "home" | "counseling" | "dashboard" | "mypage"
 
@@ -989,6 +990,13 @@ export function MoodPickDashboard() {
       return
     }
 
+    if (DEMO_HIDE_ONBOARDING) {
+      setHasCompletedOnboarding(true)
+      setOnboardingErrorMessage(null)
+      setIsOnboardingStateLoading(false)
+      return
+    }
+
     const metadata = (user.user_metadata ?? {}) as {
       onboarding_completed?: boolean
       onboarding_profile?: {
@@ -1760,7 +1768,7 @@ export function MoodPickDashboard() {
   }
 
   // Show onboarding if first time after login
-  if (!hasCompletedOnboarding) {
+  if (!DEMO_HIDE_ONBOARDING && !hasCompletedOnboarding) {
     return (
       <OnboardingScreen
         selectedConcerns={selectedConcerns}
@@ -4299,7 +4307,9 @@ function MyPageView({
       <Card className="border-0 shadow-lg mb-6">
         <CardHeader className="flex justify-between">
           <CardTitle className="text-lg">맞춤 설정</CardTitle>
-          <Button variant="outline" className="rounded-xl shrink-0" type="button" onClick={()=>setHasCompletedOnboarding(false)}>온보딩</Button>
+          {!DEMO_HIDE_ONBOARDING ? (
+            <Button variant="outline" className="rounded-xl shrink-0" type="button" onClick={()=>setHasCompletedOnboarding(false)}>온보딩</Button>
+          ) : null}
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Auto-play Toggle */}
