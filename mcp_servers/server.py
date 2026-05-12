@@ -7,6 +7,9 @@ Each content platform is registered as a separate tool on the same server.
 Currently supported:
   - search_youtube: YouTube Data API v3
   - recommend_podcast_episode: 큐레이션 RSS에서 에피소드 1개 선택 (ai.tools.podcast_catalog)
+
+Future:
+  - search_spotify: Spotify Web API
 """
 
 import asyncio
@@ -238,6 +241,13 @@ async def recommend_podcast_episode(
         intensity=float(intensity),
         watched_content_ids=watched_content_ids,
     )
+
+
+# ── Spotify (TODO) ──────────────────────────────────────────────────────────
+# @mcp.tool()
+# async def search_spotify(...) -> list[dict]:
+#     ...
+
 
 if __name__ == "__main__":
     mcp.run()
