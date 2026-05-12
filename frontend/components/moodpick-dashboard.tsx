@@ -701,6 +701,9 @@ export function MoodPickDashboard() {
   const surveyEnter = !gad.isDone || !phq.isDone || !pss.isDone
   const shouldShowSurvey = Boolean(user?.id) && !isSurveyStateLoading && !surveySave && surveyEnter
 
+  const [readIntroduce, setReadIntroduce]=useState(false)
+  const handleCheckIntroduce=()=>{setReadIntroduce(true)}
+
   useEffect(() => {
     if (!user?.id) {
       setGad(createSurveyState("GAD", true))
@@ -1787,6 +1790,12 @@ export function MoodPickDashboard() {
       />
     )
   }
+
+  if (!readIntroduce) {
+    return (
+      <Introduce introduceCheck={handleCheckIntroduce}/>
+    )
+  }  
 
   return (
     <div className="flex h-screen bg-background">
@@ -4077,6 +4086,50 @@ function SurveyScreen({
           </CardContent>
         </Card>
       </div>
+    </div>
+  )
+}
+
+function Introduce({introduceCheck}: {introduceCheck: () => void}){
+  return (
+    <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex items-center justify-center p-4">
+      <Card className="w-full max-w-lg border-0 shadow-2xl">
+        <CardContent className="p-8">
+          {/* Logo */}
+          <div className="text-center mb-8">
+              <div className="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4">
+                <Heart className="w-8 h-8 text-primary-foreground" />
+              </div>
+              <h1 className="text-3xl font-bold text-foreground mb-2">무드픽</h1>
+              <p className="text-muted-foreground">MoodPick</p>
+            </div>
+
+          {/* Question */}
+          <div className="mb-8">
+            <h3 className="text-lg font-semibold text-foreground mb-4">
+              무드픽은 어떤 서비스인가요?
+            </h3>
+            <div className="rounded-xl border p-3">
+              <ul className="list-disc pl-5 text-lg">
+                <li>무드픽은 사용자의 실시간 감정 맥락을 파악해 정서적 개선 및 개인화 콘텐츠를 제공하는 AI 에이전트 시스템입니다.</li>
+                <li>무드픽은 신뢰도 높은 심리 상담 기능을 제공합니다.</li>
+                {/* 띄든가 말든가 */}
+                <li>무드픽은 대화 전에 더 나은 추천을 위해 온보딩, 문진, 사전질문을 받습니다.</li>
+                <li>더 나은 추천을 위해 사후질문에 꼭 답을 해주시기 바랍니다.</li>
+
+              </ul>             
+            </div>
+          </div>
+
+          {/* Complete Button */}
+          <Button
+            className="w-full h-12 rounded-xl text-base font-medium"
+            onClick={introduceCheck}
+          >
+            확인완료
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   )
 }
