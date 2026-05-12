@@ -54,8 +54,6 @@ import {
   Trash2,
   Maximize2,
   Minimize2,
-  ThumbsUp,
-  ThumbsDown,
   X,
   Eye,
   EyeOff,
@@ -174,6 +172,19 @@ interface SurveyConfig  {
   scoreDescription: string;
   scoreOptions: number[];
 };
+
+const SURVEY_DEFAULT_SCORES: Record<SurveyType, number[]> = {
+  GAD: [-1, -1, -1, -1, -1, -1, -1],
+  PHQ: [-1, -1, -1, -1, -1, -1, -1, -1, -1],
+  PSS: [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
+}
+
+function createSurveyState(type: SurveyType, isDone: boolean): SurveyState {
+  return {
+    scores: [...SURVEY_DEFAULT_SCORES[type]],
+    isDone,
+  }
+}
 
 const defaultContentItem: ContentHistoryItem = {
   id: "default-content",
@@ -464,13 +475,74 @@ export function MoodPickDashboard() {
   }, [dashboardHistoryFullscreenOpen])
 
   //문진
-  const [gad, setGad]=useState({scores: [-1, -1, -1, -1, -1, -1, -1], isDone: false,})
-  const [phq, setPhq]=useState({scores: [-1, -1, -1, -1, -1, -1, -1, -1, -1], isDone: false,})
-  const [pss, setPss]=useState({scores: [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1], isDone: false,})
+  const [gad, setGad] = useState<SurveyState>(() => createSurveyState("GAD", false))
+  const [phq, setPhq] = useState<SurveyState>(() => createSurveyState("PHQ", false))
+  const [pss, setPss] = useState<SurveyState>(() => createSurveyState("PSS", false))
   const [isSavingSurvey, setIsSavingSurvey] = useState(false)
-  const [surveyErrorMessage, setsurveyErrorMessage] = useState<string | null>(null)
+  const [surveyErrorMessage, setSurveyErrorMessage] = useState<string | null>(null)
   const [surveySave, setSurveySave]=useState(false)
+  const [isSurveyStateLoading, setIsSurveyStateLoading] = useState(true)
   const surveyEnter = !gad.isDone || !phq.isDone || !pss.isDone
+  const shouldShowSurvey = Boolean(user?.id) && !isSurveyStateLoading && !surveySave && surveyEnter
+
+  useEffect(() => {
+    if (!user?.id) {
+      setGad(createSurveyState("GAD", true))
+      setPhq(createSurveyState("PHQ", true))
+      setPss(createSurveyState("PSS", true))
+      setSurveySave(true)
+      setIsSurveyStateLoading(false)
+      return
+    }
+
+    setIsSurveyStateLoading(true)
+    try {
+      const metadata = (user.user_metadata ?? {}) as {
+        survey_completed?: boolean
+      }
+      const completed = typeof metadata.survey_completed === "boolean" ? metadata.survey_completed : true
+      setGad(createSurveyState("GAD", completed))
+      setPhq(createSurveyState("PHQ", completed))
+      setPss(createSurveyState("PSS", completed))
+      setSurveySave(completed)
+    } catch {
+      setGad(createSurveyState("GAD", false))
+      setPhq(createSurveyState("PHQ", false))
+      setPss(createSurveyState("PSS", false))
+      setSurveySave(false)
+    } finally {
+      setIsSurveyStateLoading(false)
+    }
+  }, [user])
+
+  const handleSurveySave = async () => {
+    if (!user?.id) return
+
+    setIsSavingSurvey(true)
+    setSurveyErrorMessage(null)
+
+    try {
+      const supabase = getSupabaseClient()
+      const { error } = await supabase.auth.updateUser({
+        data: {
+          survey_completed: true,
+        },
+      })
+
+      if (error) {
+        throw error
+      }
+
+      setSurveySave(true)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "설문 완료 저장 중 오류가 발생했습니다."
+      setSurveyErrorMessage(message)
+      throw error
+    } finally {
+      setIsSavingSurvey(false)
+    }
+  }
 
   useEffect(() => {
     const loadDashboardData = async () => {
@@ -577,7 +649,7 @@ export function MoodPickDashboard() {
             }
           })
           .sort((a, b) => a.timestamp - b.timestamp)
-          .map(({ timestamp, ...record }) => record)
+          .map(({ date, score, label }) => ({ date, score, label }))
 
         setEmotionData(emotionChartData)
         setRecentEmotionRecords(validEmotionRecords.slice(0, 5))
@@ -1353,7 +1425,7 @@ export function MoodPickDashboard() {
     )
   }
 
-  if (!surveySave && surveyEnter) {
+  if (shouldShowSurvey) {
     return (
       <SurveyScreen
         gad={gad}
@@ -1362,10 +1434,9 @@ export function MoodPickDashboard() {
         setPhq={setPhq}
         pss={pss}
         setPss={setPss}
-        onSave={() => {}}
+        onComplete={handleSurveySave}
         isSaving={isSavingSurvey}
         errorMessage={surveyErrorMessage}
-        setSurveySave={setSurveySave}
       />
     )
   }
@@ -1696,6 +1767,7 @@ function HomeView({
           <div className="flex gap-6">
             <div className="w-48 h-32 rounded-xl bg-muted flex items-center justify-center overflow-hidden shrink-0">
               {homeThumbUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img src={homeThumbUrl} alt="" className="w-full h-full object-cover" />
               ) : (
                 <div className="text-center">
@@ -2296,6 +2368,7 @@ const CounselChatBubble = memo(function CounselChatBubble({ message }: { message
           <div className="mt-3 p-3 rounded-xl bg-background/80 border">
             <div className="flex items-center gap-3">
               {message.recommendedContent.thumbnail && (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={message.recommendedContent.thumbnail}
                   alt={message.recommendedContent.title ?? ""}
@@ -2963,7 +3036,7 @@ function LoginScreen({
                     className="absolute inset-y-0 right-0 flex items-center justify-center w-12 text-muted-foreground hover:text-foreground"
                     aria-label={showLoginPassword ? "비밀번호 숨기기" : "비밀번호 보기"}
                   >
-                    {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showLoginPassword ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
@@ -2988,7 +3061,7 @@ function LoginScreen({
                       className="absolute inset-y-0 right-0 flex items-center justify-center w-12 text-muted-foreground hover:text-foreground"
                       aria-label={showConfirmPassword ? "비밀번호 숨기기" : "비밀번호 보기"}
                     >
-                      {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      {showConfirmPassword ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                     </button>
                   </div>
                   {confirmPassword && password !== confirmPassword && (
@@ -3153,7 +3226,7 @@ function OnboardingScreen({
             </div>
 
             {/* Question 1 */}
-            <div className="mb-8">
+            <div className="mb-6 flex-1">
               <h3 className="text-base font-semibold text-foreground mb-3">
                 요즘 가장 큰 고민이나 스트레스는 무엇인가요?
               </h3>
@@ -3219,7 +3292,6 @@ function OnboardingScreen({
             >
               나중에 설정할게요
             </button>
-
             {errorMessage && <p className="mt-3 text-center text-xs text-destructive">{errorMessage}</p>}
           </CardContent>
         </Card>
@@ -3235,10 +3307,9 @@ function SurveyScreen({
   setPhq,
   pss,
   setPss,
-  onSave,
+  onComplete,
   isSaving,
   errorMessage,
-  setSurveySave
 }: {
   gad: SurveyState;
   setGad: React.Dispatch<React.SetStateAction<SurveyState>>;
@@ -3246,192 +3317,285 @@ function SurveyScreen({
   setPhq: React.Dispatch<React.SetStateAction<SurveyState>>;
   pss: SurveyState;
   setPss: React.Dispatch<React.SetStateAction<SurveyState>>;
-  onSave: (submit: boolean) => void;
+  onComplete: () => Promise<void>;
   isSaving: boolean;
   errorMessage: string | null;
-  setSurveySave: (value: boolean)=>void
-}){
-  
+}) {
   const surveyConfigs: Record<SurveyType, SurveyConfig> = {
-  GAD: {
-    title: "GAD-7",
-    description: "지난 2주 동안 당신은 다음의 문제들로 인해서 얼마나 자주 방해를 받았습니까?",
-    questions: [
-      "초조하거나 불안하거나 조마조마하게 느낀다.",
-      "걱정하는 것을 멈추거나 조절할 수가 없다.",
-      "여러 가지 것들에 대해 걱정을 너무 많이한다.",
-      "편하게 있기가 어렵다.",
-      "너무 안절부절 못해서 가만히 있기가 힘들다.",
-      "쉽게 짜증이 나거나 쉽게 성을 내게 된다.",
-      "마치 끔찍한 일이 생길 것처럼 두렵게 느껴진다.",
-    ],
-    scoreDescription: "전혀 아니다(0점), 몇일 동안(1점), 2주 중 절반 이상(2점), 거의 매일(3점), 매우 자주(4점)",
-    scoreOptions: [0, 1, 2, 3, 4],
-  },
-
-  PHQ: {
-    title: "PHQ-9",
-    description: "아래의 문항을 잘 읽으신 후, 지난 2주 동안 자신을 가장 잘 설명하는 칸에 체크 해 주세요.",
-    questions: [
-      "기분이 가라앉거나, 우울하거나, 희망이 없다고 느꼈다.",
-      "평소 하던 일에 대한 흥미가 없어지거나 즐거움을 느끼지 못했다.",
-      "잠들기가 어렵거나 자꾸 깼다/혹은 너무 많이 잤다.",
-      "평소보다 식욕이 줄었다/혹은 평소보다 많이 먹었다.",
-      "다른 사람들이 눈치 챌 정도로 평소보다 말과 행동이 느려졌다 / 혹은 너무 안절부절 못해서 가만히 앉아있을 수 없었다.",
-      "피곤하고 기운이 없었다.",
-      "내가 잘 못했거나, 실패했다는 생각이 들었다 / 혹은 자신과 가족을 실망시켰다고 생각했다.",
-      "신문을 읽거나 TV를 보는 것과 같은 일상적인 일에도 집중할 수가 없었다.",
-      "차라리 죽는 것이 더 낫겠다고 생각했다 / 혹은 자해할 생각을 했다.",
-    ],
-    scoreDescription: "전혀 아니다(0점), 여러 날 동안(1점), 일주일 이상(2점), 거의 매일(3점)",
-    scoreOptions: [0, 1, 2, 3],
-  },
-
-  PSS: {
-    title: "PSS",
-    description: "아래의 문항을 잘 읽으신 후, 지난 1개월 동안 자신의 상태를 가장 잘 나타내는 문항을 선택하여 주십시오.",
-    questions: [
-      "예상치 못했던 일 때문에 당황했던 적이 얼마나 있었습니까?",
-      "인생에서 중요한 일들을 조절할 수 없다는 느낌을 얼마나 경험하였습니까?",
-      "신경이 예민해지고 스트레스를 받고 있다는 느낌을 얼마나 경험하였습니까?",
-      "당신의 개인적 문제들을 다루는데 있어서 얼마나 자주 자신감을 느끼셨습니까?",
-      "일상의 일들이 당신의 생각대로 진행되고 있다는 느낌을 얼마나 경험하였습니까?",
-      "당신이 꼭 해야 하는 일을 처리할 수 없다고 생각한 적이 얼마나 있었습니까?",
-      "일상생활의 짜증을 얼마나 자주 잘 다스릴 수 있었습니까?",
-      "최상의 컨디션이라고 얼마나 자주 느끼셨습니까?",
-      "당신이 통제할 수 없는 일 때문에 화가 난 경험이 얼마나 있었습니까?",
-      "어려운 일들이 너무 많이 쌓여서 극복하지 못할 것 같은 느낌을 얼마나 자주 경험하셨습니까?",
-    ],
-    scoreDescription: "전혀 없었다(0점), 거의 없었다(1점), 때때로 있었다(2점), 자주 있었다(3점), 매우 자주 있었다(4점)",
-    scoreOptions: [0, 1, 2, 3, 4],
-  },
-};
-
-  const [surveyType, setSurveyType] = useState<SurveyType>("GAD");
-  const currentConfig = surveyConfigs[surveyType];
-  const currentSurvey = surveyType === "GAD" ? gad : surveyType === "PHQ" ? phq : pss;
-  const currentSetSurvey =surveyType === "GAD" ? setGad : surveyType === "PHQ" ? setPhq : setPss;
-  const [surveyIndex, setSurveyIndex] = useState(0)
-  const completedCount = currentSurvey.scores.filter((score) => score !== -1).length;
-  const isCompleted = currentSurvey.scores.every((score) => score !== -1);
-  const isSubmitted = currentSurvey.isDone;
-  const handleSaveSurvey=(submit: boolean)=>{
-    if (submit) {
-    currentSetSurvey((prev) => ({...prev, isDone: true,}));
-    }
-    if(!submit || (gad.isDone && phq.isDone && pss.isDone)){
-      setSurveySave(true)
-    }
-    onSave(submit);
+    GAD: {
+      title: "GAD-7",
+      description: "지난 2주 동안 당신은 다음의 문제들로 인해서 얼마나 자주 방해를 받았습니까?",
+      questions: [
+        "초조하거나 불안하거나 조마조마하게 느낀다.",
+        "걱정하는 것을 멈추거나 조절할 수가 없다.",
+        "여러 가지 것들에 대해 걱정을 너무 많이한다.",
+        "편하게 있기가 어렵다.",
+        "너무 안절부절 못해서 가만히 있기가 힘들다.",
+        "쉽게 짜증이 나거나 쉽게 성을 내게 된다.",
+        "마치 끔찍한 일이 생길 것처럼 두렵게 느껴진다.",
+      ],
+      scoreDescription: "전혀 아니다(0점), 몇일 동안(1점), 2주 중 절반 이상(2점), 거의 매일(3점), 매우 자주(4점)",
+      scoreOptions: [0, 1, 2, 3, 4],
+    },
+    PHQ: {
+      title: "PHQ-9",
+      description: "아래의 문항을 잘 읽으신 후, 지난 2주 동안 자신을 가장 잘 설명하는 칸에 체크 해 주세요.",
+      questions: [
+        "기분이 가라앉거나, 우울하거나, 희망이 없다고 느꼈다.",
+        "평소 하던 일에 대한 흥미가 없어지거나 즐거움을 느끼지 못했다.",
+        "잠들기가 어렵거나 자꾸 깼다/혹은 너무 많이 잤다.",
+        "평소보다 식욕이 줄었다/혹은 평소보다 많이 먹었다.",
+        "다른 사람들이 눈치 챌 정도로 평소보다 말과 행동이 느려졌다 / 혹은 너무 안절부절 못해서 가만히 앉아있을 수 없었다.",
+        "피곤하고 기운이 없었다.",
+        "내가 잘 못했거나, 실패했다는 생각이 들었다 / 혹은 자신과 가족을 실망시켰다고 생각했다.",
+        "신문을 읽거나 TV를 보는 것과 같은 일상적인 일에도 집중할 수가 없었다.",
+        "차라리 죽는 것이 더 낫겠다고 생각했다 / 혹은 자해할 생각을 했다.",
+      ],
+      scoreDescription: "전혀 아니다(0점), 여러 날 동안(1점), 일주일 이상(2점), 거의 매일(3점)",
+      scoreOptions: [0, 1, 2, 3],
+    },
+    PSS: {
+      title: "PSS",
+      description: "아래의 문항을 잘 읽으신 후, 지난 1개월 동안 자신의 상태를 가장 잘 나타내는 문항을 선택하여 주십시오.",
+      questions: [
+        "예상치 못했던 일 때문에 당황했던 적이 얼마나 있었습니까?",
+        "인생에서 중요한 일들을 조절할 수 없다는 느낌을 얼마나 경험하였습니까?",
+        "신경이 예민해지고 스트레스를 받고 있다는 느낌을 얼마나 경험하였습니까?",
+        "당신의 개인적 문제들을 다루는데 있어서 얼마나 자주 자신감을 느끼셨습니까?",
+        "일상의 일들이 당신의 생각대로 진행되고 있다는 느낌을 얼마나 경험하였습니까?",
+        "당신이 꼭 해야 하는 일을 처리할 수 없다고 생각한 적이 얼마나 있었습니까?",
+        "일상생활의 짜증을 얼마나 자주 잘 다스릴 수 있었습니까?",
+        "최상의 컨디션이라고 얼마나 자주 느끼셨습니까?",
+        "당신이 통제할 수 없는 일 때문에 화가 난 경험이 얼마나 있었습니까?",
+        "어려운 일들이 너무 많이 쌓여서 극복하지 못할 것 같은 느낌을 얼마나 자주 경험하셨습니까?",
+      ],
+      scoreDescription: "전혀 없었다(0점), 거의 없었다(1점), 때때로 있었다(2점), 자주 있었다(3점), 매우 자주 있었다(4점)",
+      scoreOptions: [0, 1, 2, 3, 4],
+    },
   }
 
-  return(
+  const surveyOrder: SurveyType[] = ["GAD", "PHQ", "PSS"]
+  const [surveyType, setSurveyType] = useState<SurveyType>("GAD")
+  const [surveyIndex, setSurveyIndex] = useState(0)
+
+  const surveyStateByType: Record<SurveyType, SurveyState> = {
+    GAD: gad,
+    PHQ: phq,
+    PSS: pss,
+  }
+  const surveySetterByType: Record<SurveyType, React.Dispatch<React.SetStateAction<SurveyState>>> = {
+    GAD: setGad,
+    PHQ: setPhq,
+    PSS: setPss,
+  }
+
+  const currentConfig = surveyConfigs[surveyType]
+  const currentSurvey = surveyStateByType[surveyType]
+  const currentSetSurvey = surveySetterByType[surveyType]
+  const completedCount = currentSurvey.scores.filter((score) => score !== -1).length
+  const isCompleted = currentSurvey.scores.every((score) => score !== -1)
+  const isSubmitted = currentSurvey.isDone
+
+  const moveToSurvey = (type: SurveyType) => {
+    setSurveyType(type)
+    setSurveyIndex(0)
+  }
+
+  const moveToNextQuestion = () => {
+    const nextUnansweredIndex = currentSurvey.scores.findIndex(
+      (score, index) => index > surveyIndex && score === -1
+    )
+    if (nextUnansweredIndex !== -1) {
+      setSurveyIndex(nextUnansweredIndex)
+      return
+    }
+
+    if (surveyIndex < currentConfig.questions.length - 1) {
+      setSurveyIndex((prev) => prev + 1)
+      return
+    }
+
+    const firstUnansweredIndex = currentSurvey.scores.findIndex((score) => score === -1)
+    if (firstUnansweredIndex !== -1) {
+      setSurveyIndex(firstUnansweredIndex)
+    }
+  }
+
+  const moveToNextSurvey = (doneStates: Record<SurveyType, boolean>) => {
+    const currentIndex = surveyOrder.indexOf(surveyType)
+    const remainingInOrder = [
+      ...surveyOrder.slice(currentIndex + 1),
+      ...surveyOrder.slice(0, currentIndex),
+    ]
+    const nextType = remainingInOrder.find((type) => !doneStates[type])
+
+    if (nextType) {
+      moveToSurvey(nextType)
+    }
+  }
+
+  const handleSelectScore = (score: number) => {
+    if (isSubmitted) return
+
+    currentSetSurvey((prev) => ({
+      ...prev,
+      scores: prev.scores.map((item, index) => (index === surveyIndex ? score : item)),
+    }))
+
+    if (surveyIndex < currentConfig.questions.length - 1) {
+      window.setTimeout(() => {
+        moveToNextQuestion()
+      }, 120)
+    }
+  }
+
+  const handleSubmitSurvey = async () => {
+    if (isSaving || isSubmitted || !isCompleted) return
+
+    currentSetSurvey((prev) => ({ ...prev, isDone: true }))
+
+    const nextDoneStates: Record<SurveyType, boolean> = {
+      GAD: surveyType === "GAD" ? true : gad.isDone,
+      PHQ: surveyType === "PHQ" ? true : phq.isDone,
+      PSS: surveyType === "PSS" ? true : pss.isDone,
+    }
+
+    const allCompleted = surveyOrder.every((type) => nextDoneStates[type])
+    if (allCompleted) {
+      await onComplete()
+      return
+    }
+
+    moveToNextSurvey(nextDoneStates)
+  }
+
+  const nextButtonLabel = isSubmitted
+    ? "제출 완료"
+    : !isCompleted
+      ? "다음"
+      : isSaving
+        ? "저장 중..."
+        : "제출하기"
+
+  return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-lg">
-        <Card className="border-0 shadow-2xl">
-          <CardContent className="p-8">
-            {/* Logo */}
-            <div className="text-center mb-6">
-              <div className="w-42 h-14 rounded-2xl bg-primary flex items-center overflow-hidden justify-evenly mx-auto mb-4">
-                <button className="flex-1 h-full flex items-center justify-center transition-colors hover:bg-primary-foreground/10 cursor-pointer"
-                key="GAD" onClick={() => {setSurveyType("GAD"); setSurveyIndex(0); }}>
-                  <Heart className={`w-7 h-7 ${surveyType === "GAD" ? "text-black" : "text-primary-foreground"}`} />
-                </button>
-                <button className="flex-1 h-full flex items-center justify-center transition-colors hover:bg-primary-foreground/10 cursor-pointer"
-                key="PHQ" onClick={() => {setSurveyType("PHQ"); setSurveyIndex(0); }}>
-                  <Heart className={`w-7 h-7 ${surveyType === "PHQ" ? "text-black" : "text-primary-foreground"}`} />
-                </button>
-                <button className="flex-1 h-full flex items-center justify-center transition-colors hover:bg-primary-foreground/10 cursor-pointer"
-                key="PSS" onClick={() => {setSurveyType("PSS"); setSurveyIndex(0); }}>
-                  <Heart className={`w-7 h-7 ${surveyType === "PSS" ? "text-black" : "text-primary-foreground"}`} />
-                </button>
+      <div className="w-full max-w-2xl">
+        <Card className="min-h-[680px] border-0 shadow-2xl">
+          <CardContent className="flex min-h-[680px] flex-col p-6 sm:p-8">
+            <div className="mb-5 text-center">
+              <div className="mx-auto mb-4 flex h-14 w-full max-w-sm items-center justify-evenly overflow-hidden rounded-2xl bg-primary">
+                {surveyOrder.map((type) => {
+                  const isActive = surveyType === type
+                  const isDoneForType = surveyStateByType[type].isDone
+
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => moveToSurvey(type)}
+                      className={`flex h-full flex-1 items-center justify-center transition-colors hover:bg-primary-foreground/10 cursor-pointer ${
+                        isActive ? "bg-primary-foreground/20" : ""
+                      }`}
+                      aria-label={`${type} 설문으로 이동`}
+                    >
+                      <Heart
+                        className={`h-7 w-7 ${
+                          isActive
+                            ? "text-black"
+                            : isDoneForType
+                              ? "text-emerald-200"
+                              : "text-primary-foreground"
+                        }`}
+                      />
+                    </button>
+                  )
+                })}
               </div>
-              <h1 className="text-2xl font-bold text-foreground mb-2">
-                {currentConfig.title}
-              </h1>
-              <p className="text-muted-foreground text-sm">
-                {currentConfig.description}
-              </p>
+              <h1 className="mb-2 text-2xl font-bold text-foreground">{currentConfig.title}</h1>
+              <p className="text-sm leading-relaxed text-muted-foreground">{currentConfig.description}</p>
             </div>
 
-            {/* Question */}
-            <div className="mb-8">
-              <h3 className="text-base font-semibold text-foreground mb-3">
-                {surveyIndex + 1}. {currentConfig.questions[surveyIndex]}
-              </h3>
-              <p className="text-xs text-muted-foreground mb-4">
-                {currentConfig.scoreDescription}
-              </p>
-              <div className="flex flex-col gap-2">
+            <div className="mb-8 flex-1">
+              <div className="min-h-[132px]">
+                <h3 className="mb-3 text-base font-semibold leading-relaxed text-foreground">
+                  {surveyIndex + 1}. {currentConfig.questions[surveyIndex]}
+                </h3>
+                <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
+                  {currentConfig.scoreDescription}
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3">
                 <div className="grid grid-cols-5 gap-2">
                   {currentConfig.scoreOptions.map((score) => (
-                    <label key={score}
-                    className="flex items-center justify-center gap-2 rounded-xl border p-3 cursor-pointer
-                    transition hover: hover:-translate-y-0.5 hover:shadow-md">
+                    <label
+                      key={score}
+                      className={`flex h-14 items-center justify-center rounded-xl border text-sm font-medium transition hover:-translate-y-0.5 hover:shadow-md ${
+                        currentSurvey.scores[surveyIndex] === score
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "bg-background"
+                      } ${isSubmitted ? "cursor-default opacity-70" : "cursor-pointer"}`}
+                    >
                       <input
                         type="radio"
                         name={`survey-${surveyType}-${surveyIndex}`}
                         checked={currentSurvey.scores[surveyIndex] === score}
                         disabled={isSubmitted}
-                        onChange={() => {
-                          currentSetSurvey((prev) => ({
-                            ...prev,
-                            scores: prev.scores.map((item, index) =>
-                            index === surveyIndex ? score : item),}));
-                        }}
+                        className="sr-only"
+                        onChange={() => handleSelectScore(score)}
                       />
-                      {score}점
+                      <span>{score}점</span>
                     </label>
                   ))}
                 </div>
-                <div><progress className="w-full" value={completedCount} max={currentConfig.questions.length}/></div>
-                <div className="grid grid-cols-10 gap-2">
-                {currentConfig.questions.map((_, index) => (
-                  <button key={index} className={`w-9 h-9 cursor-pointer ${currentSurvey.scores[index] !== -1 ? "bg-blue-500" : "bg-gray-200"}`} onClick={() => {setSurveyIndex(index);}}>
-                    {index + 1}
-                  </button>
+
+                <div>
+                  <progress className="h-2 w-full" value={completedCount} max={currentConfig.questions.length} />
+                </div>
+
+                <div className="grid grid-cols-5 gap-2 sm:grid-cols-10">
+                  {currentConfig.questions.map((_, index) => (
+                    <button
+                      key={index}
+                      type="button"
+                      onClick={() => setSurveyIndex(index)}
+                      className={`h-9 rounded-lg text-sm font-medium cursor-pointer ${
+                        currentSurvey.scores[index] !== -1 ? "bg-blue-500 text-white" : "bg-gray-200 text-gray-700"
+                      } ${surveyIndex === index ? "ring-2 ring-primary ring-offset-2" : ""}`}
+                    >
+                      {index + 1}
+                    </button>
                   ))}
                 </div>
               </div>
             </div>
 
-            {/* Next and Submit Button */}
-            <Button
-              onClick={() => {
-                if(isSubmitted)
-                  return
-                if(isCompleted){
-                  handleSaveSurvey(true);
-                  return
-                }
-                const nextUnansweredIndex = currentSurvey.scores.findIndex(
-                  (score, index) => index > surveyIndex && score === -1
-                );
-                if (nextUnansweredIndex !== -1) {
-                  setSurveyIndex(nextUnansweredIndex);
-                  return;
-                }
-                const firstUnansweredIndex = currentSurvey.scores.findIndex(
-                  (score) => score === -1
-                );
-                if (firstUnansweredIndex !== -1) {
-                  setSurveyIndex(firstUnansweredIndex);
-                }
-              }}
-              className="w-full h-12 rounded-xl text-base font-medium cursor-pointer"
-              disabled={isSaving || isSubmitted}
-            >
-              {isSubmitted ? "제출 완료" : !isCompleted ? "다음" : isSaving ? "저장 중..." : "제출하기"}
-            </Button>
-
-            {/* Save Option */}
-            <button
-              onClick={() => handleSaveSurvey(false)}
-              disabled={isSaving}
-              className="w-full mt-4 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-            >
-              임시저장
-            </button>
+            <div className="grid grid-cols-2 gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setSurveyIndex((prev) => Math.max(prev - 1, 0))}
+                className="h-12 rounded-xl text-base font-medium cursor-pointer"
+                disabled={surveyIndex === 0 || isSaving}
+              >
+                이전
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  if (isSubmitted) return
+                  if (isCompleted) {
+                    void handleSubmitSurvey()
+                    return
+                  }
+                  moveToNextQuestion()
+                }}
+                className="h-12 rounded-xl text-base font-medium cursor-pointer"
+                disabled={isSaving || isSubmitted}
+              >
+                {nextButtonLabel}
+              </Button>
+            </div>
 
             {errorMessage && <p className="mt-3 text-center text-xs text-destructive">{errorMessage}</p>}
           </CardContent>

@@ -151,6 +151,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           birth_year: birthYear ?? null,
           onboarding_completed: false,
           onboarding_profile: null,
+          survey_completed: false,
         },
       },
     })
