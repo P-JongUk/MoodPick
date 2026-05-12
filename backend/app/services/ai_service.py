@@ -34,6 +34,7 @@ async def get_ai_response(
         )
         return {
             "message": state.response,
+            "is_crisis": state.is_crisis,
             "emotion": state.emotion_score,
             "recommended_content": state.recommended_content,
             "fallback": False,
@@ -47,6 +48,7 @@ async def get_ai_response(
         )
         return {
             "message": "지금 감정을 한 문장으로 표현해 보면 원인을 더 명확히 찾는 데 도움이 돼요.",
+            "is_crisis": False,
             "emotion": {},
             "recommended_content": None,
             "fallback": True,
