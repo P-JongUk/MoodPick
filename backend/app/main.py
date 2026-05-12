@@ -17,9 +17,7 @@ from app.routers.survey import router as survey_router
 from app.routers.content import router as content_router
 from app.routers.user import router as user_router
 from app.routers.rag import router as rag_router
-from app.routers.reminder import router as reminder_router
 from app.config import get_settings
-from app.services.reminder_scheduler import reminder_scheduler_loop
 from ai.clients import close_clients
 
 
@@ -30,7 +28,9 @@ async def lifespan(app: FastAPI):
     reminder_stop_event: asyncio.Event | None = None
     reminder_task: asyncio.Task | None = None
 
-    if settings.reminder_scheduler_enabled:
+    if settings.reminder_feature_enabled and settings.reminder_scheduler_enabled:
+        from app.services.reminder_scheduler import reminder_scheduler_loop
+
         reminder_stop_event = asyncio.Event()
         reminder_task = asyncio.create_task(reminder_scheduler_loop(reminder_stop_event))
 
@@ -60,7 +60,11 @@ app.include_router(survey_router)
 app.include_router(content_router)
 app.include_router(user_router)
 app.include_router(rag_router)
-app.include_router(reminder_router)
+
+if get_settings().reminder_feature_enabled:
+    from app.routers.reminder import router as reminder_router
+
+    app.include_router(reminder_router)
 
 
 @app.get("/")

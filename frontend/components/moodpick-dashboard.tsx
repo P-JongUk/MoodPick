@@ -91,6 +91,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
+const REMINDER_FEATURE_ENABLED = process.env.NEXT_PUBLIC_REMINDER_ENABLED === "true"
+
 type TabType = "home" | "counseling" | "dashboard" | "mypage"
 
 type SurveyType = "GAD" | "PHQ" | "PSS";
@@ -656,6 +658,14 @@ export function MoodPickDashboard() {
 
   useEffect(() => {
     const loadReminderPreference = async () => {
+      if (!REMINDER_FEATURE_ENABLED) {
+        setDailyReminderEnabled(false)
+        setDailyReminderTime("22:00")
+        setDailyReminderTimezone("Asia/Seoul")
+        setReminderSaveMessage(null)
+        return
+      }
+
       if (!user?.id) {
         setDailyReminderEnabled(true)
         setDailyReminderTime("22:00")
@@ -1221,6 +1231,7 @@ export function MoodPickDashboard() {
   }
 
   const handleSaveReminderPreference = async () => {
+    if (!REMINDER_FEATURE_ENABLED) return
     if (!user?.id) return
 
     setReminderSaveMessage(null)
