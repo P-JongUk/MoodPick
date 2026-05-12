@@ -439,6 +439,53 @@ export async function getInitialCounselingMessage(sessionId: string): Promise<an
   return response.json()
 }
 
+export interface CounselingHistoryMessageRow {
+  id?: string
+  role?: string
+  content?: string
+  created_at?: string
+}
+
+export interface CounselingHistoryResponse {
+  session_id: string
+  messages: CounselingHistoryMessageRow[]
+}
+
+export async function getCounselingHistory(
+  userId: string,
+  sessionId: string
+): Promise<CounselingHistoryResponse> {
+  const params = new URLSearchParams({ user_id: userId })
+  const response = await fetch(
+    `${API_BASE_URL}/counseling/history/${sessionId}?${params.toString()}`,
+    { method: "GET" }
+  )
+
+  if (!response.ok) {
+    throw new Error(`Get counseling history failed: ${response.statusText}`)
+  }
+
+  return response.json()
+}
+
+export async function cleanupStaleSessionsForUser(userId: string): Promise<{
+  status: string
+  closed_session_ids: string[]
+  closed_count: number
+}> {
+  const response = await fetch(`${API_BASE_URL}/session/cleanup-stale`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Cleanup stale sessions failed: ${response.statusText}`)
+  }
+
+  return response.json()
+}
+
 // ============ Reminder API ============
 
 export interface ReminderPreferencePayload {
