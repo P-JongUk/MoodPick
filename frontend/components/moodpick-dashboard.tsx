@@ -3615,11 +3615,6 @@ function LoginScreen({
               </>
             )}
 
-            {isEmailOnlyMode && (
-              <p className="text-xs text-center text-muted-foreground mb-2">
-                현재는 이메일 로그인/회원가입만 제공됩니다. 소셜 로그인은 추후 추가됩니다.
-              </p>
-            )}
 
             {/* Sign Up Link */}
             <p className="text-center text-sm text-muted-foreground mt-6">
@@ -4120,7 +4115,6 @@ function Introduce({introduceCheck}: {introduceCheck: () => void}){
             <div className="rounded-xl border p-3">
               <ul className="list-disc pl-5 text-lg">
                 <li>무드픽은 사용자의 실시간 감정 맥락을 파악해 정서적 개선 및 개인화 콘텐츠를 제공하는 AI 에이전트 시스템입니다.</li>
-                <li>무드픽은 신뢰도 높은 심리 상담 기능을 제공합니다.</li>
                 {/* 띄든가 말든가 */}
                 <li>무드픽은 대화 전에 더 나은 추천을 위해 온보딩, 문진, 사전질문을 받습니다.</li>
                 <li>더 나은 추천을 위해 사후질문에 꼭 답을 해주시기 바랍니다.</li>
