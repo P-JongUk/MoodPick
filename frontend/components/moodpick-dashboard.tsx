@@ -92,6 +92,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 const REMINDER_FEATURE_ENABLED = process.env.NEXT_PUBLIC_REMINDER_ENABLED === "true"
 
@@ -461,6 +469,7 @@ export function MoodPickDashboard() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
   const [syncWarningMessage, setSyncWarningMessage] = useState<string | null>(null)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
+  const [crisisModalText, setCrisisModalText] = useState<string | null>(null)
   const [lastSurveyDelta, setLastSurveyDelta] = useState<SurveyDeltaSummary | null>(null)
   const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0)
   const [userStats, setUserStats] = useState<UserStats | null>(null)
@@ -1436,6 +1445,12 @@ export function MoodPickDashboard() {
           currentSessionId
         )
 
+        if (response?.is_crisis) {
+          setCrisisModalText(response.message ?? "")
+          setSyncWarningMessage(null)
+          return
+        }
+
         const recommended = response?.recommended_content ?? null
         const aiResponse: Message = {
           id: Date.now() + 1,
@@ -2016,6 +2031,36 @@ export function MoodPickDashboard() {
           />
         </div>
       )}
+
+      <AlertDialog
+        open={crisisModalText !== null}
+        onOpenChange={(open) => {
+          if (!open) setCrisisModalText(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>잠시 멈추고 이 메시지를 읽어 주세요</AlertDialogTitle>
+          </AlertDialogHeader>
+          <div className="py-2">
+            <ChatMarkdown source={crisisModalText ?? ""} />
+          </div>
+          <div className="aspect-video w-full overflow-hidden rounded-lg">
+            <iframe
+              src="https://www.youtube-nocookie.com/embed/CPYLnJFrqlw?autoplay=1&mute=1&playsinline=1"
+              title="자살예방 안내 영상"
+              allow="autoplay; accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+              className="h-full w-full"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setCrisisModalText(null)}>
+              알겠어요
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={dayDetailOpen} onOpenChange={setDayDetailOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
