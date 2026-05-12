@@ -17,7 +17,7 @@ from app.routers.survey import router as survey_router
 from app.routers.content import router as content_router
 from app.routers.user import router as user_router
 from app.routers.rag import router as rag_router
-from app.config import get_settings
+from app.config import get_cors_origins, get_settings
 from ai.clients import close_clients
 
 
@@ -45,9 +45,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="MoodPick Backend", version="0.1.0", lifespan=lifespan)
 
+settings = get_settings()
+allowed_origins = get_cors_origins()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins or ["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -61,7 +64,7 @@ app.include_router(content_router)
 app.include_router(user_router)
 app.include_router(rag_router)
 
-if get_settings().reminder_feature_enabled:
+if settings.reminder_feature_enabled:
     from app.routers.reminder import router as reminder_router
 
     app.include_router(reminder_router)

@@ -13,7 +13,9 @@ class Settings(BaseSettings):
     youtube_api_key: str | None = None
     server_host: str = "0.0.0.0"
     server_port: int = 8000
-    debug: bool = True
+    environment: str = "development"
+    debug: bool = False
+    cors_origins: str = "http://localhost:3000,http://localhost:5173,http://localhost:8000"
     reminder_feature_enabled: bool = False
     reminder_scheduler_enabled: bool = False
     reminder_scheduler_interval_seconds: int = 300
@@ -28,3 +30,13 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def get_cors_origins() -> list[str]:
+    settings = get_settings()
+    raw = settings.cors_origins.strip()
+    if not raw:
+        return []
+    if raw == "*":
+        return ["*"]
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
