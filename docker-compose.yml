@@ -46,7 +46,8 @@ services:
       - "3000:3000"
     depends_on:
       - backend
-    command: pnpm exec next dev --webpack --hostname 0.0.0.0
+    # Named volume can keep stale node_modules; align with package-lock on each start.
+    command: sh -c "npm ci && exec npx next dev --webpack --hostname 0.0.0.0"
 
 volumes:
   db-data:

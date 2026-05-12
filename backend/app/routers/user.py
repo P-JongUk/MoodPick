@@ -156,7 +156,7 @@ async def get_user_sessions(
         if result.data:
             return {
                 "user_id": user_id,
-                "sessions": result.data
+                "sessions": result.data,
             }
         return {
             "user_id": user_id,

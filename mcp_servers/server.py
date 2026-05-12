@@ -48,6 +48,26 @@ if _env_path.exists():
 
 mcp = FastMCP("moodpick-content")
 
+_YT_VIDEOS_LIST_CHUNK = 50
+
+
+async def _youtube_embeddable_ids(youtube, video_ids: list[str]) -> set[str]:
+    """videos.list(status)로 타 사이트 임베드가 허용된 영상 ID만 반환한다."""
+    allowed: set[str] = set()
+    for i in range(0, len(video_ids), _YT_VIDEOS_LIST_CHUNK):
+        chunk = video_ids[i : i + _YT_VIDEOS_LIST_CHUNK]
+        req = youtube.videos().list(part="status", id=",".join(chunk))
+        resp = await asyncio.to_thread(req.execute)
+        for item in resp.get("items", []):
+            vid = item.get("id")
+            if not vid:
+                continue
+            status = item.get("status") or {}
+            if status.get("embeddable") is False:
+                continue
+            allowed.add(vid)
+    return allowed
+
 
 # ── YouTube ─────────────────────────────────────────────────────────────────
 
@@ -80,8 +100,8 @@ async def search_youtube(
 
     exclude = set(watched_ids or [])
 
-    # 쇼츠 필터 후 부족분을 흡수하려고 여유분 확보. 쇼츠 비율은 보통 20% 미만이므로 2배면 충분.
-    fetch_count = min(max_results * 2 + len(exclude), 50)
+    # duration/embeddable 필터 후에도 max_results를 채울 여지를 둔다.
+    fetch_count = min(50, max(25, max_results * 2 + len(exclude), max_results + len(exclude) + 20))
 
     youtube = build("youtube", "v3", developerKey=api_key)
     search_request = youtube.search().list(
@@ -118,14 +138,16 @@ async def search_youtube(
         }}]
 
     if allow_shorts:
+        embed_ok = await _youtube_embeddable_ids(youtube, [c["video_id"] for c in candidates])
+        results = [c for c in candidates if c["video_id"] in embed_ok][:max_results]
         return [
-            *candidates[:max_results],
+            *results,
             {"_perf": {
                 "search_list_s": round(t_search_list, 3),
-                "videos_list_s": None,  # skipped
+                "videos_list_s": None,  # duration check skipped
                 "post_s": 0.0,
                 "filtered": 0,
-                "kept": len(candidates[:max_results]),
+                "kept": len(results),
             }},
         ]
 
@@ -171,19 +193,20 @@ async def search_youtube(
             continue
         c["duration_seconds"] = dur
         results.append(c)
-        if len(results) >= max_results:
-            break
     t_post = time.perf_counter() - _t
+
+    embed_ok = await _youtube_embeddable_ids(youtube, [r["video_id"] for r in results])
+    embeddable_results = [r for r in results if r["video_id"] in embed_ok][:max_results]
 
     results.append({"_perf": {
         "search_list_s": round(t_search_list, 3),
         "videos_list_s": round(t_videos_list, 3) if t_videos_list is not None else None,
         "post_s": round(t_post, 3),
-        "filtered": filtered_out,
-        "kept": len([r for r in results if "video_id" in r]),
+        "filtered": filtered_out + (len(results) - len(embeddable_results)),
+        "kept": len(embeddable_results),
     }})
 
-    return results
+    return [*embeddable_results, results[-1]]
 
 
 # ── Podcast (RSS 큐레이션) ─────────────────────────────────────────────────
