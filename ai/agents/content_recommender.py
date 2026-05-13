@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 from fastmcp import Client as MCPClient
+from fastmcp.client.transports import PythonStdioTransport
 
 from ai.state import CounselingState
 from ai.utils import load_prompt
@@ -54,8 +55,24 @@ _MCP_SERVER_PATH = os.getenv("MCP_SERVER_PATH", _DEFAULT_MCP_SERVER_PATH)
 _MODEL = "gpt-4o-mini"
 
 
+def _mcp_client() -> MCPClient:
+    """Create an MCP client and explicitly pass runtime env to the server process.
+
+    Some deployment runtimes do not reliably expose all container env vars to
+    stdio child processes when a script path is used directly. Passing the env
+    here keeps secrets out of logs while making YOUTUBE_API_KEY visible to the
+    MCP server.
+    """
+    transport = PythonStdioTransport(
+        script_path=_MCP_SERVER_PATH,
+        env=dict(os.environ),
+        cwd=str(Path(_MCP_SERVER_PATH).resolve().parent.parent),
+    )
+    return MCPClient(transport)
+
+
 async def _recommend_podcast_via_mcp(emotion: str, intensity: float, watched_ids: list[str]) -> dict | None:
-    async with MCPClient(_MCP_SERVER_PATH) as mcp:
+    async with _mcp_client() as mcp:
         mcp_result = await mcp.call_tool(
             "recommend_podcast_episode",
             {
@@ -281,7 +298,7 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
     mcp_error = None
     _t = time.perf_counter()
     try:
-        async with MCPClient(_MCP_SERVER_PATH) as mcp:
+        async with _mcp_client() as mcp:
             mcp_result = await mcp.call_tool(
                 "search_youtube",
                 {
