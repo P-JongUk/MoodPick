@@ -21,6 +21,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastmcp import FastMCP
+from googleapiclient.errors import HttpError
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,7 @@ async def search_youtube(
 
     api_key = os.getenv("YOUTUBE_API_KEY")
     if not api_key:
+        logger.warning("search_youtube called without YOUTUBE_API_KEY query=%r", query)
         return [{"error": "YOUTUBE_API_KEY is not set"}]
 
     exclude = set(watched_ids or [])
@@ -113,7 +115,25 @@ async def search_youtube(
         safeSearch="strict",
     )
     _t = time.perf_counter()
-    search_response = await asyncio.to_thread(search_request.execute)
+    try:
+        search_response = await asyncio.to_thread(search_request.execute)
+    except HttpError as e:
+        status = getattr(getattr(e, "resp", None), "status", None)
+        reason = getattr(getattr(e, "resp", None), "reason", None)
+        logger.warning(
+            "YouTube search.list failed query=%r status=%s reason=%s",
+            query,
+            status,
+            reason,
+        )
+        return [{"error": f"youtube_search_failed status={status} reason={reason}"}]
+    except Exception as e:
+        logger.warning(
+            "YouTube search.list failed query=%r error_type=%s",
+            query,
+            type(e).__name__,
+        )
+        return [{"error": f"youtube_search_failed error_type={type(e).__name__}"}]
     t_search_list = time.perf_counter() - _t
 
     candidates: list[dict] = []
@@ -129,6 +149,7 @@ async def search_youtube(
         })
 
     if not candidates:
+        logger.warning("YouTube search returned no candidates query=%r", query)
         return [{"_perf": {
             "search_list_s": round(t_search_list, 3),
             "videos_list_s": None,
@@ -140,6 +161,13 @@ async def search_youtube(
     if allow_shorts:
         embed_ok = await _youtube_embeddable_ids(youtube, [c["video_id"] for c in candidates])
         results = [c for c in candidates if c["video_id"] in embed_ok][:max_results]
+        logger.info(
+            "YouTube search complete query=%r candidates=%s kept=%s allow_shorts=%s",
+            query,
+            len(candidates),
+            len(results),
+            allow_shorts,
+        )
         return [
             *results,
             {"_perf": {
@@ -164,6 +192,20 @@ async def search_youtube(
         _t = time.perf_counter()
         videos_response = await asyncio.to_thread(videos_request.execute)
         t_videos_list = time.perf_counter() - _t
+    except HttpError as e:
+        status = getattr(getattr(e, "resp", None), "status", None)
+        reason = getattr(getattr(e, "resp", None), "reason", None)
+        logger.warning("videos.list failed, falling back to unfiltered results: status=%s reason=%s", status, reason)
+        return [
+            *candidates[:max_results],
+            {"_perf": {
+                "search_list_s": round(t_search_list, 3),
+                "videos_list_s": f"failed status={status}",
+                "post_s": 0.0,
+                "filtered": 0,
+                "kept": len(candidates[:max_results]),
+            }},
+        ]
     except Exception as e:
         logger.warning("videos.list failed, falling back to unfiltered results: %s", type(e).__name__)
         return [
@@ -197,6 +239,14 @@ async def search_youtube(
 
     embed_ok = await _youtube_embeddable_ids(youtube, [r["video_id"] for r in results])
     embeddable_results = [r for r in results if r["video_id"] in embed_ok][:max_results]
+    logger.info(
+        "YouTube search complete query=%r candidates=%s duration_ok=%s embeddable_kept=%s allow_shorts=%s",
+        query,
+        len(candidates),
+        len(results),
+        len(embeddable_results),
+        allow_shorts,
+    )
 
     results.append({"_perf": {
         "search_list_s": round(t_search_list, 3),
