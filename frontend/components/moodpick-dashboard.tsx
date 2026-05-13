@@ -142,6 +142,7 @@ interface SurveyDeltaSummary {
 
 interface UserStats {
   total_sessions: number
+  weekly_record_days?: number
   total_content_watched: number
   total_feedback: number
   likes: number
@@ -793,7 +794,7 @@ export function MoodPickDashboard() {
         ] = await Promise.allSettled([
           getUserStats(user.id),
           getEmotionRecords(user.id, 30),
-          getEmotionSummary(user.id, 30),
+          getEmotionSummary(user.id, 7),
           getUserSessions(user.id, 10),
           getContentHistory(user.id, 20),
           getContentRecommendations(user.id, { limit: 10, media: mediaQuery }),
@@ -2231,7 +2232,7 @@ function HomeView({
       <div className="grid grid-cols-3 gap-4 mt-8">
         <Card className="border-0 bg-secondary/50">
           <CardContent className="p-6 text-center">
-            <p className="text-3xl font-bold text-primary mb-1">{userStats?.total_content_watched ?? 0}</p>
+            <p className="text-3xl font-bold text-primary mb-1">{userStats?.weekly_record_days ?? 0}</p>
             <p className="text-sm text-muted-foreground">이번 주 기록일</p>
           </CardContent>
         </Card>

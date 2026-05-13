@@ -1,7 +1,9 @@
-from pydantic import BaseModel
+from datetime import datetime, timedelta
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from supabase import Client
 
 from app.services.supabase_service import get_supabase_client
@@ -23,6 +25,15 @@ def _mood_label_ko(emoji_key: Optional[str]) -> str:
         "bad": "많이 힘듦",
     }
     return labels.get(emoji_key, emoji_key)
+
+
+def _parse_supabase_timestamp(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 class UserProfileResponse(BaseModel):
@@ -178,9 +189,24 @@ async def get_user_stats(
     try:
         # 세션 수
         sessions = supabase.table("counseling_sessions").select(
-            "id"
+            "id, started_at"
         ).eq("user_id", user_id).execute()
-        total_sessions = len(sessions.data) if sessions.data else 0
+        session_rows = sessions.data or []
+        total_sessions = len(session_rows)
+
+        tz = ZoneInfo("Asia/Seoul")
+        today = datetime.now(tz).date()
+        week_start = today - timedelta(days=today.weekday())
+        week_end = week_start + timedelta(days=7)
+        weekly_record_dates = set()
+        for row in session_rows:
+            started_at = _parse_supabase_timestamp(row.get("started_at"))
+            if not started_at:
+                continue
+            local_date = started_at.astimezone(tz).date()
+            if week_start <= local_date < week_end:
+                weekly_record_dates.add(local_date.isoformat())
+        weekly_record_days = len(weekly_record_dates)
 
         # 시청 기록
         watched = supabase.table("watched_content_records").select(
@@ -199,6 +225,7 @@ async def get_user_stats(
         return {
             "user_id": user_id,
             "total_sessions": total_sessions,
+            "weekly_record_days": weekly_record_days,
             "total_content_watched": total_watched,
             "total_feedback": total_feedback,
             "likes": likes,

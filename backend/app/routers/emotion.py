@@ -147,8 +147,12 @@ async def get_emotion_summary(
 
         session_ids = [row["id"] for row in session_rows]
 
-        responses_result = supabase.table("survey_responses").select("score").in_(
+        responses_result = supabase.table("survey_responses").select(
+            "session_id, score, phase, created_at"
+        ).in_(
             "session_id", session_ids
+        ).eq(
+            "question_key", "mood_general"
         ).filter("created_at", "gte", days_ago.isoformat()).order(
             "created_at", desc=True
         ).execute()
@@ -163,7 +167,21 @@ async def get_emotion_summary(
                 "days_range": days
             }
 
-        scores = [r["score"] for r in responses_result.data]
+        by_session: dict[str, dict[str, dict]] = {}
+        for row in responses_result.data:
+            session_id = row.get("session_id")
+            if not session_id:
+                continue
+            phase = row.get("phase") or "unknown"
+            by_session.setdefault(session_id, {})[phase] = row
+
+        representatives = []
+        for phase_rows in by_session.values():
+            row = phase_rows.get("post") or phase_rows.get("pre") or next(iter(phase_rows.values()))
+            representatives.append(row)
+
+        representatives.sort(key=lambda row: row.get("created_at") or "", reverse=True)
+        scores = [float(r["score"]) for r in representatives if r.get("score") is not None]
         avg_score = sum(scores) / len(scores) if scores else 3.0
 
         # 추이 판단 (최근 3개 vs 그 이전 3개)
