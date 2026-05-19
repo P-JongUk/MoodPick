@@ -9,6 +9,7 @@ ai/tools/user_taste.py
 - get_onboarding_vector: 콜드스타트 유저를 위한 온보딩 기반 임시 벡터 생성
 """
 import ast
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -28,15 +29,35 @@ def _get_supabase() -> Client:
         raise RuntimeError("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set.")
     return create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
-async def get_user_taste_vector(user_id: str) -> dict | None:
-    """user_taste_vectors 테이블에서 조회."""
+
+def _select_taste_row(user_id: str) -> dict | None:
     supabase = _get_supabase()
     result = supabase.table("user_taste_vectors").select("*").eq("user_id", user_id).execute()
-
     if not result.data:
         return None
+    return result.data[0]
 
-    row = result.data[0]
+
+def _select_liked_feedback(user_id: str) -> list[dict]:
+    supabase = _get_supabase()
+    result = supabase.table("content_feedback") \
+        .select("content_id, created_at") \
+        .eq("user_id", user_id).eq("feedback", "like") \
+        .execute()
+    return result.data or []
+
+
+def _upsert_taste_vector(payload: dict) -> None:
+    supabase = _get_supabase()
+    supabase.table("user_taste_vectors").upsert(payload).execute()
+
+
+async def get_user_taste_vector(user_id: str) -> dict | None:
+    """user_taste_vectors 테이블에서 조회."""
+    row = await asyncio.to_thread(_select_taste_row, user_id)
+    if row is None:
+        return None
+
     emb = row.get("embedding")
     if isinstance(emb, str):
         try:
@@ -52,14 +73,8 @@ async def get_user_taste_vector(user_id: str) -> dict | None:
 
 async def compute_user_taste_vector(user_id: str) -> tuple[list[float], int] | None:
     """좋아요 영상들로 시간 가중 평균 계산. None이면 콜드스타트."""
-    supabase = _get_supabase()
-
     # 1. 좋아요 이력 가져오기
-    liked_result = supabase.table("content_feedback") \
-        .select("content_id, created_at") \
-        .eq("user_id", user_id).eq("feedback", "like") \
-        .execute()
-    liked = liked_result.data or []
+    liked = await asyncio.to_thread(_select_liked_feedback, user_id)
 
     if len(liked) < MIN_LIKES_FOR_VECTOR:
         return None
@@ -83,10 +98,10 @@ async def compute_user_taste_vector(user_id: str) -> tuple[list[float], int] | N
         weight = 0.5 ** (age_days / HALF_LIFE_DAYS)
         embeddings.append(emb)
         weights.append(weight)
-        
+
     if not embeddings:
         return None
-        
+
     # 가중 평균 + L2 정규화
     weighted = np.average(embeddings, axis=0, weights=weights)
     normalized = weighted / np.linalg.norm(weighted)
@@ -97,25 +112,25 @@ async def refresh_user_taste_vector(user_id: str) -> None:
     vector_data = await compute_user_taste_vector(user_id)
     if not vector_data:
         return
-        
+
     vector, count = vector_data
-    supabase = _get_supabase()
-    
+    payload = {
+        "user_id": user_id,
+        "embedding": vector,
+        "embedding_model": "text-embedding-3-small",
+        "source_count": count,
+        "strategy": "time_weighted_avg",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
     try:
-        supabase.table("user_taste_vectors").upsert({
-            "user_id": user_id,
-            "embedding": vector,
-            "embedding_model": "text-embedding-3-small",
-            "source_count": count,
-            "strategy": "time_weighted_avg",
-            "updated_at": datetime.now(timezone.utc).isoformat()
-        }).execute()
+        await asyncio.to_thread(_upsert_taste_vector, payload)
     except Exception as e:
         logger.warning("Failed to refresh user_taste_vector for %s: %s", user_id, e)
 
 async def get_onboarding_vector(user_id: str) -> list[float] | None:
     """콜드스타트 폴백: 온보딩 정보 임베딩."""
-    profile = get_user_profile(user_id)
+    profile = await asyncio.to_thread(get_user_profile, user_id)
     if not profile:
         return None
         

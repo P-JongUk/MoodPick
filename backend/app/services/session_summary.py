@@ -78,7 +78,7 @@ def _update_session_summary(
     ).eq("id", session_id).execute()
 
 
-def prepare_session_context(
+async def prepare_session_context(
     supabase: Client,
     session_id: str,
 ) -> tuple[str | None, list[dict]]:
@@ -123,7 +123,7 @@ def prepare_session_context(
             return prev_summary, _strip_metadata(uncovered)
 
     try:
-        new_summary = summarize_conversation(
+        new_summary = await summarize_conversation(
             messages=_strip_metadata(to_summarize),
             previous_summary=prev_summary,
         )

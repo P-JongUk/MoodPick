@@ -17,9 +17,8 @@ from app.routers.survey import router as survey_router
 from app.routers.content import router as content_router
 from app.routers.user import router as user_router
 from app.routers.rag import router as rag_router
-from app.routers.reminder import router as reminder_router
-from app.config import get_settings
-from app.services.reminder_scheduler import reminder_scheduler_loop
+from app.config import get_cors_origins, get_settings
+from ai.clients import close_clients
 
 
 @asynccontextmanager
@@ -29,7 +28,9 @@ async def lifespan(app: FastAPI):
     reminder_stop_event: asyncio.Event | None = None
     reminder_task: asyncio.Task | None = None
 
-    if settings.reminder_scheduler_enabled:
+    if settings.reminder_feature_enabled and settings.reminder_scheduler_enabled:
+        from app.services.reminder_scheduler import reminder_scheduler_loop
+
         reminder_stop_event = asyncio.Event()
         reminder_task = asyncio.create_task(reminder_scheduler_loop(reminder_stop_event))
 
@@ -39,13 +40,17 @@ async def lifespan(app: FastAPI):
         if reminder_stop_event is not None and reminder_task is not None:
             reminder_stop_event.set()
             await reminder_task
+        await close_clients()
 
 
 app = FastAPI(title="MoodPick Backend", version="0.1.0", lifespan=lifespan)
 
+settings = get_settings()
+allowed_origins = get_cors_origins()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins or ["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -58,7 +63,11 @@ app.include_router(survey_router)
 app.include_router(content_router)
 app.include_router(user_router)
 app.include_router(rag_router)
-app.include_router(reminder_router)
+
+if settings.reminder_feature_enabled:
+    from app.routers.reminder import router as reminder_router
+
+    app.include_router(reminder_router)
 
 
 @app.get("/")

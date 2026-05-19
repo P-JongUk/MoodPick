@@ -87,3 +87,6 @@ logs/
 # Others
 /papers
 /artifacts
+
+# Local preview pages
+/frontend/app/markdown-preview/

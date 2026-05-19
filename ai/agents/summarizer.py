@@ -8,21 +8,13 @@ counselor.py와 동일한 OpenAI 클라이언트/모델 패턴을 따른다.
 import logging
 import time
 
-from openai import OpenAI
-
-from ai.config import OPENAI_API_KEY
+from ai.clients import get_openai
 from ai.utils import load_prompt
 
 
 logger = logging.getLogger(__name__)
 
 _MODEL = "gpt-4o-mini"
-
-
-def _get_openai() -> OpenAI:
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not set. Check backend/.env.local")
-    return OpenAI(api_key=OPENAI_API_KEY)
 
 
 def _format_messages_for_summary(messages: list[dict]) -> str:
@@ -37,7 +29,7 @@ def _format_messages_for_summary(messages: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def summarize_conversation(
+async def summarize_conversation(
     messages: list[dict],
     previous_summary: str | None = None,
 ) -> str:
@@ -45,7 +37,7 @@ def summarize_conversation(
     if not messages:
         return previous_summary or ""
 
-    client = _get_openai()
+    client = get_openai()
     system_prompt = load_prompt("summary_prompt.md")
 
     user_blocks = []
@@ -60,7 +52,7 @@ def summarize_conversation(
     user_content = "\n\n".join(user_blocks)
 
     _t = time.perf_counter()
-    response = client.chat.completions.create(
+    response = await client.chat.completions.create(
         model=_MODEL,
         temperature=0.3,
         max_tokens=600,

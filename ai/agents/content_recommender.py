@@ -20,10 +20,9 @@ import logging
 import time
 from pathlib import Path
 
-from openai import AsyncOpenAI
 from fastmcp import Client as MCPClient
+from fastmcp.client.transports import PythonStdioTransport
 
-from ai.config import OPENAI_API_KEY
 from ai.state import CounselingState
 from ai.utils import load_prompt
 from ai.tools.content_history import get_content_history, _get_supabase, get_recent_liked_titles
@@ -56,8 +55,24 @@ _MCP_SERVER_PATH = os.getenv("MCP_SERVER_PATH", _DEFAULT_MCP_SERVER_PATH)
 _MODEL = "gpt-4o-mini"
 
 
+def _mcp_client() -> MCPClient:
+    """Create an MCP client and explicitly pass runtime env to the server process.
+
+    Some deployment runtimes do not reliably expose all container env vars to
+    stdio child processes when a script path is used directly. Passing the env
+    here keeps secrets out of logs while making YOUTUBE_API_KEY visible to the
+    MCP server.
+    """
+    transport = PythonStdioTransport(
+        script_path=_MCP_SERVER_PATH,
+        env=dict(os.environ),
+        cwd=str(Path(_MCP_SERVER_PATH).resolve().parent.parent),
+    )
+    return MCPClient(transport)
+
+
 async def _recommend_podcast_via_mcp(emotion: str, intensity: float, watched_ids: list[str]) -> dict | None:
-    async with MCPClient(_MCP_SERVER_PATH) as mcp:
+    async with _mcp_client() as mcp:
         mcp_result = await mcp.call_tool(
             "recommend_podcast_episode",
             {
@@ -92,10 +107,7 @@ def _recommend_podcast_direct_sync(emotion: str, intensity: float, watched_ids: 
     return None
 
 
-def _get_openai() -> AsyncOpenAI:
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not set. Check backend/.env.local")
-    return AsyncOpenAI(api_key=OPENAI_API_KEY)
+from ai.clients import get_openai as _get_openai  # noqa: E402  싱글톤 위임
 
 
 def _fetch_recent_emotion_records(user_id: str, limit: int = 3) -> list[dict]:
@@ -267,18 +279,66 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
     search_query = result.get("search_query", "healing music relaxing")
     reason = result.get("reason", "마음을 편안하게 해줄 콘텐츠를 추천드려요.")
     logger.info("[PERF] recommender.gpt_query=%.3fs", time.perf_counter() - _t)
+    logger.info(
+        "Recommendation query generated user_id=%s session_id=%s format=%s hints=%s query=%r",
+        _short_id(state.user_id),
+        _short_id(state.session_id),
+        state.content_format,
+        state.content_query_hints,
+        search_query,
+    )
+
+    # 사용자 메시지·hints·생성 쿼리 어느 곳에라도 쇼츠 키워드가 있으면 60초 필터 bypass
+    _shorts_haystack = " ".join(
+        [state.message or "", *(state.content_query_hints or []), search_query]
+    ).lower()
+    allow_shorts = "쇼츠" in _shorts_haystack or "shorts" in _shorts_haystack
 
     videos = []
+    mcp_error = None
     _t = time.perf_counter()
     try:
-        async with MCPClient(_MCP_SERVER_PATH) as mcp:
+        async with _mcp_client() as mcp:
             mcp_result = await mcp.call_tool(
                 "search_youtube",
-                {"query": search_query, "watched_ids": watched_ids, "max_results": 10},
+                {
+                    "query": search_query,
+                    "watched_ids": watched_ids,
+                    "max_results": 10,
+                    "allow_shorts": allow_shorts,
+                },
             )
             videos = json.loads(mcp_result.content[0].text) if mcp_result.content else []
+            raw_count = len(videos) if isinstance(videos, list) else 0
+            if videos and "_perf" in videos[-1]:
+                perf = videos.pop()["_perf"]
+                logger.info(
+                    "[PERF] search_youtube.detail search_list=%ss videos_list=%ss post=%ss filtered=%s kept=%s",
+                    perf.get("search_list_s"),
+                    perf.get("videos_list_s"),
+                    perf.get("post_s"),
+                    perf.get("filtered"),
+                    perf.get("kept"),
+                )
             if videos and "error" in videos[0]:
+                mcp_error = videos[0].get("error") or "unknown_mcp_error"
+                logger.warning(
+                    "MCP YouTube returned error user_id=%s session_id=%s query=%r error=%s",
+                    _short_id(state.user_id),
+                    _short_id(state.session_id),
+                    search_query,
+                    mcp_error,
+                )
                 videos = []
+            logger.info(
+                "MCP YouTube returned candidates user_id=%s session_id=%s query=%r raw_count=%s usable_count=%s allow_shorts=%s",
+                _short_id(state.user_id),
+                _short_id(state.session_id),
+                search_query,
+                raw_count,
+                len(videos),
+                allow_shorts,
+            )
     except Exception as e:
         logger.warning(
             "MCP YouTube search failed user_id=%s session_id=%s error_type=%s",
@@ -287,6 +347,14 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
             type(e).__name__,
         )
     logger.info("[PERF] recommender.mcp_youtube=%.3fs", time.perf_counter() - _t)
+    if not videos and not mcp_error:
+        logger.warning(
+            "MCP YouTube produced no usable candidates user_id=%s session_id=%s query=%r allow_shorts=%s",
+            _short_id(state.user_id),
+            _short_id(state.session_id),
+            search_query,
+            allow_shorts,
+        )
 
     # ── 6. 하이브리드 재랭킹 (NEW) ──────────────────────────────────────
     video = None
@@ -316,6 +384,13 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
             emotion_description=emotion_description
         )
         logger.info("[PERF] recommender.hybrid_rerank=%.3fs", time.perf_counter() - _t)
+        logger.info(
+            "Hybrid rerank result user_id=%s session_id=%s candidates=%s ranked=%s",
+            _short_id(state.user_id),
+            _short_id(state.session_id),
+            len(formatted_cands),
+            len(ranked_videos),
+        )
 
         if ranked_videos:
             video = ranked_videos[0]
@@ -325,6 +400,14 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
     # ── 7. Store result ─────────────────────────────────────────────────
     secondary_for_log = ambiguity_info["secondary"]  # None일 수 있음 (모호 임계 미충족)
     if video:
+        logger.info(
+            "Recommendation selected user_id=%s session_id=%s video_id=%s title=%r score=%s",
+            _short_id(state.user_id),
+            _short_id(state.session_id),
+            _short_id(str(video.get("content_id") or video.get("video_id"))),
+            video.get("title", ""),
+            selected_score,
+        )
         state.recommended_content = {
             "video_id": video.get("content_id") or video.get("video_id"),
             "title": video.get("title", ""),
@@ -338,6 +421,14 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
             "secondary_emotion": secondary_for_log,
         }
     else:
+        logger.warning(
+            "Recommendation has no selected video user_id=%s session_id=%s query=%r mcp_error=%s videos_count=%s",
+            _short_id(state.user_id),
+            _short_id(state.session_id),
+            search_query,
+            mcp_error,
+            len(videos),
+        )
         state.recommended_content = {
             "search_query": search_query,
             "reason": reason,

@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, memo, useCallback } from "react"
+import { createPortal } from "react-dom"
 import { useAuth } from "@/components/auth-provider"
 import { getSupabaseClient } from "@/lib/supabaseClient"
 import {
@@ -12,6 +13,8 @@ import {
 import {
   endSession,
   getContentHistory,
+  getCounselingHistory,
+  cleanupStaleSessionsForUser,
   getCurrentSession,
   getDailySummary,
   getEmotionRecords,
@@ -28,14 +31,13 @@ import {
   getContentRecommendations,
   type DailySummary,
   type ContentMediaPreferenceQuery,
+  type SessionResponse,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import {
   resolvePlayback,
   youtubeEmbedUrl,
   youtubeThumbnailUrl,
-  spotifyEmbedUrl,
-  spotifyOpenUrl,
 } from "@/lib/contentPlayback"
 import {
   Home,
@@ -56,17 +58,14 @@ import {
   Trash2,
   Maximize2,
   Minimize2,
-  ExternalLink,
-  ThumbsUp,
-  ThumbsDown,
   X,
   Eye,
   EyeOff,
 } from "lucide-react"
+import { ChatMarkdown } from "@/components/chat-markdown"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import {
@@ -93,6 +92,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+
+const REMINDER_FEATURE_ENABLED = process.env.NEXT_PUBLIC_REMINDER_ENABLED === "true"
+const DEMO_HIDE_ONBOARDING = true
 
 type TabType = "home" | "counseling" | "dashboard" | "mypage"
 
@@ -116,9 +126,11 @@ interface Message {
 }
 
 interface SessionHistory {
-  id: number
+  sessionId: string
   date: string
-  concern: string
+  timeLabel: string
+  endTimeLabel: string | null
+  durationLabel: string | null
   media: string
 }
 
@@ -130,6 +142,7 @@ interface SurveyDeltaSummary {
 
 interface UserStats {
   total_sessions: number
+  weekly_record_days?: number
   total_content_watched: number
   total_feedback: number
   likes: number
@@ -141,7 +154,7 @@ interface ContentHistoryItem {
   content_id: string
   content_title: string
   thumbnail_url?: string | null
-  media_provider?: "youtube" | "spotify" | "podcast" | null
+  media_provider?: "youtube" | "podcast" | null
   media_url?: string | null
   watched_at: string
   session_id?: string | null
@@ -174,6 +187,19 @@ interface SurveyConfig  {
   scoreOptions: number[];
 };
 
+const SURVEY_DEFAULT_SCORES: Record<SurveyType, number[]> = {
+  GAD: [-1, -1, -1, -1, -1, -1, -1],
+  PHQ: [-1, -1, -1, -1, -1, -1, -1, -1, -1],
+  PSS: [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
+}
+
+function createSurveyState(type: SurveyType, isDone: boolean): SurveyState {
+  return {
+    scores: [...SURVEY_DEFAULT_SCORES[type]],
+    isDone,
+  }
+}
+
 const defaultContentItem: ContentHistoryItem = {
   id: "default-content",
   content_id: "youtube:jfKfPfyJRdk",
@@ -190,9 +216,7 @@ function mapContentHistoryRow(row: Record<string, unknown>): ContentHistoryItem 
     content_title: String(row.content_title ?? ""),
     thumbnail_url: row.thumbnail_url != null ? String(row.thumbnail_url) : null,
     media_provider:
-      row.media_provider === "youtube" ||
-      row.media_provider === "spotify" ||
-      row.media_provider === "podcast"
+      row.media_provider === "youtube" || row.media_provider === "podcast"
         ? row.media_provider
         : null,
     media_url: row.media_url != null ? String(row.media_url) : null,
@@ -201,9 +225,52 @@ function mapContentHistoryRow(row: Record<string, unknown>): ContentHistoryItem 
   }
 }
 
+const sessionContentFeedbackStorageKey = (sessionId: string) =>
+  `moodpick:sessionContentFeedbackIds:${sessionId}`
+
+function readSessionContentFeedbackIds(sessionId: string): Set<string> {
+  if (typeof window === "undefined") return new Set()
+  try {
+    const raw = window.sessionStorage.getItem(sessionContentFeedbackStorageKey(sessionId))
+    if (!raw) return new Set()
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return new Set()
+    return new Set(parsed.filter((x): x is string => typeof x === "string" && x.trim().length > 0))
+  } catch {
+    return new Set()
+  }
+}
+
+function persistSessionContentFeedbackIds(sessionId: string, ids: Set<string>): void {
+  if (typeof window === "undefined") return
+  try {
+    window.sessionStorage.setItem(
+      sessionContentFeedbackStorageKey(sessionId),
+      JSON.stringify([...ids])
+    )
+  } catch {
+    /* 저장 공간 부족·프라이빗 모드 등 */
+  }
+}
+
+function addSessionContentFeedbackId(sessionId: string, contentId: string): void {
+  const next = readSessionContentFeedbackIds(sessionId)
+  next.add(contentId.trim())
+  persistSessionContentFeedbackIds(sessionId, next)
+}
+
+function clearSessionContentFeedbackStorage(sessionId: string): void {
+  if (typeof window === "undefined") return
+  try {
+    window.sessionStorage.removeItem(sessionContentFeedbackStorageKey(sessionId))
+  } catch {
+    /* noop */
+  }
+}
+
 function mediaPreferenceToQueryParam(pref: string): ContentMediaPreferenceQuery {
   if (pref === "youtube") return "youtube"
-  if (pref === "spotify") return "spotify"
+  if (pref === "podcast") return "podcast"
   return "all"
 }
 
@@ -229,9 +296,96 @@ const scoreToCalendarColor = (score: number) => {
   return "bg-blue-200"
 }
 
+/** 사전/사후 문진 mood_general 값 — DB·API와 동일한 value 키 */
+const SURVEY_MOOD_OPTIONS = [
+  { emoji: "😊", label: "아주 좋아요", value: "great" },
+  { emoji: "🙂", label: "괜찮아요", value: "good" },
+  { emoji: "😐", label: "그저 그래요", value: "neutral" },
+  { emoji: "😔", label: "조금 힘들어요", value: "low" },
+  { emoji: "😢", label: "많이 힘들어요", value: "bad" },
+] as const
+
+/** 상담 탭에서 일정 시간 무응답 시 마무리 권유 배너 */
+const COUNSELING_IDLE_PROMPT_MS = 15 * 60 * 1000
+
+/** API 전송용 접미사 — 백엔드 `counseling.py`와 동일 문자열 */
+const COUNSELING_USER_MARKDOWN_SUFFIX = "\n\n마크다운 형식으로 제공해."
+
+function stripCounselingUserMarkdownSuffix(text: string): string {
+  if (text.endsWith(COUNSELING_USER_MARKDOWN_SUFFIX)) {
+    return text.slice(0, -COUNSELING_USER_MARKDOWN_SUFFIX.length)
+  }
+  return text
+}
+
+function formatHistoryMessageTime(iso: string | undefined): string {
+  if (!iso) return ""
+  try {
+    return new Date(iso).toLocaleTimeString("ko-KR", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    })
+  } catch {
+    return ""
+  }
+}
+
+function mapCounselingHistoryToMessages(
+  rows: Array<{ role?: string; content?: string; created_at?: string }>
+): Message[] {
+  return rows.map((row, index) => {
+    const sender: "user" | "ai" = row.role === "user" ? "user" : "ai"
+    const raw = typeof row.content === "string" ? row.content : ""
+    const text = sender === "user" ? stripCounselingUserMarkdownSuffix(raw) : raw
+    return {
+      id: index + 1,
+      sender,
+      text,
+      timestamp: formatHistoryMessageTime(row.created_at),
+    }
+  })
+}
+
+function formatMoodGeneralForDisplay(value: string | null | undefined): string {
+  if (value == null || String(value).trim() === "") return "—"
+  const key = String(value).trim().toLowerCase()
+  const found = SURVEY_MOOD_OPTIONS.find((o) => o.value === key)
+  if (found) return `${found.emoji} ${found.label}`
+  return String(value).trim()
+}
+
 const formatEmotionDayKey = (date: Date) => date.toLocaleDateString("en-CA")
 
 const formatEmotionDayLabel = (date: Date) => `${date.getMonth() + 1}/${date.getDate()}`
+
+function formatCounselingSessionDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("ko-KR", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  })
+}
+
+function formatCounselingSessionTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("ko-KR", {
+    hour: "numeric",
+    minute: "2-digit",
+  })
+}
+
+function formatCounselingDurationLabel(
+  startedAt: string,
+  endedAt?: string | null
+): string | null {
+  if (!endedAt) return null
+  const a = new Date(startedAt).getTime()
+  const b = new Date(endedAt).getTime()
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return null
+  const mins = Math.round((b - a) / 60000)
+  if (mins < 1) return "1분 미만"
+  return `약 ${mins}분`
+}
 
 const getSidebarEncouragement = (
   isSessionActive: boolean,
@@ -299,21 +453,25 @@ export function MoodPickDashboard() {
   const [onboardingErrorMessage, setOnboardingErrorMessage] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<TabType>("home")
   const [messages, setMessages] = useState<Message[]>([])
-  const [inputMessage, setInputMessage] = useState("")
   const [isPlaying, setIsPlaying] = useState(true)
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth() + 1)
   const [mediaFeedback, setMediaFeedback] = useState<"like" | "dislike" | null>(null)
+  const [contentFeedbackSubmitting, setContentFeedbackSubmitting] = useState(false)
+  /** 현재 상담 세션에서 이미 피드백을 보낸 content_id (sessionStorage와 동기화) */
+  const [sessionContentFeedbackIds, setSessionContentFeedbackIds] = useState<string[]>([])
 
   // Session flow state
   const [isSessionActive, setIsSessionActive] = useState(false)
   const [showPreSurvey, setShowPreSurvey] = useState(false)
   const [showPostSurvey, setShowPostSurvey] = useState(false)
   const [showStartSessionPrompt, setShowStartSessionPrompt] = useState(false)
+  const [preSurveyFromCounselingTabNav, setPreSurveyFromCounselingTabNav] = useState(false)
   const [preSurveyMood, setPreSurveyMood] = useState<string | null>(null)
   const [postSurveyMood, setPostSurveyMood] = useState<string | null>(null)
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
   const [syncWarningMessage, setSyncWarningMessage] = useState<string | null>(null)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
+  const [crisisModalText, setCrisisModalText] = useState<string | null>(null)
   const [lastSurveyDelta, setLastSurveyDelta] = useState<SurveyDeltaSummary | null>(null)
   const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0)
   const [userStats, setUserStats] = useState<UserStats | null>(null)
@@ -352,6 +510,7 @@ export function MoodPickDashboard() {
   const [dayDetailError, setDayDetailError] = useState<string | null>(null)
   const [dayDetailData, setDayDetailData] = useState<DailySummary | null>(null)
   const [dayDetailIsoDate, setDayDetailIsoDate] = useState<string | null>(null)
+  const [dashboardHistoryFullscreenOpen, setDashboardHistoryFullscreenOpen] = useState(false)
 
   const [profileSaveMessage, setProfileSaveMessage] = useState<string | null>(null)
   const [isSavingProfile, setIsSavingProfile] = useState(false)
@@ -361,26 +520,57 @@ export function MoodPickDashboard() {
   const [isExportingMyData, setIsExportingMyData] = useState(false)
   const [exportMyDataMessage, setExportMyDataMessage] = useState<string | null>(null)
   const previousUserIdRef = useRef<string | null>(null)
+  const lastCounselingActivityRef = useRef<number>(0)
+  const counselingActiveSessionIdRef = useRef<string | null>(null)
+  const lastResumePromptForSessionIdRef = useRef<string | null>(null)
+  const skipResumeDismissMarkRef = useRef(false)
+  const surveyOverlayBlocksInteractionRef = useRef(false)
+  /** 정상 종료 직후 getCurrentSession 지연 등으로 이어가기 다이얼로그가 뜨는 것을 막음 (epoch ms) */
+  const suppressResumeDialogUntilRef = useRef(0)
+  const postSurveySubmittingRef = useRef(false)
+  const [isPostSurveySubmitting, setIsPostSurveySubmitting] = useState(false)
+  const [showResumeSessionDialog, setShowResumeSessionDialog] = useState(false)
+  const [pendingResumeSession, setPendingResumeSession] = useState<SessionResponse | null>(null)
+  const [showIdleWrapUpBanner, setShowIdleWrapUpBanner] = useState(false)
   const sidebarEncouragement = getSidebarEncouragement(
     isSessionActive,
     emotionSummary,
     lastSurveyDelta
   )
 
+  const touchCounselingActivity = useCallback(() => {
+    lastCounselingActivityRef.current = Date.now()
+    setShowIdleWrapUpBanner(false)
+  }, [])
+
   const resetCounselingState = () => {
+    setDashboardHistoryFullscreenOpen(false)
     setActiveTab("home")
     setMessages([])
-    setInputMessage("")
     setMediaFeedback(null)
+    setContentFeedbackSubmitting(false)
+    if (currentSessionId) {
+      clearSessionContentFeedbackStorage(currentSessionId)
+    }
+    setSessionContentFeedbackIds([])
     setIsSessionActive(false)
     setShowPreSurvey(false)
     setShowPostSurvey(false)
     setShowStartSessionPrompt(false)
+    setPreSurveyFromCounselingTabNav(false)
     setPreSurveyMood(null)
     setPostSurveyMood(null)
     setCurrentSessionId(null)
     setSyncWarningMessage(null)
     setIsSendingMessage(false)
+    setShowResumeSessionDialog(false)
+    setPendingResumeSession(null)
+    setShowIdleWrapUpBanner(false)
+    lastCounselingActivityRef.current = 0
+    counselingActiveSessionIdRef.current = null
+    postSurveySubmittingRef.current = false
+    setIsPostSurveySubmitting(false)
+    suppressResumeDialogUntilRef.current = 0
   }
 
   useEffect(() => {
@@ -390,6 +580,7 @@ export function MoodPickDashboard() {
     if (previousUserId !== currentUserId) {
       resetCounselingState()
       previousUserIdRef.current = currentUserId
+      lastResumePromptForSessionIdRef.current = null
     }
   }, [user?.id])
 
@@ -397,12 +588,182 @@ export function MoodPickDashboard() {
     setMediaFeedback(null)
   }, [currentContent.content_id])
 
+  useEffect(() => {
+    if (!currentSessionId) {
+      setSessionContentFeedbackIds([])
+      return
+    }
+    setSessionContentFeedbackIds([...readSessionContentFeedbackIds(currentSessionId)])
+  }, [currentSessionId])
+
+  const contentFeedbackComplete =
+    Boolean(currentContent.content_id.trim()) &&
+    sessionContentFeedbackIds.includes(currentContent.content_id.trim())
+
+  useEffect(() => {
+    if (activeTab !== "dashboard") {
+      setDashboardHistoryFullscreenOpen(false)
+    }
+  }, [activeTab])
+
+  useEffect(() => {
+    if (!dashboardHistoryFullscreenOpen) return
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDashboardHistoryFullscreenOpen(false)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => {
+      document.body.style.overflow = prevOverflow
+      window.removeEventListener("keydown", onKey)
+    }
+  }, [dashboardHistoryFullscreenOpen])
+
+  useEffect(() => {
+    counselingActiveSessionIdRef.current =
+      isSessionActive && currentSessionId ? currentSessionId : null
+  }, [isSessionActive, currentSessionId])
+
+  useEffect(() => {
+    surveyOverlayBlocksInteractionRef.current = showPreSurvey || showPostSurvey
+  }, [showPreSurvey, showPostSurvey])
+
+  useEffect(() => {
+    if (!isSessionActive) {
+      setShowIdleWrapUpBanner(false)
+      return
+    }
+    const tick = () => {
+      const last = lastCounselingActivityRef.current
+      if (!last) return
+      if (Date.now() - last >= COUNSELING_IDLE_PROMPT_MS) {
+        setShowIdleWrapUpBanner(true)
+      }
+    }
+    const id = window.setInterval(tick, 60_000)
+    tick()
+    return () => window.clearInterval(id)
+  }, [isSessionActive])
+
+  useEffect(() => {
+    if (!user?.id || isAuthLoading || !isLoggedIn) return
+    if (!hasCompletedOnboarding || isOnboardingStateLoading) return
+    if (showPreSurvey || showPostSurvey) return
+
+    let cancelled = false
+
+    void (async () => {
+      try {
+        if (Date.now() < suppressResumeDialogUntilRef.current) return
+        await cleanupStaleSessionsForUser(user.id)
+        if (cancelled) return
+        const cur = await getCurrentSession(user.id)
+        if (cancelled || !cur?.id) return
+        if (surveyOverlayBlocksInteractionRef.current) return
+        if (lastResumePromptForSessionIdRef.current === cur.id) return
+        if (counselingActiveSessionIdRef.current === cur.id) return
+        setPendingResumeSession(cur)
+        setShowResumeSessionDialog(true)
+      } catch {
+        /* 로그인 직후 백엔드 미기동 등은 무시 */
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    user?.id,
+    isAuthLoading,
+    isLoggedIn,
+    hasCompletedOnboarding,
+    isOnboardingStateLoading,
+    showPreSurvey,
+    showPostSurvey,
+    isSessionActive,
+    currentSessionId,
+  ])
+
+  useEffect(() => {
+    if (!showPreSurvey && !showPostSurvey) return
+    skipResumeDismissMarkRef.current = true
+    setShowResumeSessionDialog(false)
+    setPendingResumeSession(null)
+  }, [showPreSurvey, showPostSurvey])
+
   //문진
-  const [gad, setGad]=useState({scores: [-1, -1, -1, -1, -1, -1, -1], isDone: false,})
-  const [phq, setPhq]=useState({scores: [-1, -1, -1, -1, -1, -1, -1, -1, -1], isDone: false,})
-  const [pss, setPss]=useState({scores: [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1], isDone: false,})
+  const [gad, setGad] = useState<SurveyState>(() => createSurveyState("GAD", false))
+  const [phq, setPhq] = useState<SurveyState>(() => createSurveyState("PHQ", false))
+  const [pss, setPss] = useState<SurveyState>(() => createSurveyState("PSS", false))
   const [isSavingSurvey, setIsSavingSurvey] = useState(false)
-  const [surveyErrorMessage, setsurveyErrorMessage] = useState<string | null>(null)
+  const [surveyErrorMessage, setSurveyErrorMessage] = useState<string | null>(null)
+  const [surveySave, setSurveySave]=useState(false)
+  const [isSurveyStateLoading, setIsSurveyStateLoading] = useState(true)
+  const surveyEnter = !gad.isDone || !phq.isDone || !pss.isDone
+  const shouldShowSurvey = Boolean(user?.id) && !isSurveyStateLoading && !surveySave && surveyEnter
+
+  const [readIntroduce, setReadIntroduce]=useState(false)
+  const handleCheckIntroduce=()=>{setReadIntroduce(true)}
+
+  useEffect(() => {
+    if (!user?.id) {
+      setGad(createSurveyState("GAD", true))
+      setPhq(createSurveyState("PHQ", true))
+      setPss(createSurveyState("PSS", true))
+      setSurveySave(true)
+      setIsSurveyStateLoading(false)
+      return
+    }
+
+    setIsSurveyStateLoading(true)
+    try {
+      const metadata = (user.user_metadata ?? {}) as {
+        survey_completed?: boolean
+      }
+      const completed = typeof metadata.survey_completed === "boolean" ? metadata.survey_completed : true
+      setGad(createSurveyState("GAD", completed))
+      setPhq(createSurveyState("PHQ", completed))
+      setPss(createSurveyState("PSS", completed))
+      setSurveySave(completed)
+    } catch {
+      setGad(createSurveyState("GAD", false))
+      setPhq(createSurveyState("PHQ", false))
+      setPss(createSurveyState("PSS", false))
+      setSurveySave(false)
+    } finally {
+      setIsSurveyStateLoading(false)
+    }
+  }, [user])
+
+  const handleSurveySave = async () => {
+    if (!user?.id) return
+
+    setIsSavingSurvey(true)
+    setSurveyErrorMessage(null)
+
+    try {
+      const supabase = getSupabaseClient()
+      const { error } = await supabase.auth.updateUser({
+        data: {
+          survey_completed: true,
+        },
+      })
+
+      if (error) {
+        throw error
+      }
+
+      setSurveySave(true)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "설문 완료 저장 중 오류가 발생했습니다."
+      setSurveyErrorMessage(message)
+      throw error
+    } finally {
+      setIsSavingSurvey(false)
+    }
+  }
 
   useEffect(() => {
     const loadDashboardData = async () => {
@@ -433,7 +794,7 @@ export function MoodPickDashboard() {
         ] = await Promise.allSettled([
           getUserStats(user.id),
           getEmotionRecords(user.id, 30),
-          getEmotionSummary(user.id, 30),
+          getEmotionSummary(user.id, 7),
           getUserSessions(user.id, 10),
           getContentHistory(user.id, 20),
           getContentRecommendations(user.id, { limit: 10, media: mediaQuery }),
@@ -509,7 +870,7 @@ export function MoodPickDashboard() {
             }
           })
           .sort((a, b) => a.timestamp - b.timestamp)
-          .map(({ timestamp, ...record }) => record)
+          .map(({ date, score, label }) => ({ date, score, label }))
 
         setEmotionData(emotionChartData)
         setRecentEmotionRecords(validEmotionRecords.slice(0, 5))
@@ -549,17 +910,30 @@ export function MoodPickDashboard() {
           }
         })
 
-        const sessionRows = (sessionsRaw?.sessions as Array<{ id: string; started_at: string }>) || []
-        const mappedSessionHistory = sessionRows.slice(0, 6).map((session, index) => ({
-          id: index + 1,
-          date: new Date(session.started_at).toLocaleDateString("ko-KR", {
-            year: "numeric",
-            month: "long",
-            day: "numeric",
-          }),
-          concern: "상담 세션 기록",
-          media: contentBySession.get(session.id) ?? "추천 콘텐츠 기록 없음",
-        }))
+        const sessionRows =
+          (sessionsRaw?.sessions as Array<{
+            id: string
+            started_at: string
+            ended_at?: string | null
+          }>) || []
+        const mappedSessionHistory = sessionRows.slice(0, 6).map((session) => {
+          const endedRaw = session.ended_at?.trim()
+          const endTimeLabel =
+            endedRaw && endedRaw.length > 0
+              ? formatCounselingSessionTime(endedRaw)
+              : null
+          return {
+            sessionId: session.id,
+            date: formatCounselingSessionDate(session.started_at),
+            timeLabel: formatCounselingSessionTime(session.started_at),
+            endTimeLabel,
+            durationLabel: formatCounselingDurationLabel(
+              session.started_at,
+              session.ended_at
+            ),
+            media: contentBySession.get(session.id) ?? "추천 콘텐츠 기록 없음",
+          }
+        })
 
         setSessionHistory(mappedSessionHistory)
       } catch (error) {
@@ -577,6 +951,14 @@ export function MoodPickDashboard() {
 
   useEffect(() => {
     const loadReminderPreference = async () => {
+      if (!REMINDER_FEATURE_ENABLED) {
+        setDailyReminderEnabled(false)
+        setDailyReminderTime("22:00")
+        setDailyReminderTimezone("Asia/Seoul")
+        setReminderSaveMessage(null)
+        return
+      }
+
       if (!user?.id) {
         setDailyReminderEnabled(true)
         setDailyReminderTime("22:00")
@@ -604,6 +986,13 @@ export function MoodPickDashboard() {
       setHasCompletedOnboarding(true)
       setSelectedConcerns([])
       setSelectedComfortStyle([])
+      setOnboardingErrorMessage(null)
+      setIsOnboardingStateLoading(false)
+      return
+    }
+
+    if (DEMO_HIDE_ONBOARDING) {
+      setHasCompletedOnboarding(true)
       setOnboardingErrorMessage(null)
       setIsOnboardingStateLoading(false)
       return
@@ -638,7 +1027,8 @@ export function MoodPickDashboard() {
       setAutoPlayEnabled(prefs.autoplay_enabled)
     }
     if (prefs && typeof prefs.media_preference === "string") {
-      setMediaPreference(prefs.media_preference)
+      const p = prefs.media_preference
+      setMediaPreference(p === "spotify" ? "mixed" : p)
     }
   }, [user])
 
@@ -679,6 +1069,7 @@ export function MoodPickDashboard() {
 
     if (
       normalizedBirthYear &&
+      parsedBirthYear !== null &&
       (!Number.isInteger(parsedBirthYear) || parsedBirthYear < 1900 || parsedBirthYear > currentYear)
     ) {
       setAuthErrorMessage("출생년도는 1900년부터 현재 연도 사이의 숫자로 입력해 주세요.")
@@ -763,33 +1154,53 @@ export function MoodPickDashboard() {
   }
 
   const handleStartNewSession = () => {
+    suppressResumeDialogUntilRef.current = 0
+    setPreSurveyFromCounselingTabNav(false)
     setShowStartSessionPrompt(false)
     setSyncWarningMessage(null)
     setPreSurveyMood(null)
     setShowPreSurvey(true)
   }
 
+  const handleSelectNavTab = (itemId: TabType) => {
+    if (itemId === "counseling" && !isSessionActive) {
+      // 이미 사전 문진 중이면 무드 선택을 지우지 않음(같은 탭·네비 재클릭 시 상담 시작이 막히던 문제)
+      if (showPreSurvey) {
+        setActiveTab("counseling")
+        return
+      }
+      setPreSurveyFromCounselingTabNav(true)
+      setShowStartSessionPrompt(false)
+      setSyncWarningMessage(null)
+      setPreSurveyMood(null)
+      setShowPreSurvey(true)
+      setActiveTab("counseling")
+      return
+    }
+    setActiveTab(itemId)
+  }
+
   const handlePreSurveyComplete = async () => {
-    if (!preSurveyMood) return
+    if (!preSurveyMood) {
+      setSyncWarningMessage("사전 문진: 마음 온도를 먼저 선택해 주세요.")
+      return
+    }
 
     let initialCounselingMessage = "안녕하세요, 저는 무드픽 상담사입니다. 오늘 하루 어떠셨나요? 편하게 이야기해 주세요."
+    let createdSessionId: string | null = null
 
     try {
       if (user?.id) {
         const cur = await getCurrentSession(user.id)
-        if (cur?.id && cur.started_at) {
-          const startedKey = new Date(cur.started_at).toLocaleDateString("en-CA", {
-            timeZone: dailyReminderTimezone,
-          })
-          const todayKey = new Date().toLocaleDateString("en-CA", { timeZone: dailyReminderTimezone })
-          if (startedKey !== todayKey) {
-            await endSession(cur.id)
-          }
+        // 같은 날이라고 해서 기존 active를 두면 새 세션만 종료될 때 이전 세션이 orphan active로 남아
+        // 재접속 시 이어가기 다이얼로그가 뜸. 사전 문진으로 새 상담을 시작할 때는 항상 정리합니다.
+        if (cur?.id) {
+          await endSession(cur.id)
+          clearSessionContentFeedbackStorage(cur.id)
         }
       }
 
-      const createdSessionId = await startCounselingSession()
-      setCurrentSessionId(createdSessionId)
+      createdSessionId = await startCounselingSession()
 
       if (createdSessionId) {
         await saveSurveyResponse(createdSessionId, "pre", preSurveyMood)
@@ -799,10 +1210,17 @@ export function MoodPickDashboard() {
         }
       }
     } catch {
-      setSyncWarningMessage("세션 또는 사전 문진 저장에 실패했어요. 일단 로컬 화면 흐름으로 진행할게요.")
+      setSyncWarningMessage("세션 또는 사전 문진 저장에 실패했어요. 네트워크를 확인한 뒤 다시 시도해 주세요.")
     }
 
+    if (!createdSessionId) {
+      return
+    }
+
+    setCurrentSessionId(createdSessionId)
     setShowPreSurvey(false)
+    setPreSurveyFromCounselingTabNav(false)
+    suppressResumeDialogUntilRef.current = 0
     setIsSessionActive(true)
     setActiveTab("counseling")
     setMessages([
@@ -817,87 +1235,203 @@ export function MoodPickDashboard() {
         }),
       },
     ])
+    touchCounselingActivity()
   }
 
   const handleEndSession = () => {
+    setDashboardHistoryFullscreenOpen(false)
+    setDayDetailOpen(false)
+    setPostSurveyMood(null)
+    skipResumeDismissMarkRef.current = true
+    setShowResumeSessionDialog(false)
+    setPendingResumeSession(null)
     setShowPostSurvey(true)
   }
 
   const handlePostSurveyComplete = async () => {
-    if (!postSurveyMood) return
+    if (!postSurveyMood) {
+      setSyncWarningMessage("사후 문진: 마음 온도를 먼저 선택해 주세요.")
+      return
+    }
+    if (postSurveySubmittingRef.current) return
+    postSurveySubmittingRef.current = true
+    setIsPostSurveySubmitting(true)
 
     const endedSessionId = currentSessionId
     let shouldRefreshDashboard = false
 
-    if (currentSessionId) {
-      try {
-        await saveSurveyResponse(currentSessionId, "post", postSurveyMood)
-        await endCounselingSession(currentSessionId)
-        shouldRefreshDashboard = true
-
-        const deltaResponse = await getSurveyDelta(currentSessionId)
-        if (deltaResponse?.delta && typeof deltaResponse.delta === "object") {
-          const values = Object.values(deltaResponse.delta) as number[]
-          const averageDelta = values.length
-            ? values.reduce((sum, value) => sum + value, 0) / values.length
-            : 0
-
-          setLastSurveyDelta({
-            sessionId: currentSessionId,
-            averageDelta,
-            improved: Boolean(deltaResponse.improved),
-          })
+    try {
+      if (currentSessionId) {
+        const sid = currentSessionId
+        try {
+          await saveSurveyResponse(sid, "post", postSurveyMood)
+          await endCounselingSession(sid)
+          clearSessionContentFeedbackStorage(sid)
+          shouldRefreshDashboard = true
+          suppressResumeDialogUntilRef.current = Date.now() + 25_000
+        } catch {
+          setSyncWarningMessage(
+            "사후 문진 또는 세션 종료 저장에 실패했어요. Supabase 설정 후 다시 확인해 주세요."
+          )
+          return
         }
-      } catch {
-        setSyncWarningMessage("사후 문진 또는 세션 종료 저장에 실패했어요. Supabase 설정 후 다시 확인해 주세요.")
-      }
-    }
 
-    setShowPostSurvey(false)
-    setIsSessionActive(false)
-    setCurrentSessionId(null)
-    setPostSurveyMood(null)
-    setPreSurveyMood(null)
-    setMediaFeedback(null)
-    if (shouldRefreshDashboard) {
-      setDashboardRefreshKey((value) => value + 1)
+        try {
+          const deltaResponse = await getSurveyDelta(sid)
+          if (deltaResponse?.delta && typeof deltaResponse.delta === "object") {
+            const values = Object.values(deltaResponse.delta) as number[]
+            const averageDelta = values.length
+              ? values.reduce((sum, value) => sum + value, 0) / values.length
+              : 0
+
+            setLastSurveyDelta({
+              sessionId: sid,
+              averageDelta,
+              improved: Boolean(deltaResponse.improved),
+            })
+          }
+        } catch {
+          /* 세션은 이미 종료됨 — 델타만 생략 */
+        }
+      }
+
+      if (endedSessionId) {
+        lastResumePromptForSessionIdRef.current = endedSessionId
+      }
+
+      setShowPostSurvey(false)
+      setIsSessionActive(false)
+      setCurrentSessionId(null)
+      setPostSurveyMood(null)
+      setPreSurveyMood(null)
+      setMediaFeedback(null)
+      if (shouldRefreshDashboard) {
+        setDashboardRefreshKey((value) => value + 1)
+      }
+      setActiveTab(endedSessionId ? "dashboard" : "home")
+    } finally {
+      postSurveySubmittingRef.current = false
+      setIsPostSurveySubmitting(false)
     }
-    setActiveTab(endedSessionId ? "dashboard" : "home")
+  }
+
+  const closeResumeDialog = (dismissSessionId: string | null) => {
+    if (dismissSessionId) {
+      lastResumePromptForSessionIdRef.current = dismissSessionId
+    }
+    setShowResumeSessionDialog(false)
+    setPendingResumeSession(null)
+  }
+
+  const handleResumeDialogOpenChange = (open: boolean) => {
+    if (open) return
+    if (!skipResumeDismissMarkRef.current) {
+      const sid = pendingResumeSession?.id ?? null
+      closeResumeDialog(sid)
+    }
+    skipResumeDismissMarkRef.current = false
+  }
+
+  const handleResumeSessionConfirm = async () => {
+    if (!user?.id || !pendingResumeSession?.id) return
+    const sid = pendingResumeSession.id
+    skipResumeDismissMarkRef.current = true
+    lastResumePromptForSessionIdRef.current = null
+    suppressResumeDialogUntilRef.current = 0
+    setShowResumeSessionDialog(false)
+    setPendingResumeSession(null)
+    try {
+      const history = await getCounselingHistory(user.id, sid)
+      let restored = mapCounselingHistoryToMessages(history.messages ?? [])
+      if (restored.length === 0) {
+        const initialResponse = await getInitialCounselingMessage(sid)
+        const text =
+          initialResponse?.message ??
+          "안녕하세요, 저는 무드픽 상담사입니다. 오늘 하루 어떠셨나요? 편하게 이야기해 주세요."
+        restored = [
+          {
+            id: 1,
+            sender: "ai",
+            text,
+            timestamp: new Date().toLocaleTimeString("ko-KR", {
+              hour: "numeric",
+              minute: "2-digit",
+              hour12: true,
+            }),
+          },
+        ]
+      }
+      setCurrentSessionId(sid)
+      setIsSessionActive(true)
+      setMessages(restored)
+      setActiveTab("counseling")
+      touchCounselingActivity()
+    } catch {
+      setSyncWarningMessage("상담 기록을 불러오지 못했어요. 새 상담을 시작해 주세요.")
+    }
+  }
+
+  const handleResumeSessionNewStart = async () => {
+    if (!pendingResumeSession?.id) return
+    const sid = pendingResumeSession.id
+    skipResumeDismissMarkRef.current = true
+    lastResumePromptForSessionIdRef.current = null
+    suppressResumeDialogUntilRef.current = 0
+    setShowResumeSessionDialog(false)
+    setPendingResumeSession(null)
+    try {
+      await endSession(sid)
+      clearSessionContentFeedbackStorage(sid)
+    } catch {
+      setSyncWarningMessage("이전 세션을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.")
+    }
+    handleStartNewSession()
   }
 
   const handleMediaFeedbackChange = async (feedback: "like" | "dislike") => {
+    const cid = currentContent.content_id.trim()
+    if (!cid || contentFeedbackSubmitting) return
+    const alreadySubmitted =
+      sessionContentFeedbackIds.includes(cid) ||
+      Boolean(currentSessionId && readSessionContentFeedbackIds(currentSessionId).has(cid))
+    if (alreadySubmitted) return
+
+    setContentFeedbackSubmitting(true)
     setMediaFeedback(feedback)
 
-    if (!currentSessionId) {
-      return
-    }
-
     try {
-      await saveContentFeedback({
-        sessionId: currentSessionId,
-        feedback,
-        contentId: currentContent.content_id,
-        contentTitle: currentContent.content_title,
-        thumbnailUrl: currentContent.thumbnail_url ?? undefined,
-        mediaProvider: currentContent.media_provider ?? undefined,
-        mediaUrl: currentContent.media_url ?? undefined,
-      })
+      if (currentSessionId) {
+        await saveContentFeedback({
+          sessionId: currentSessionId,
+          feedback,
+          contentId: currentContent.content_id,
+          contentTitle: currentContent.content_title,
+          thumbnailUrl: currentContent.thumbnail_url ?? undefined,
+          mediaProvider: currentContent.media_provider ?? undefined,
+          mediaUrl: currentContent.media_url ?? undefined,
+        })
+        addSessionContentFeedbackId(currentSessionId, cid)
+      }
+      setSessionContentFeedbackIds((prev) => (prev.includes(cid) ? prev : [...prev, cid]))
     } catch {
       setSyncWarningMessage("콘텐츠 피드백 저장에 실패했어요. Supabase 설정을 확인해 주세요.")
+      setMediaFeedback(null)
+    } finally {
+      setContentFeedbackSubmitting(false)
     }
   }
 
-  const handleSendMessage = async () => {
-    const trimmedMessage = inputMessage.trim()
-    if (!trimmedMessage || isSendingMessage) return
+  const handleSendMessage = (messageText: string): boolean => {
+    const trimmedMessage = messageText.trim()
+    if (!trimmedMessage || isSendingMessage) return false
     if (!user?.id) {
       setSyncWarningMessage("로그인 후 상담 메시지를 보낼 수 있어요.")
-      return
+      return false
     }
     if (!isSessionActive || !currentSessionId) {
       setSyncWarningMessage(null)
       setShowStartSessionPrompt(true)
-      return
+      return false
     }
 
     const newMessage: Message = {
@@ -912,77 +1446,90 @@ export function MoodPickDashboard() {
     }
 
     setMessages((prev) => [...prev, newMessage])
-    setInputMessage("")
     setIsSendingMessage(true)
+    touchCounselingActivity()
 
-    try {
-      const response = await sendCounselingMessage(user.id, trimmedMessage, currentSessionId)
+    void (async () => {
+      try {
+        const response = await sendCounselingMessage(
+          user.id,
+          trimmedMessage + COUNSELING_USER_MARKDOWN_SUFFIX,
+          currentSessionId
+        )
 
-      const recommended = response?.recommended_content ?? null
+        if (response?.is_crisis) {
+          setCrisisModalText(response.message ?? "")
+          setSyncWarningMessage(null)
+          return
+        }
 
-      const aiResponse: Message = {
-        id: Date.now() + 1,
-        sender: "ai",
-        text:
-          response?.message ??
-          "메시지를 받았어요. 현재는 AI 연동 전 단계라 기본 상담 응답으로 안내해드리고 있어요.",
-        timestamp: new Date().toLocaleTimeString("ko-KR", {
-          hour: "numeric",
-          minute: "2-digit",
-          hour12: true,
-        }),
-        recommendedContent: recommended,
+        const recommended = response?.recommended_content ?? null
+        const aiResponse: Message = {
+          id: Date.now() + 1,
+          sender: "ai",
+          text:
+            response?.message ??
+            "메시지를 받았어요. 현재는 AI 연동 전 단계라 기본 상담 응답으로 안내해드리고 있어요.",
+          timestamp: new Date().toLocaleTimeString("ko-KR", {
+            hour: "numeric",
+            minute: "2-digit",
+            hour12: true,
+          }),
+          recommendedContent: recommended,
+        }
+
+        setMessages((prev) => [...prev, aiResponse])
+
+        touchCounselingActivity()
+
+        if (response?.fallback) {
+          setSyncWarningMessage("AI 응답이 일시적으로 불안정해 기본 상담 응답으로 안내했어요.")
+        } else if (recommended && !recommended.video_id) {
+          setSyncWarningMessage("추천 영상을 불러오지 못했어요. 상담은 계속 이용할 수 있고, 잠시 후 다시 요청해 주세요.")
+        } else {
+          setSyncWarningMessage(null)
+        }
+
+        if (recommended?.video_id) {
+          const contentId = recommended.video_id.toString()
+          const isPodcast = contentId.toLowerCase().startsWith("podcast:")
+
+          setCurrentContent({
+            id: contentId,
+            content_id: contentId,
+            content_title: recommended.title ?? "추천 콘텐츠",
+            thumbnail_url: recommended.thumbnail,
+            media_provider: isPodcast ? "podcast" : "youtube",
+            media_url: isPodcast ? (recommended.url ?? null) : null,
+            watched_at: new Date().toISOString(),
+            session_id: currentSessionId,
+          })
+          setIsPlaying(true)
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error && error.message
+            ? error.message
+            : "상담 메시지 전송에 실패했어요. 잠시 후 다시 시도해 주세요."
+        setSyncWarningMessage(errorMessage)
+
+        const fallbackResponse: Message = {
+          id: Date.now() + 1,
+          sender: "ai",
+          text: errorMessage,
+          timestamp: new Date().toLocaleTimeString("ko-KR", {
+            hour: "numeric",
+            minute: "2-digit",
+            hour12: true,
+          }),
+        }
+        setMessages((prev) => [...prev, fallbackResponse])
+      } finally {
+        setIsSendingMessage(false)
       }
+    })()
 
-      setMessages((prev) => [...prev, aiResponse])
-
-      if (response?.fallback) {
-        setSyncWarningMessage("AI 응답이 일시적으로 불안정해 기본 상담 응답으로 안내했어요.")
-      } else if (recommended && !recommended.video_id) {
-        setSyncWarningMessage("추천 영상을 불러오지 못했어요. 상담은 계속 이용할 수 있고, 잠시 후 다시 요청해 주세요.")
-      } else {
-        setSyncWarningMessage(null)
-      }
-
-      // Update content player if recommendation includes a playable media
-      if (recommended?.video_id) {
-        const contentId = recommended.video_id.toString()
-        const isPodcast = contentId.toLowerCase().startsWith("podcast:")
-
-        setCurrentContent({
-          id: contentId,
-          content_id: contentId,
-          content_title: recommended.title ?? "추천 콘텐츠",
-          thumbnail_url: recommended.thumbnail,
-          media_provider: isPodcast ? "podcast" : "youtube",
-          // 팟캐스트는 audio 재생을 위해 오디오 URL을 media_url로 내려줍니다.
-          media_url: isPodcast ? (recommended.url ?? null) : null,
-          watched_at: new Date().toISOString(),
-          session_id: currentSessionId,
-        })
-        setIsPlaying(true)
-      }
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error && error.message
-          ? error.message
-          : "상담 메시지 전송에 실패했어요. 잠시 후 다시 시도해 주세요."
-      setSyncWarningMessage(errorMessage)
-
-      const fallbackResponse: Message = {
-        id: Date.now() + 1,
-        sender: "ai",
-        text: errorMessage,
-        timestamp: new Date().toLocaleTimeString("ko-KR", {
-          hour: "numeric",
-          minute: "2-digit",
-          hour12: true,
-        }),
-      }
-      setMessages((prev) => [...prev, fallbackResponse])
-    } finally {
-      setIsSendingMessage(false)
-    }
+    return true
   }
 
   const handleSaveDisplayName = async (name: string): Promise<boolean> => {
@@ -1090,7 +1637,32 @@ export function MoodPickDashboard() {
     }
   }
 
+  const handlePlayContentFromHistory = (item: ContentHistoryItem) => {
+    const playback = resolvePlayback({
+      content_id: item.content_id,
+      media_provider: item.media_provider,
+      media_url: item.media_url,
+    })
+    if (playback.kind === "none") {
+      const url = item.media_url?.trim()
+      if (url && /^https?:\/\//i.test(url)) {
+        window.open(url, "_blank", "noopener,noreferrer")
+        return
+      }
+      setCurrentContent(item)
+      setIsPlaying(true)
+      setSyncWarningMessage("이 콘텐츠는 앱에서 바로 재생할 수 없습니다.")
+      setDashboardHistoryFullscreenOpen(true)
+      return
+    }
+    setSyncWarningMessage(null)
+    setCurrentContent(item)
+    setIsPlaying(true)
+    setDashboardHistoryFullscreenOpen(true)
+  }
+
   const handleSaveReminderPreference = async () => {
+    if (!REMINDER_FEATURE_ENABLED) return
     if (!user?.id) return
 
     setReminderSaveMessage(null)
@@ -1197,7 +1769,7 @@ export function MoodPickDashboard() {
   }
 
   // Show onboarding if first time after login
-  if (!hasCompletedOnboarding) {
+  if (!DEMO_HIDE_ONBOARDING && !hasCompletedOnboarding) {
     return (
       <OnboardingScreen
         selectedConcerns={selectedConcerns}
@@ -1211,6 +1783,28 @@ export function MoodPickDashboard() {
       />
     )
   }
+
+  if (shouldShowSurvey) {
+    return (
+      <SurveyScreen
+        gad={gad}
+        setGad={setGad}
+        phq={phq}
+        setPhq={setPhq}
+        pss={pss}
+        setPss={setPss}
+        onComplete={handleSurveySave}
+        isSaving={isSavingSurvey}
+        errorMessage={surveyErrorMessage}
+      />
+    )
+  }
+
+  if (!readIntroduce) {
+    return (
+      <Introduce introduceCheck={handleCheckIntroduce}/>
+    )
+  }  
 
   return (
     <div className="flex h-screen bg-background">
@@ -1238,7 +1832,7 @@ export function MoodPickDashboard() {
             {navItems.map((item) => (
               <li key={item.id}>
                 <button
-                  onClick={() => setActiveTab(item.id)}
+                  onClick={() => handleSelectNavTab(item.id)}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all duration-200 ${
                     activeTab === item.id
                       ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
@@ -1265,7 +1859,7 @@ export function MoodPickDashboard() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto">
+      <main className="flex-1 min-w-0 overflow-auto">
         {activeTab === "home" && (
           <HomeView
             onStartNewSession={handleStartNewSession}
@@ -1277,23 +1871,6 @@ export function MoodPickDashboard() {
               setActiveTab("counseling")
             }}
             flowMessage={syncWarningMessage}
-          />
-        )}
-        {/* Pre-Survey Overlay */}
-        {showPreSurvey && (
-          <PreSurveyOverlay
-            selectedMood={preSurveyMood}
-            setSelectedMood={setPreSurveyMood}
-            onStart={handlePreSurveyComplete}
-            onClose={() => setShowPreSurvey(false)}
-          />
-        )}
-        {/* Post-Survey Overlay */}
-        {showPostSurvey && (
-          <PostSurveyOverlay
-            selectedMood={postSurveyMood}
-            setSelectedMood={setPostSurveyMood}
-            onComplete={handlePostSurveyComplete}
           />
         )}
         <Dialog open={showStartSessionPrompt} onOpenChange={setShowStartSessionPrompt}>
@@ -1318,16 +1895,39 @@ export function MoodPickDashboard() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        <Dialog open={showResumeSessionDialog} onOpenChange={handleResumeDialogOpenChange}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>진행 중인 상담이 있어요</DialogTitle>
+              <DialogDescription>
+                이전에 시작한 상담을 이어서 진행할까요, 아니면 새로 시작할까요?
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="flex-col gap-2 sm:flex-col">
+              <Button type="button" className="w-full rounded-xl" onClick={() => void handleResumeSessionConfirm()}>
+                이전 상담 이어하기
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full rounded-xl"
+                onClick={() => void handleResumeSessionNewStart()}
+              >
+                새로 시작하기
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         {activeTab === "counseling" && (
           <CounselingView
             messages={messages}
-            inputMessage={inputMessage}
-            setInputMessage={setInputMessage}
             onSendMessage={handleSendMessage}
             isSendingMessage={isSendingMessage}
             isPlaying={isPlaying}
             setIsPlaying={setIsPlaying}
             autoPlayEnabled={autoPlayEnabled}
+            contentFeedbackSubmitting={contentFeedbackSubmitting}
+            contentFeedbackComplete={contentFeedbackComplete}
             mediaFeedback={mediaFeedback}
             onMediaFeedbackChange={handleMediaFeedbackChange}
             onEndSession={handleEndSession}
@@ -1337,6 +1937,9 @@ export function MoodPickDashboard() {
             currentContent={currentContent}
             recommendedQueue={recommendedQueue}
             onSelectRecommendedContent={setCurrentContent}
+            idleWrapUpBanner={showIdleWrapUpBanner}
+            onDismissIdleWrapUp={() => setShowIdleWrapUpBanner(false)}
+            onRequestEndFromIdle={handleEndSession}
           />
         )}
         {activeTab === "dashboard" && (
@@ -1354,6 +1957,7 @@ export function MoodPickDashboard() {
             lastSurveyDelta={lastSurveyDelta}
             userStats={userStats}
             onCalendarDayClick={handleCalendarDayClick}
+            onPlayContentHistory={handlePlayContentFromHistory}
           />
         )}
         {activeTab === "mypage" && (
@@ -1385,9 +1989,96 @@ export function MoodPickDashboard() {
             isExportingMyData={isExportingMyData}
             exportMyDataMessage={exportMyDataMessage}
             setHasCompletedOnboarding={setHasCompletedOnboarding}
+            setSurveySave={setSurveySave}
+            surveyEnter={surveyEnter}
           />
         )}
       </main>
+
+      {showPreSurvey &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <PreSurveyOverlay
+            selectedMood={preSurveyMood}
+            setSelectedMood={setPreSurveyMood}
+            onStart={handlePreSurveyComplete}
+            showCounselingTabGateHint={preSurveyFromCounselingTabNav}
+            onClose={() => {
+              setShowPreSurvey(false)
+              if (preSurveyFromCounselingTabNav) {
+                setActiveTab("home")
+              }
+              setPreSurveyFromCounselingTabNav(false)
+            }}
+          />,
+          document.body
+        )}
+      {showPostSurvey &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <PostSurveyOverlay
+            selectedMood={postSurveyMood}
+            setSelectedMood={setPostSurveyMood}
+            isSubmitting={isPostSurveySubmitting}
+            onComplete={handlePostSurveyComplete}
+          />,
+          document.body
+        )}
+
+      {dashboardHistoryFullscreenOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex flex-col bg-background p-4 sm:p-6 overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-label="저장된 콘텐츠 전체 화면"
+        >
+          <ContentMediaPanel
+            variant="fullscreen"
+            currentContent={currentContent}
+            recommendedQueue={[]}
+            isPlaying={isPlaying}
+            setIsPlaying={setIsPlaying}
+            autoPlayEnabled={autoPlayEnabled}
+            contentFeedbackSubmitting={contentFeedbackSubmitting}
+            contentFeedbackComplete={contentFeedbackComplete}
+            mediaFeedback={mediaFeedback}
+            onMediaFeedbackChange={handleMediaFeedbackChange}
+            syncWarningMessage={syncWarningMessage}
+            onSelectRecommendedContent={setCurrentContent}
+            onExitFullscreen={() => setDashboardHistoryFullscreenOpen(false)}
+          />
+        </div>
+      )}
+
+      <AlertDialog
+        open={crisisModalText !== null}
+        onOpenChange={(open) => {
+          if (!open) setCrisisModalText(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>잠시 멈추고 이 메시지를 읽어 주세요</AlertDialogTitle>
+          </AlertDialogHeader>
+          <div className="py-2">
+            <ChatMarkdown source={crisisModalText ?? ""} />
+          </div>
+          <div className="aspect-video w-full overflow-hidden rounded-lg">
+            <iframe
+              src="https://www.youtube-nocookie.com/embed/CPYLnJFrqlw?autoplay=1&mute=1&playsinline=1"
+              title="자살예방 안내 영상"
+              allow="autoplay; accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+              className="h-full w-full"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setCrisisModalText(null)}>
+              알겠어요
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={dayDetailOpen} onOpenChange={setDayDetailOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
@@ -1409,10 +2100,10 @@ export function MoodPickDashboard() {
               </div>
               <div className="flex flex-wrap gap-2 text-xs">
                 <span className="rounded-full bg-muted px-2 py-1">
-                  사전: {dayDetailData.pre_mood_general ?? "—"}
+                  사전: {formatMoodGeneralForDisplay(dayDetailData.pre_mood_general)}
                 </span>
                 <span className="rounded-full bg-muted px-2 py-1">
-                  사후: {dayDetailData.post_mood_general ?? "—"}
+                  사후: {formatMoodGeneralForDisplay(dayDetailData.post_mood_general)}
                 </span>
                 {dayDetailData.delta_average != null && (
                   <span className="rounded-full bg-muted px-2 py-1">
@@ -1507,6 +2198,7 @@ function HomeView({
           <div className="flex gap-6">
             <div className="w-48 h-32 rounded-xl bg-muted flex items-center justify-center overflow-hidden shrink-0">
               {homeThumbUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img src={homeThumbUrl} alt="" className="w-full h-full object-cover" />
               ) : (
                 <div className="text-center">
@@ -1540,7 +2232,7 @@ function HomeView({
       <div className="grid grid-cols-3 gap-4 mt-8">
         <Card className="border-0 bg-secondary/50">
           <CardContent className="p-6 text-center">
-            <p className="text-3xl font-bold text-primary mb-1">{userStats?.total_content_watched ?? 0}</p>
+            <p className="text-3xl font-bold text-primary mb-1">{userStats?.weekly_record_days ?? 0}</p>
             <p className="text-sm text-muted-foreground">이번 주 기록일</p>
           </CardContent>
         </Card>
@@ -1561,13 +2253,15 @@ function HomeView({
   )
 }
 
-function ContentMediaPanel({
+const ContentMediaPanel = memo(function ContentMediaPanel({
   variant,
   currentContent,
   recommendedQueue,
   isPlaying,
   setIsPlaying,
   autoPlayEnabled,
+  contentFeedbackSubmitting = false,
+  contentFeedbackComplete = false,
   mediaFeedback,
   onMediaFeedbackChange,
   syncWarningMessage,
@@ -1581,6 +2275,8 @@ function ContentMediaPanel({
   isPlaying: boolean
   setIsPlaying: (value: boolean) => void
   autoPlayEnabled: boolean
+  contentFeedbackSubmitting?: boolean
+  contentFeedbackComplete?: boolean
   mediaFeedback: "like" | "dislike" | null
   onMediaFeedbackChange: (value: "like" | "dislike") => void
   syncWarningMessage: string | null
@@ -1594,7 +2290,10 @@ function ContentMediaPanel({
     media_provider: currentContent.media_provider,
     media_url: currentContent.media_url,
   })
-  const isEmbed = playback.kind === "youtube" || playback.kind === "spotify"
+  const hasPlayableContent = Boolean(currentContent.content_id.trim())
+  const isEmbed = playback.kind === "youtube"
+  const feedbackDisabled =
+    !hasPlayableContent || contentFeedbackSubmitting || contentFeedbackComplete
 
   // Podcast 전용 오디오 상태/컨트롤
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -1717,6 +2416,21 @@ function ContentMediaPanel({
         </div>
       )}
 
+      {hasPlayableContent &&
+        playback.kind === "youtube" &&
+        playback.youtubeVideoId &&
+        autoPlayEnabled && (
+          <div
+            className="mb-3 flex shrink-0 gap-2 rounded-xl border border-border bg-muted/60 px-3 py-2.5 text-sm text-foreground/90"
+            role="note"
+          >
+            <Volume2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+            <p className="leading-snug">
+              유튜브는 브라우저 정책상 자동 재생 시 처음에 음소거됩니다. 플레이어 안의 음소거를 해제하면 소리가 납니다.
+            </p>
+          </div>
+        )}
+
       <Card
         className={cn(
           "overflow-hidden border-0 shadow-lg shrink-0",
@@ -1732,8 +2446,7 @@ function ContentMediaPanel({
             playback.kind === "podcast" &&
               "min-h-[260px] h-[min(56vh,380px)] max-h-[420px] w-full max-w-[min(100%,22rem)] mx-auto flex-col sm:min-h-[280px] sm:h-[min(52vh,400px)] sm:max-w-[24rem]",
             isEmbed && playback.kind === "youtube" && "aspect-video items-center justify-center",
-            isEmbed && playback.kind === "spotify" && "min-h-[352px] h-[352px] items-center justify-center",
-            isFullscreen && playback.kind !== "spotify" && playback.kind !== "podcast" && "max-h-[min(52vh,560px)] w-full",
+            isFullscreen && playback.kind === "youtube" && "max-h-[min(52vh,560px)] w-full",
             isFullscreen && playback.kind === "podcast" && "max-h-[min(70vh,520px)] flex-1 min-h-0"
           )}
         >
@@ -1747,7 +2460,7 @@ function ContentMediaPanel({
               <Maximize2 className="w-4 h-4 text-primary-foreground" />
             </button>
           )}
-          {playback.kind === "youtube" && playback.youtubeVideoId && (
+          {hasPlayableContent && playback.kind === "youtube" && playback.youtubeVideoId && (
             <iframe
               key={`yt-${playback.youtubeVideoId}-${autoPlayEnabled ? "ap" : "noap"}`}
               title={currentContent.content_title}
@@ -1757,17 +2470,7 @@ function ContentMediaPanel({
               allowFullScreen
             />
           )}
-          {playback.kind === "spotify" && playback.spotifyTrackId && (
-            <iframe
-              key={`sp-${playback.spotifyTrackId}-${autoPlayEnabled ? "ap" : "noap"}`}
-              title={currentContent.content_title}
-              className="absolute inset-0 h-full w-full border-0"
-              src={spotifyEmbedUrl(playback.spotifyTrackId, { autoplay: autoPlayEnabled })}
-              allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-              loading="lazy"
-            />
-          )}
-          {playback.kind === "podcast" && playback.podcastAudioUrl && (
+          {hasPlayableContent && playback.kind === "podcast" && playback.podcastAudioUrl && (
             <>
               <div
                 className="absolute inset-0 bg-center bg-cover opacity-35 blur-2xl scale-110"
@@ -1938,7 +2641,7 @@ function ContentMediaPanel({
               </div>
             </>
           )}
-          {playback.kind === "none" && (
+          {hasPlayableContent && playback.kind === "none" && (
             <>
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="text-center text-primary-foreground">
@@ -1959,23 +2662,10 @@ function ContentMediaPanel({
             <span className="px-2 py-1 bg-primary/10 text-primary text-xs rounded-full font-medium">
               {playback.kind === "youtube"
                 ? "YouTube"
-                : playback.kind === "spotify"
-                  ? "Spotify"
-                  : playback.kind === "podcast"
-                    ? "Podcast"
-                    : "재생 중"}
+                : playback.kind === "podcast"
+                  ? "Podcast"
+                  : "재생 중"}
             </span>
-            {playback.kind === "spotify" && playback.spotifyTrackId && (
-              <a
-                href={spotifyOpenUrl(playback.spotifyTrackId)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                앱에서 열기
-              </a>
-            )}
           </div>
           <h4 className="font-medium text-foreground mb-2 text-balance">{currentContent.content_title}</h4>
           <p className="text-sm text-muted-foreground mb-4">
@@ -2018,48 +2708,58 @@ function ContentMediaPanel({
         </CardContent>
       </Card>
 
-      <div className={cn("mt-4 p-4 rounded-xl bg-secondary/30 shrink-0", isFullscreen && "max-w-5xl w-full mx-auto")}>
-        <p className="text-sm text-center text-muted-foreground mb-3">이 콘텐츠가 도움이 되었나요?</p>
-        <div className="flex items-center justify-center gap-6 sm:gap-10">
-          <div className="flex flex-col items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => onMediaFeedbackChange("like")}
-              className={cn(
-                "flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-2xl border-2 text-3xl sm:text-4xl transition-all",
-                mediaFeedback === "like"
-                  ? "border-primary bg-primary/15 shadow-md scale-105"
-                  : "border-transparent bg-muted/60 hover:bg-muted"
-              )}
-              aria-label="도움이 됐어요"
-              aria-pressed={mediaFeedback === "like"}
-            >
-              👍
-            </button>
-            <span className="text-xs text-muted-foreground">도움이 됐어요</span>
+      {hasPlayableContent && (
+        <div className={cn("mt-4 p-4 rounded-xl bg-secondary/30 shrink-0", isFullscreen && "max-w-5xl w-full mx-auto")}>
+          <p className="text-sm text-center text-muted-foreground mb-3">
+            {contentFeedbackComplete
+              ? "의견을 반영했어요. 재생은 그대로 이어져요."
+              : "이 콘텐츠가 도움이 되었나요?"}
+          </p>
+          <div className="flex items-center justify-center gap-6 sm:gap-10">
+            <div className="flex flex-col items-center gap-1.5">
+              <button
+                type="button"
+                disabled={feedbackDisabled}
+                onClick={() => onMediaFeedbackChange("like")}
+                className={cn(
+                  "flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-2xl border-2 text-3xl sm:text-4xl transition-all",
+                  feedbackDisabled && "opacity-50 cursor-not-allowed",
+                  mediaFeedback === "like"
+                    ? "border-primary bg-primary/15 shadow-md scale-105"
+                    : "border-transparent bg-muted/60 hover:bg-muted"
+                )}
+                aria-label="도움이 됐어요"
+                aria-pressed={mediaFeedback === "like"}
+              >
+                👍
+              </button>
+              <span className="text-xs text-muted-foreground">도움이 됐어요</span>
+            </div>
+            <div className="flex flex-col items-center gap-1.5">
+              <button
+                type="button"
+                disabled={feedbackDisabled}
+                onClick={() => onMediaFeedbackChange("dislike")}
+                className={cn(
+                  "flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-2xl border-2 text-3xl sm:text-4xl transition-all",
+                  feedbackDisabled && "opacity-50 cursor-not-allowed",
+                  mediaFeedback === "dislike"
+                    ? "border-primary bg-primary/15 shadow-md scale-105"
+                    : "border-transparent bg-muted/60 hover:bg-muted"
+                )}
+                aria-label="아쉬워요"
+                aria-pressed={mediaFeedback === "dislike"}
+              >
+                👎
+              </button>
+              <span className="text-xs text-muted-foreground">아쉬워요</span>
+            </div>
           </div>
-          <div className="flex flex-col items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => onMediaFeedbackChange("dislike")}
-              className={cn(
-                "flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-2xl border-2 text-3xl sm:text-4xl transition-all",
-                mediaFeedback === "dislike"
-                  ? "border-primary bg-primary/15 shadow-md scale-105"
-                  : "border-transparent bg-muted/60 hover:bg-muted"
-              )}
-              aria-label="아쉬워요"
-              aria-pressed={mediaFeedback === "dislike"}
-            >
-              👎
-            </button>
-            <span className="text-xs text-muted-foreground">아쉬워요</span>
-          </div>
+          {syncWarningMessage && (
+            <p className="mt-3 text-xs text-center text-destructive">{syncWarningMessage}</p>
+          )}
         </div>
-        {syncWarningMessage && (
-          <p className="mt-3 text-xs text-center text-destructive">{syncWarningMessage}</p>
-        )}
-      </div>
+      )}
 
       <div className={cn("mt-6 min-h-0", isFullscreen && "max-w-5xl w-full mx-auto pb-2")}>
         <h4 className="text-sm font-medium text-foreground mb-3">다음 추천 콘텐츠</h4>
@@ -2094,17 +2794,68 @@ function ContentMediaPanel({
       </div>
     </div>
   )
-}
+})
+
+const CounselChatBubble = memo(function CounselChatBubble({ message }: { message: Message }) {
+  return (
+    <div
+      className={`flex w-full min-w-0 ${message.sender === "user" ? "justify-end" : "justify-start"}`}
+    >
+      <div
+        className={`max-w-[80%] min-w-0 rounded-2xl px-4 py-3 ${
+          message.sender === "user"
+            ? "bg-primary text-primary-foreground rounded-br-md"
+            : "bg-muted text-foreground rounded-bl-md"
+        }`}
+      >
+        {message.sender === "user" ? (
+          <p className="break-words text-sm leading-relaxed">
+            {stripCounselingUserMarkdownSuffix(message.text)}
+          </p>
+        ) : (
+          <ChatMarkdown source={message.text} />
+        )}
+        {message.sender === "ai" && message.recommendedContent?.video_id && (
+          <div className="mt-3 p-3 rounded-xl bg-background/80 border">
+            <div className="flex items-center gap-3">
+              {message.recommendedContent.thumbnail && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={message.recommendedContent.thumbnail}
+                  alt={message.recommendedContent.title ?? ""}
+                  className="w-20 h-14 rounded-lg object-cover flex-shrink-0"
+                />
+              )}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{message.recommendedContent.title}</p>
+                {message.recommendedContent.reason && (
+                  <p className="text-xs text-muted-foreground mt-0.5">{message.recommendedContent.reason}</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        <p
+          className={`text-xs mt-1 ${
+            message.sender === "user" ? "text-primary-foreground/70" : "text-muted-foreground"
+          }`}
+        >
+          {message.timestamp}
+        </p>
+      </div>
+    </div>
+  )
+})
 
 function CounselingView({
   messages,
-  inputMessage,
-  setInputMessage,
   onSendMessage,
   isSendingMessage,
   isPlaying,
   setIsPlaying,
   autoPlayEnabled,
+  contentFeedbackSubmitting,
+  contentFeedbackComplete,
   mediaFeedback,
   onMediaFeedbackChange,
   onEndSession,
@@ -2114,15 +2865,18 @@ function CounselingView({
   currentContent,
   recommendedQueue,
   onSelectRecommendedContent,
+  idleWrapUpBanner = false,
+  onDismissIdleWrapUp,
+  onRequestEndFromIdle,
 }: {
   messages: Message[]
-  inputMessage: string
-  setInputMessage: (value: string) => void
-  onSendMessage: () => Promise<void>
+  onSendMessage: (messageText: string) => boolean
   isSendingMessage: boolean
   isPlaying: boolean
   setIsPlaying: (value: boolean) => void
   autoPlayEnabled: boolean
+  contentFeedbackSubmitting: boolean
+  contentFeedbackComplete: boolean
   mediaFeedback: "like" | "dislike" | null
   onMediaFeedbackChange: (value: "like" | "dislike") => void
   onEndSession: () => void
@@ -2132,8 +2886,12 @@ function CounselingView({
   currentContent: ContentHistoryItem
   recommendedQueue: ContentHistoryItem[]
   onSelectRecommendedContent: (value: ContentHistoryItem) => void
+  idleWrapUpBanner?: boolean
+  onDismissIdleWrapUp?: () => void
+  onRequestEndFromIdle?: () => void
 }) {
   const [contentFullscreen, setContentFullscreen] = useState(false)
+  const [draft, setDraft] = useState("")
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -2156,22 +2914,45 @@ function CounselingView({
     })
   }, [messages])
 
-  const mediaProps = {
-    currentContent,
-    recommendedQueue,
-    isPlaying,
-    setIsPlaying,
-    autoPlayEnabled,
-    mediaFeedback,
-    onMediaFeedbackChange,
-    syncWarningMessage,
-    onSelectRecommendedContent,
+  const mediaProps = useMemo(
+    () => ({
+      currentContent,
+      recommendedQueue,
+      isPlaying,
+      setIsPlaying,
+      autoPlayEnabled,
+      contentFeedbackSubmitting,
+      contentFeedbackComplete,
+      mediaFeedback,
+      onMediaFeedbackChange,
+      syncWarningMessage,
+      onSelectRecommendedContent,
+    }),
+    [
+      currentContent,
+      recommendedQueue,
+      isPlaying,
+      setIsPlaying,
+      autoPlayEnabled,
+      contentFeedbackSubmitting,
+      contentFeedbackComplete,
+      mediaFeedback,
+      onMediaFeedbackChange,
+      syncWarningMessage,
+      onSelectRecommendedContent,
+    ]
+  )
+
+  const submitDraft = () => {
+    if (onSendMessage(draft)) {
+      setDraft("")
+    }
   }
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex h-full min-h-0 min-w-0">
       {/* Chat Section */}
-      <div className="flex-1 flex flex-col border-r border-border min-w-0">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col border-r border-border">
         <div className="p-4 border-b border-border bg-card">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -2190,67 +2971,57 @@ function CounselingView({
           </div>
         </div>
 
-        <ScrollArea className="flex-1 p-4 overflow-y-auto">
-          <div className="space-y-4">
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                className={`flex ${message.sender === "user" ? "justify-end" : "justify-start"}`}
+        {idleWrapUpBanner && isSessionActive && (
+          <div className="shrink-0 border-b border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
+            <p className="font-medium">잠시 대화가 멈춘 것 같아요.</p>
+            <p className="mt-1 text-amber-900/85 dark:text-amber-50/85">
+              계속 상담하시겠어요? 마무리하고 싶다면 오늘의 상담을 종료할 수 있어요.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="rounded-lg"
+                onClick={() => onDismissIdleWrapUp?.()}
               >
-                <div
-                  className={`max-w-[80%] rounded-2xl px-4 py-3 ${
-                    message.sender === "user"
-                      ? "bg-primary text-primary-foreground rounded-br-md"
-                      : "bg-muted text-foreground rounded-bl-md"
-                  }`}
-                >
-                  <p className="text-sm leading-relaxed">{message.text}</p>
-                  {/* Recommended content card in chat bubble */}
-                  {message.sender === "ai" && message.recommendedContent?.video_id && (
-                    <div className="mt-3 p-3 rounded-xl bg-background/80 border">
-                      <div className="flex items-center gap-3">
-                        {message.recommendedContent.thumbnail && (
-                          <img
-                            src={message.recommendedContent.thumbnail}
-                            alt={message.recommendedContent.title ?? ""}
-                            className="w-20 h-14 rounded-lg object-cover flex-shrink-0"
-                          />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{message.recommendedContent.title}</p>
-                          {message.recommendedContent.reason && (
-                            <p className="text-xs text-muted-foreground mt-0.5">{message.recommendedContent.reason}</p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  <p
-                    className={`text-xs mt-1 ${
-                      message.sender === "user" ? "text-primary-foreground/70" : "text-muted-foreground"
-                    }`}
-                  >
-                    {message.timestamp}
-                  </p>
-                </div>
-              </div>
+                계속 할게요
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="rounded-lg border-destructive text-destructive hover:bg-destructive/10"
+                onClick={() => onRequestEndFromIdle?.()}
+              >
+                상담 종료하기
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-4 [scrollbar-gutter:stable]">
+          <div className="min-w-0 space-y-4">
+            {messages.map((message) => (
+              <CounselChatBubble key={message.id} message={message} />
             ))}
-            {messages.at(-1)?.sender !=='ai' &&
-              <div className="w-8 h-8 border-[3px] border-primary border-t-transparent rounded-full animate-spin" />}
+            {isSendingMessage && (
+              <div className="w-8 h-8 border-[3px] border-primary border-t-transparent rounded-full animate-spin" />
+            )}
             <div ref={bottomRef} />
           </div>
-        </ScrollArea>
+        </div>
 
         <div className="p-4 border-t border-border bg-card">
           <div className="flex gap-3 mb-3">
             <Input
-              value={inputMessage}
-              onChange={(e) => setInputMessage(e.target.value)}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
               placeholder="메시지를 입력하세요..."
               className="flex-1 rounded-xl bg-muted border-0"
-              onKeyDown={(e) => e.key === "Enter" && void onSendMessage()}
+              onKeyDown={(e) => e.key === "Enter" && submitDraft()}
             />
-            <Button onClick={() => void onSendMessage()} size="icon" className="rounded-xl" disabled={isSendingMessage}>
+            <Button onClick={submitDraft} size="icon" className="rounded-xl" disabled={isSendingMessage}>
               <Send className={`w-4 h-4 ${isSendingMessage ? "opacity-50" : ""}`} />
             </Button>
           </div>
@@ -2298,6 +3069,7 @@ function DashboardView({
   lastSurveyDelta,
   userStats,
   onCalendarDayClick,
+  onPlayContentHistory,
 }: {
   calendarYear: number
   currentMonth: number
@@ -2312,6 +3084,7 @@ function DashboardView({
   lastSurveyDelta: SurveyDeltaSummary | null
   userStats: UserStats | null
   onCalendarDayClick: (day: number) => void
+  onPlayContentHistory: (item: ContentHistoryItem) => void
 }) {
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -2506,7 +3279,17 @@ function DashboardView({
             {contentHistory.map((media) => (
               <div
                 key={media.id}
-                className="flex-shrink-0 w-48 group cursor-pointer"
+                role="button"
+                tabIndex={0}
+                aria-label={`${media.content_title} 재생`}
+                onClick={() => onPlayContentHistory(media)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault()
+                    onPlayContentHistory(media)
+                  }
+                }}
+                className="flex-shrink-0 w-48 group cursor-pointer rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
                 <div className="aspect-video rounded-xl bg-muted mb-2 relative overflow-hidden">
                   <div className="absolute inset-0 flex items-center justify-center">
@@ -2541,12 +3324,19 @@ function DashboardView({
         <CardContent>
           <div className="grid grid-cols-3 gap-4">
             {sessionHistory.map((session) => (
-              <Card key={session.id} className="border border-border bg-muted/30">
+              <Card key={session.sessionId} className="border border-border bg-muted/30">
                 <CardContent className="p-4">
-                  <p className="text-sm text-muted-foreground mb-2">{session.date}</p>
-                  <div className="mb-3">
-                    <p className="text-xs text-muted-foreground mb-1">주요 고민</p>
-                    <p className="font-medium text-foreground">{session.concern}</p>
+                  <div className="mb-3 space-y-0.5">
+                    <p className="text-sm text-muted-foreground">{session.date}</p>
+                    <p className="text-xs text-muted-foreground">
+                      <span>{session.timeLabel} 시작</span>
+                      {session.endTimeLabel ? (
+                        <span className="opacity-90"> · {session.endTimeLabel} 종료</span>
+                      ) : null}
+                      {session.durationLabel ? (
+                        <span className="opacity-90"> · {session.durationLabel}</span>
+                      ) : null}
+                    </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">추천된 콘텐츠</p>
@@ -2740,7 +3530,7 @@ function LoginScreen({
                     className="absolute inset-y-0 right-0 flex items-center justify-center w-12 text-muted-foreground hover:text-foreground"
                     aria-label={showLoginPassword ? "비밀번호 숨기기" : "비밀번호 보기"}
                   >
-                    {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showLoginPassword ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
@@ -2765,7 +3555,7 @@ function LoginScreen({
                       className="absolute inset-y-0 right-0 flex items-center justify-center w-12 text-muted-foreground hover:text-foreground"
                       aria-label={showConfirmPassword ? "비밀번호 숨기기" : "비밀번호 보기"}
                     >
-                      {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      {showConfirmPassword ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                     </button>
                   </div>
                   {confirmPassword && password !== confirmPassword && (
@@ -2826,11 +3616,6 @@ function LoginScreen({
               </>
             )}
 
-            {isEmailOnlyMode && (
-              <p className="text-xs text-center text-muted-foreground mb-2">
-                현재는 이메일 로그인/회원가입만 제공됩니다. 소셜 로그인은 추후 추가됩니다.
-              </p>
-            )}
 
             {/* Sign Up Link */}
             <p className="text-center text-sm text-muted-foreground mt-6">
@@ -2853,9 +3638,6 @@ function LoginScreen({
         </Card>
 
         {/* Footer */}
-        <p className="text-center text-xs text-muted-foreground mt-6">
-          로그인하면 무드픽의 이용약관 및 개인정보처리방침에 동의하게 됩니다.
-        </p>
       </div>
     </div>
   )
@@ -2930,7 +3712,7 @@ function OnboardingScreen({
             </div>
 
             {/* Question 1 */}
-            <div className="mb-8">
+            <div className="mb-6 flex-1">
               <h3 className="text-base font-semibold text-foreground mb-3">
                 요즘 가장 큰 고민이나 스트레스는 무엇인가요?
               </h3>
@@ -2996,7 +3778,6 @@ function OnboardingScreen({
             >
               나중에 설정할게요
             </button>
-
             {errorMessage && <p className="mt-3 text-center text-xs text-destructive">{errorMessage}</p>}
           </CardContent>
         </Card>
@@ -3012,7 +3793,7 @@ function SurveyScreen({
   setPhq,
   pss,
   setPss,
-  onSave,
+  onComplete,
   isSaving,
   errorMessage,
 }: {
@@ -3022,192 +3803,333 @@ function SurveyScreen({
   setPhq: React.Dispatch<React.SetStateAction<SurveyState>>;
   pss: SurveyState;
   setPss: React.Dispatch<React.SetStateAction<SurveyState>>;
-  onSave: (submit: boolean) => void;
+  onComplete: () => Promise<void>;
   isSaving: boolean;
   errorMessage: string | null;
 }) {
   const surveyConfigs: Record<SurveyType, SurveyConfig> = {
-  GAD: {
-    title: "GAD-7",
-    description: "지난 2주 동안 당신은 다음의 문제들로 인해서 얼마나 자주 방해를 받았습니까?",
-    questions: [
-      "초조하거나 불안하거나 조마조마하게 느낀다.",
-      "걱정하는 것을 멈추거나 조절할 수가 없다.",
-      "여러 가지 것들에 대해 걱정을 너무 많이한다.",
-      "편하게 있기가 어렵다.",
-      "너무 안절부절 못해서 가만히 있기가 힘들다.",
-      "쉽게 짜증이 나거나 쉽게 성을 내게 된다.",
-      "마치 끔찍한 일이 생길 것처럼 두렵게 느껴진다.",
-    ],
-    scoreDescription: "전혀 아니다(0점), 몇일 동안(1점), 2주 중 절반 이상(2점), 거의 매일(3점), 매우 자주(4점)",
-    scoreOptions: [0, 1, 2, 3, 4],
-  },
-
-  PHQ: {
-    title: "PHQ-9",
-    description: "아래의 문항을 잘 읽으신 후, 지난 2주 동안 자신을 가장 잘 설명하는 칸에 체크 해 주세요.",
-    questions: [
-      "기분이 가라앉거나, 우울하거나, 희망이 없다고 느꼈다.",
-      "평소 하던 일에 대한 흥미가 없어지거나 즐거움을 느끼지 못했다.",
-      "잠들기가 어렵거나 자꾸 깼다/혹은 너무 많이 잤다.",
-      "평소보다 식욕이 줄었다/혹은 평소보다 많이 먹었다.",
-      "다른 사람들이 눈치 챌 정도로 평소보다 말과 행동이 느려졌다 / 혹은 너무 안절부절 못해서 가만히 앉아있을 수 없었다.",
-      "피곤하고 기운이 없었다.",
-      "내가 잘 못했거나, 실패했다는 생각이 들었다 / 혹은 자신과 가족을 실망시켰다고 생각했다.",
-      "신문을 읽거나 TV를 보는 것과 같은 일상적인 일에도 집중할 수가 없었다.",
-      "차라리 죽는 것이 더 낫겠다고 생각했다 / 혹은 자해할 생각을 했다.",
-    ],
-    scoreDescription: "전혀 아니다(0점), 여러 날 동안(1점), 일주일 이상(2점), 거의 매일(3점)",
-    scoreOptions: [0, 1, 2, 3],
-  },
-
-  PSS: {
-    title: "PSS",
-    description: "아래의 문항을 잘 읽으신 후, 지난 1개월 동안 자신의 상태를 가장 잘 나타내는 문항을 선택하여 주십시오.",
-    questions: [
-      "예상치 못했던 일 때문에 당황했던 적이 얼마나 있었습니까?",
-      "인생에서 중요한 일들을 조절할 수 없다는 느낌을 얼마나 경험하였습니까?",
-      "신경이 예민해지고 스트레스를 받고 있다는 느낌을 얼마나 경험하였습니까?",
-      "당신의 개인적 문제들을 다루는데 있어서 얼마나 자주 자신감을 느끼셨습니까?",
-      "일상의 일들이 당신의 생각대로 진행되고 있다는 느낌을 얼마나 경험하였습니까?",
-      "당신이 꼭 해야 하는 일을 처리할 수 없다고 생각한 적이 얼마나 있었습니까?",
-      "일상생활의 짜증을 얼마나 자주 잘 다스릴 수 있었습니까?",
-      "최상의 컨디션이라고 얼마나 자주 느끼셨습니까?",
-      "당신이 통제할 수 없는 일 때문에 화가 난 경험이 얼마나 있었습니까?",
-      "어려운 일들이 너무 많이 쌓여서 극복하지 못할 것 같은 느낌을 얼마나 자주 경험하셨습니까?",
-    ],
-    scoreDescription: "전혀 없었다(0점), 거의 없었다(1점), 때때로 있었다(2점), 자주 있었다(3점), 매우 자주 있었다(4점)",
-    scoreOptions: [0, 1, 2, 3, 4],
-  },
-};
-
-  const [surveyType, setSurveyType] = useState<SurveyType>("GAD");
-  const currentConfig = surveyConfigs[surveyType];
-  const currentSurvey = surveyType === "GAD" ? gad : surveyType === "PHQ" ? phq : pss;
-  const currentSetSurvey =surveyType === "GAD" ? setGad : surveyType === "PHQ" ? setPhq : setPss;
-  const [surveyIndex, setSurveyIndex] = useState(0)
-  const completedCount = currentSurvey.scores.filter((score) => score !== -1).length;
-  const isCompleted = currentSurvey.scores.every((score) => score !== -1);
-  const isSubmitted = currentSurvey.isDone;
-  const handleSaveSurvey=(submit: boolean)=>{
-    if (submit) {
-    currentSetSurvey((prev) => ({...prev, isDone: true,}));
-    }
-    onSave(submit);
+    GAD: {
+      title: "GAD-7",
+      description: "지난 2주 동안 당신은 다음의 문제들로 인해서 얼마나 자주 방해를 받았습니까?",
+      questions: [
+        "초조하거나 불안하거나 조마조마하게 느낀다.",
+        "걱정하는 것을 멈추거나 조절할 수가 없다.",
+        "여러 가지 것들에 대해 걱정을 너무 많이한다.",
+        "편하게 있기가 어렵다.",
+        "너무 안절부절 못해서 가만히 있기가 힘들다.",
+        "쉽게 짜증이 나거나 쉽게 성을 내게 된다.",
+        "마치 끔찍한 일이 생길 것처럼 두렵게 느껴진다.",
+      ],
+      scoreDescription: "전혀 아니다(0점), 몇일 동안(1점), 2주 중 절반 이상(2점), 거의 매일(3점), 매우 자주(4점)",
+      scoreOptions: [0, 1, 2, 3, 4],
+    },
+    PHQ: {
+      title: "PHQ-9",
+      description: "아래의 문항을 잘 읽으신 후, 지난 2주 동안 자신을 가장 잘 설명하는 칸에 체크 해 주세요.",
+      questions: [
+        "기분이 가라앉거나, 우울하거나, 희망이 없다고 느꼈다.",
+        "평소 하던 일에 대한 흥미가 없어지거나 즐거움을 느끼지 못했다.",
+        "잠들기가 어렵거나 자꾸 깼다/혹은 너무 많이 잤다.",
+        "평소보다 식욕이 줄었다/혹은 평소보다 많이 먹었다.",
+        "다른 사람들이 눈치 챌 정도로 평소보다 말과 행동이 느려졌다 / 혹은 너무 안절부절 못해서 가만히 앉아있을 수 없었다.",
+        "피곤하고 기운이 없었다.",
+        "내가 잘 못했거나, 실패했다는 생각이 들었다 / 혹은 자신과 가족을 실망시켰다고 생각했다.",
+        "신문을 읽거나 TV를 보는 것과 같은 일상적인 일에도 집중할 수가 없었다.",
+        "차라리 죽는 것이 더 낫겠다고 생각했다 / 혹은 자해할 생각을 했다.",
+      ],
+      scoreDescription: "전혀 아니다(0점), 여러 날 동안(1점), 일주일 이상(2점), 거의 매일(3점)",
+      scoreOptions: [0, 1, 2, 3],
+    },
+    PSS: {
+      title: "PSS",
+      description: "아래의 문항을 잘 읽으신 후, 지난 1개월 동안 자신의 상태를 가장 잘 나타내는 문항을 선택하여 주십시오.",
+      questions: [
+        "예상치 못했던 일 때문에 당황했던 적이 얼마나 있었습니까?",
+        "인생에서 중요한 일들을 조절할 수 없다는 느낌을 얼마나 경험하였습니까?",
+        "신경이 예민해지고 스트레스를 받고 있다는 느낌을 얼마나 경험하였습니까?",
+        "당신의 개인적 문제들을 다루는데 있어서 얼마나 자주 자신감을 느끼셨습니까?",
+        "일상의 일들이 당신의 생각대로 진행되고 있다는 느낌을 얼마나 경험하였습니까?",
+        "당신이 꼭 해야 하는 일을 처리할 수 없다고 생각한 적이 얼마나 있었습니까?",
+        "일상생활의 짜증을 얼마나 자주 잘 다스릴 수 있었습니까?",
+        "최상의 컨디션이라고 얼마나 자주 느끼셨습니까?",
+        "당신이 통제할 수 없는 일 때문에 화가 난 경험이 얼마나 있었습니까?",
+        "어려운 일들이 너무 많이 쌓여서 극복하지 못할 것 같은 느낌을 얼마나 자주 경험하셨습니까?",
+      ],
+      scoreDescription: "전혀 없었다(0점), 거의 없었다(1점), 때때로 있었다(2점), 자주 있었다(3점), 매우 자주 있었다(4점)",
+      scoreOptions: [0, 1, 2, 3, 4],
+    },
   }
 
-  return(
+  const surveyOrder: SurveyType[] = ["GAD", "PHQ", "PSS"]
+  const [surveyType, setSurveyType] = useState<SurveyType>("GAD")
+  const [surveyIndex, setSurveyIndex] = useState(0)
+
+  const surveyStateByType: Record<SurveyType, SurveyState> = {
+    GAD: gad,
+    PHQ: phq,
+    PSS: pss,
+  }
+  const surveySetterByType: Record<SurveyType, React.Dispatch<React.SetStateAction<SurveyState>>> = {
+    GAD: setGad,
+    PHQ: setPhq,
+    PSS: setPss,
+  }
+
+  const currentConfig = surveyConfigs[surveyType]
+  const currentSurvey = surveyStateByType[surveyType]
+  const currentSetSurvey = surveySetterByType[surveyType]
+  const completedCount = currentSurvey.scores.filter((score) => score !== -1).length
+  const isCompleted = currentSurvey.scores.every((score) => score !== -1)
+  const isSubmitted = currentSurvey.isDone
+
+  const moveToSurvey = (type: SurveyType) => {
+    setSurveyType(type)
+    setSurveyIndex(0)
+  }
+
+  const moveToNextQuestion = () => {
+    const nextUnansweredIndex = currentSurvey.scores.findIndex(
+      (score, index) => index > surveyIndex && score === -1
+    )
+    if (nextUnansweredIndex !== -1) {
+      setSurveyIndex(nextUnansweredIndex)
+      return
+    }
+
+    if (surveyIndex < currentConfig.questions.length - 1) {
+      setSurveyIndex((prev) => prev + 1)
+      return
+    }
+
+    const firstUnansweredIndex = currentSurvey.scores.findIndex((score) => score === -1)
+    if (firstUnansweredIndex !== -1) {
+      setSurveyIndex(firstUnansweredIndex)
+    }
+  }
+
+  const moveToNextSurvey = (doneStates: Record<SurveyType, boolean>) => {
+    const currentIndex = surveyOrder.indexOf(surveyType)
+    const remainingInOrder = [
+      ...surveyOrder.slice(currentIndex + 1),
+      ...surveyOrder.slice(0, currentIndex),
+    ]
+    const nextType = remainingInOrder.find((type) => !doneStates[type])
+
+    if (nextType) {
+      moveToSurvey(nextType)
+    }
+  }
+
+  const handleSelectScore = (score: number) => {
+    if (isSubmitted) return
+
+    currentSetSurvey((prev) => ({
+      ...prev,
+      scores: prev.scores.map((item, index) => (index === surveyIndex ? score : item)),
+    }))
+
+    if (surveyIndex < currentConfig.questions.length - 1) {
+      window.setTimeout(() => {
+        moveToNextQuestion()
+      }, 120)
+    }
+  }
+
+  const handleSubmitSurvey = async () => {
+    if (isSaving || isSubmitted || !isCompleted) return
+
+    currentSetSurvey((prev) => ({ ...prev, isDone: true }))
+
+    const nextDoneStates: Record<SurveyType, boolean> = {
+      GAD: surveyType === "GAD" ? true : gad.isDone,
+      PHQ: surveyType === "PHQ" ? true : phq.isDone,
+      PSS: surveyType === "PSS" ? true : pss.isDone,
+    }
+
+    const allCompleted = surveyOrder.every((type) => nextDoneStates[type])
+    if (allCompleted) {
+      await onComplete()
+      return
+    }
+
+    moveToNextSurvey(nextDoneStates)
+  }
+
+  const nextButtonLabel = isSubmitted
+    ? "제출 완료"
+    : !isCompleted
+      ? "다음"
+      : isSaving
+        ? "저장 중..."
+        : "제출하기"
+
+  return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-lg">
-        <Card className="border-0 shadow-2xl">
-          <CardContent className="p-8">
-            {/* Logo */}
-            <div className="text-center mb-6">
-              <div className="w-42 h-14 rounded-2xl bg-primary flex items-center overflow-hidden justify-evenly mx-auto mb-4">
-                <button className="flex-1 h-full flex items-center justify-center transition-colors hover:bg-primary-foreground/10 cursor-pointer"
-                key="GAD" onClick={() => {setSurveyType("GAD"); setSurveyIndex(0); }}>
-                  <Heart className={`w-7 h-7 ${surveyType === "GAD" ? "text-black" : "text-primary-foreground"}`} />
-                </button>
-                <button className="flex-1 h-full flex items-center justify-center transition-colors hover:bg-primary-foreground/10 cursor-pointer"
-                key="PHQ" onClick={() => {setSurveyType("PHQ"); setSurveyIndex(0); }}>
-                  <Heart className={`w-7 h-7 ${surveyType === "PHQ" ? "text-black" : "text-primary-foreground"}`} />
-                </button>
-                <button className="flex-1 h-full flex items-center justify-center transition-colors hover:bg-primary-foreground/10 cursor-pointer"
-                key="PSS" onClick={() => {setSurveyType("PSS"); setSurveyIndex(0); }}>
-                  <Heart className={`w-7 h-7 ${surveyType === "PSS" ? "text-black" : "text-primary-foreground"}`} />
-                </button>
+      <div className="w-full max-w-2xl">
+        <Card className="min-h-[680px] border-0 shadow-2xl">
+          <CardContent className="flex min-h-[680px] flex-col p-6 sm:p-8">
+            <div className="mb-5 text-center">
+              <div className="mx-auto mb-4 flex h-14 w-full max-w-sm items-center justify-evenly overflow-hidden rounded-2xl bg-primary">
+                {surveyOrder.map((type) => {
+                  const isActive = surveyType === type
+                  const isDoneForType = surveyStateByType[type].isDone
+
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => moveToSurvey(type)}
+                      className={`flex h-full flex-1 items-center justify-center transition-colors hover:bg-primary-foreground/10 cursor-pointer ${
+                        isActive ? "bg-primary-foreground/20" : ""
+                      }`}
+                      aria-label={`${type} 설문으로 이동`}
+                    >
+                      <Heart
+                        className={`h-7 w-7 ${
+                          isActive
+                            ? "text-black"
+                            : isDoneForType
+                              ? "text-emerald-200"
+                              : "text-primary-foreground"
+                        }`}
+                      />
+                    </button>
+                  )
+                })}
               </div>
-              <h1 className="text-2xl font-bold text-foreground mb-2">
-                {currentConfig.title}
-              </h1>
-              <p className="text-muted-foreground text-sm">
-                {currentConfig.description}
-              </p>
+              <h1 className="mb-2 text-2xl font-bold text-foreground">{currentConfig.title}</h1>
+              <p className="text-sm leading-relaxed text-muted-foreground">{currentConfig.description}</p>
             </div>
 
-            {/* Question */}
-            <div className="mb-8">
-              <h3 className="text-base font-semibold text-foreground mb-3">
-                {surveyIndex + 1}. {currentConfig.questions[surveyIndex]}
-              </h3>
-              <p className="text-xs text-muted-foreground mb-4">
-                {currentConfig.scoreDescription}
-              </p>
-              <div className="flex flex-col gap-2">
+            <div className="mb-8 flex-1">
+              <div className="min-h-[132px]">
+                <h3 className="mb-3 text-base font-semibold leading-relaxed text-foreground">
+                  {surveyIndex + 1}. {currentConfig.questions[surveyIndex]}
+                </h3>
+                <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
+                  {currentConfig.scoreDescription}
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3">
                 <div className="grid grid-cols-5 gap-2">
                   {currentConfig.scoreOptions.map((score) => (
-                    <label key={score}
-                    className="flex items-center justify-center gap-2 rounded-xl border p-3 cursor-pointer
-                    transition hover: hover:-translate-y-0.5 hover:shadow-md">
+                    <label
+                      key={score}
+                      className={`flex h-14 items-center justify-center rounded-xl border text-sm font-medium transition hover:-translate-y-0.5 hover:shadow-md ${
+                        currentSurvey.scores[surveyIndex] === score
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "bg-background"
+                      } ${isSubmitted ? "cursor-default opacity-70" : "cursor-pointer"}`}
+                    >
                       <input
                         type="radio"
                         name={`survey-${surveyType}-${surveyIndex}`}
                         checked={currentSurvey.scores[surveyIndex] === score}
                         disabled={isSubmitted}
-                        onChange={() => {
-                          currentSetSurvey((prev) => ({
-                            ...prev,
-                            scores: prev.scores.map((item, index) =>
-                            index === surveyIndex ? score : item),}));
-                        }}
+                        className="sr-only"
+                        onChange={() => handleSelectScore(score)}
                       />
-                      {score}점
+                      <span>{score}점</span>
                     </label>
                   ))}
                 </div>
-                <div><progress className="w-full" value={completedCount} max={currentConfig.questions.length}/></div>
-                <div className="grid grid-cols-10 gap-2">
-                {currentConfig.questions.map((_, index) => (
-                  <button key={index} className={`w-9 h-9 cursor-pointer ${currentSurvey.scores[index] !== -1 ? "bg-blue-500" : "bg-gray-200"}`} onClick={() => {setSurveyIndex(index);}}>
-                    {index + 1}
-                  </button>
+
+                <div>
+                  <progress className="h-2 w-full" value={completedCount} max={currentConfig.questions.length} />
+                </div>
+
+                <div className="grid grid-cols-5 gap-2 sm:grid-cols-10">
+                  {currentConfig.questions.map((_, index) => (
+                    <button
+                      key={index}
+                      type="button"
+                      onClick={() => setSurveyIndex(index)}
+                      className={`h-9 rounded-lg text-sm font-medium cursor-pointer ${
+                        currentSurvey.scores[index] !== -1 ? "bg-blue-500 text-white" : "bg-gray-200 text-gray-700"
+                      } ${surveyIndex === index ? "ring-2 ring-primary ring-offset-2" : ""}`}
+                    >
+                      {index + 1}
+                    </button>
                   ))}
                 </div>
               </div>
             </div>
 
-            {/* Next and Submit Button */}
-            <Button
-              onClick={() => {
-                if(isSubmitted)
-                  return
-                if(isCompleted){
-                  handleSaveSurvey(true);
-                  return
-                }
-                const nextUnansweredIndex = currentSurvey.scores.findIndex(
-                  (score, index) => index > surveyIndex && score === -1
-                );
-                if (nextUnansweredIndex !== -1) {
-                  setSurveyIndex(nextUnansweredIndex);
-                  return;
-                }
-                const firstUnansweredIndex = currentSurvey.scores.findIndex(
-                  (score) => score === -1
-                );
-                if (firstUnansweredIndex !== -1) {
-                  setSurveyIndex(firstUnansweredIndex);
-                }
-              }}
-              className="w-full h-12 rounded-xl text-base font-medium cursor-pointer"
-              disabled={isSaving || isSubmitted}
-            >
-              {isSubmitted ? "제출 완료" : !isCompleted ? "다음" : isSaving ? "저장 중..." : "제출하기"}
-            </Button>
-
-            {/* Save Option */}
-            <button
-              onClick={() => handleSaveSurvey(false)}
-              disabled={isSaving || isSubmitted}
-              className="w-full mt-4 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-            >
-              임시저장
-            </button>
+            <div className="grid grid-cols-2 gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setSurveyIndex((prev) => Math.max(prev - 1, 0))}
+                className="h-12 rounded-xl text-base font-medium cursor-pointer"
+                disabled={surveyIndex === 0 || isSaving}
+              >
+                이전
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  if (isSubmitted) return
+                  if (isCompleted) {
+                    void handleSubmitSurvey()
+                    return
+                  }
+                  moveToNextQuestion()
+                }}
+                className="h-12 rounded-xl text-base font-medium cursor-pointer"
+                disabled={isSaving || isSubmitted}
+              >
+                {nextButtonLabel}
+              </Button>
+            </div>
 
             {errorMessage && <p className="mt-3 text-center text-xs text-destructive">{errorMessage}</p>}
           </CardContent>
         </Card>
       </div>
+    </div>
+  )
+}
+
+function Introduce({introduceCheck}: {introduceCheck: () => void}){
+  return (
+    <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex items-center justify-center p-4">
+      <Card className="w-full max-w-lg border-0 shadow-2xl">
+        <CardContent className="p-8">
+          {/* Logo */}
+          <div className="text-center mb-8">
+              <div className="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4">
+                <Heart className="w-8 h-8 text-primary-foreground" />
+              </div>
+              <h1 className="text-3xl font-bold text-foreground mb-2">무드픽</h1>
+              <p className="text-muted-foreground">MoodPick</p>
+            </div>
+
+          {/* Question */}
+          <div className="mb-8">
+            <h3 className="text-lg font-semibold text-foreground mb-4">
+              무드픽은 어떤 서비스인가요?
+            </h3>
+            <div className="rounded-xl border p-3">
+              <ul className="list-disc pl-5 text-lg">
+                <li>무드픽은 사용자의 실시간 감정 맥락을 파악해 정서적 개선 및 개인화 콘텐츠를 제공하는 AI 에이전트 시스템입니다.</li>
+                {/* 띄든가 말든가 */}
+                <li>무드픽은 대화 전에 더 나은 추천을 위해 온보딩, 문진, 사전질문을 받습니다.</li>
+                <li>더 나은 추천을 위해 사후질문에 꼭 답을 해주시기 바랍니다.</li>
+
+              </ul>             
+            </div>
+          </div>
+
+          {/* Complete Button */}
+          <Button
+            className="w-full h-12 rounded-xl text-base font-medium"
+            onClick={introduceCheck}
+          >
+            확인완료
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   )
 }
@@ -3239,7 +4161,9 @@ function MyPageView({
   onExportMyData,
   isExportingMyData,
   exportMyDataMessage,
-  setHasCompletedOnboarding
+  setHasCompletedOnboarding,
+  setSurveySave,
+  surveyEnter
 }: {
   autoPlayEnabled: boolean
   setAutoPlayEnabled: (value: boolean) => void
@@ -3268,6 +4192,8 @@ function MyPageView({
   isExportingMyData: boolean
   exportMyDataMessage: string | null
   setHasCompletedOnboarding: (value: boolean)=>void
+  setSurveySave: (value: boolean)=>void
+  surveyEnter: boolean
 }) {
   const [profileOpen, setProfileOpen] = useState(false)
   const [draftDisplayName, setDraftDisplayName] = useState("")
@@ -3362,6 +4288,9 @@ function MyPageView({
             <Button variant="outline" className="rounded-xl shrink-0" type="button" onClick={openProfileEdit}>
               프로필 수정
             </Button>
+            <Button variant="outline" className="rounded-xl shrink-0" type="button" disabled={!surveyEnter} onClick={()=>setSurveySave(false)}>
+              설문
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -3370,7 +4299,9 @@ function MyPageView({
       <Card className="border-0 shadow-lg mb-6">
         <CardHeader className="flex justify-between">
           <CardTitle className="text-lg">맞춤 설정</CardTitle>
-          <Button variant="outline" className="rounded-xl shrink-0" type="button" onClick={()=>setHasCompletedOnboarding(false)}>온보딩</Button>
+          {!DEMO_HIDE_ONBOARDING ? (
+            <Button variant="outline" className="rounded-xl shrink-0" type="button" onClick={()=>setHasCompletedOnboarding(false)}>온보딩</Button>
+          ) : null}
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Auto-play Toggle */}
@@ -3405,7 +4336,6 @@ function MyPageView({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="youtube">YouTube 영상 위주</SelectItem>
-                <SelectItem value="spotify">Spotify 음악 위주</SelectItem>
                 <SelectItem value="podcast">팟캐스트 위주</SelectItem>
                 <SelectItem value="mixed">혼합 추천</SelectItem>
               </SelectContent>
@@ -3536,31 +4466,26 @@ function MyPageView({
   )
 }
 
-const surveyMoodOptions = [
-  { emoji: "😊", label: "아주 좋아요", value: "great" },
-  { emoji: "🙂", label: "괜찮아요", value: "good" },
-  { emoji: "😐", label: "그저 그래요", value: "neutral" },
-  { emoji: "😔", label: "조금 힘들어요", value: "low" },
-  { emoji: "😢", label: "많이 힘들어요", value: "bad" },
-]
-
 function PreSurveyOverlay({
   selectedMood,
   setSelectedMood,
   onStart,
   onClose,
+  showCounselingTabGateHint = false,
 }: {
   selectedMood: string | null
   setSelectedMood: (value: string | null) => void
-  onStart: () => void
+  onStart: () => void | Promise<void>
   onClose: () => void
+  showCounselingTabGateHint?: boolean
 }) {
   return (
-    <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex items-center justify-center p-4">
-      <Card className="w-full max-w-lg border-0 shadow-2xl">
+    <div className="fixed inset-0 z-[550] bg-background/95 backdrop-blur-sm flex items-center justify-center p-4">
+      <Card className="relative z-10 w-full max-w-lg border-0 shadow-2xl pointer-events-auto">
         <CardContent className="p-8">
           {/* Close Button */}
           <button
+            type="button"
             onClick={onClose}
             className="absolute top-4 right-4 p-2 rounded-full hover:bg-muted transition-colors"
           >
@@ -3573,6 +4498,11 @@ function PreSurveyOverlay({
               <Heart className="w-7 h-7 text-primary-foreground" />
             </div>
             <h2 className="text-2xl font-bold text-foreground mb-2">사전 문진</h2>
+            {showCounselingTabGateHint && (
+              <p className="text-sm text-foreground/90 mb-3 text-balance leading-relaxed">
+                상담을 시작하려면 아래 사전 문진을 먼저 완료해 주세요.
+              </p>
+            )}
             <p className="text-muted-foreground">상담 시작 전, 지금의 마음 상태를 알려주세요</p>
           </div>
 
@@ -3582,9 +4512,10 @@ function PreSurveyOverlay({
               지금 마음의 온도는 어떤가요?
             </h3>
             <div className="flex flex-wrap justify-center gap-3">
-              {surveyMoodOptions.map((option) => (
+              {SURVEY_MOOD_OPTIONS.map((option) => (
                 <button
                   key={option.value}
+                  type="button"
                   onClick={() => setSelectedMood(option.value)}
                   className={`flex flex-col items-center p-4 rounded-2xl transition-all duration-200 min-w-[90px] ${
                     selectedMood === option.value
@@ -3603,9 +4534,12 @@ function PreSurveyOverlay({
 
           {/* Start Button */}
           <Button
-            onClick={onStart}
-            disabled={!selectedMood}
-            className="w-full h-12 rounded-xl text-base font-medium"
+            type="button"
+            onClick={() => void onStart()}
+            className={cn(
+              "w-full h-12 rounded-xl text-base font-medium",
+              !selectedMood && "opacity-80"
+            )}
           >
             상담 시작
           </Button>
@@ -3618,15 +4552,17 @@ function PreSurveyOverlay({
 function PostSurveyOverlay({
   selectedMood,
   setSelectedMood,
+  isSubmitting = false,
   onComplete,
 }: {
   selectedMood: string | null
   setSelectedMood: (value: string | null) => void
-  onComplete: () => void
+  isSubmitting?: boolean
+  onComplete: () => void | Promise<void>
 }) {
   return (
-    <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex items-center justify-center p-4">
-      <Card className="w-full max-w-lg border-0 shadow-2xl">
+    <div className="fixed inset-0 z-[550] bg-background/95 backdrop-blur-sm flex items-center justify-center p-4">
+      <Card className="relative z-10 w-full max-w-lg border-0 shadow-2xl pointer-events-auto">
         <CardContent className="p-8">
           {/* Logo */}
           <div className="text-center mb-8">
@@ -3645,9 +4581,10 @@ function PostSurveyOverlay({
               지금 마음의 온도는 어떤가요?
             </h3>
             <div className="flex flex-wrap justify-center gap-3">
-              {surveyMoodOptions.map((option) => (
+              {SURVEY_MOOD_OPTIONS.map((option) => (
                 <button
                   key={option.value}
+                  type="button"
                   onClick={() => setSelectedMood(option.value)}
                   className={`flex flex-col items-center p-4 rounded-2xl transition-all duration-200 min-w-[90px] ${
                     selectedMood === option.value
@@ -3666,11 +4603,15 @@ function PostSurveyOverlay({
 
           {/* Complete Button */}
           <Button
-            onClick={onComplete}
-            disabled={!selectedMood}
-            className="w-full h-12 rounded-xl text-base font-medium"
+            type="button"
+            onClick={() => void onComplete()}
+            disabled={isSubmitting}
+            className={cn(
+              "w-full h-12 rounded-xl text-base font-medium",
+              !selectedMood && "opacity-80"
+            )}
           >
-            완료 및 홈으로
+            {isSubmitting ? "처리 중…" : "완료 및 홈으로"}
           </Button>
         </CardContent>
       </Card>

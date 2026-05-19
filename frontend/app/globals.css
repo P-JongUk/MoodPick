@@ -139,4 +139,13 @@
   [aria-disabled='true'] {
     cursor: not-allowed;
   }
+  input[type='password']::-ms-reveal,
+  input[type='password']::-ms-clear {
+    display: none;
+  }
+  input[type='password']::-webkit-credentials-auto-fill-button,
+  input[type='password']::-webkit-textfield-decoration-container {
+    visibility: hidden;
+    pointer-events: none;
+  }
 }

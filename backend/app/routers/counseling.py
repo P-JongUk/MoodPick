@@ -1,7 +1,7 @@
 import logging
 
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from supabase import Client
 
 from app.services.supabase_service import get_supabase_client
@@ -11,6 +11,15 @@ from app.services.session_summary import prepare_session_context
 
 router = APIRouter(prefix="/counseling", tags=["counseling"])
 logger = logging.getLogger(__name__)
+
+# 프론트 `sendCounselingMessage`와 동일 — DB에는 본문만 저장·히스토리 응답에서 제거
+COUNSELING_USER_MARKDOWN_SUFFIX = "\n\n마크다운 형식으로 제공해."
+
+
+def _strip_user_markdown_suffix(text: str) -> str:
+    if text.endswith(COUNSELING_USER_MARKDOWN_SUFFIX):
+        return text[: -len(COUNSELING_USER_MARKDOWN_SUFFIX)]
+    return text
 
 
 class CounselingMessageRequest(BaseModel):
@@ -92,10 +101,49 @@ def _get_session_for_user(supabase: Client, session_id: str, user_id: str) -> di
     return result.data[0]
 
 
+@router.get("/history/{session_id}")
+async def get_counseling_history(
+    session_id: str,
+    user_id: str = Query(..., description="Supabase auth user id"),
+    supabase: Client = Depends(get_supabase_client),
+):
+    """상담 세션의 저장된 대화 목록(시간순)."""
+    try:
+        _get_session_for_user(supabase, session_id, user_id)
+        hist = (
+            supabase.table("counseling_history")
+            .select("id, role, content, created_at")
+            .eq("session_id", session_id)
+            .order("created_at")
+            .execute()
+        )
+        rows = list(hist.data or [])
+        out_rows: list[dict] = []
+        for row in rows:
+            r = dict(row)
+            if r.get("role") == "user" and isinstance(r.get("content"), str):
+                r["content"] = _strip_user_markdown_suffix(r["content"])
+            out_rows.append(r)
+        return {"session_id": session_id, "messages": out_rows}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(
+            "Counseling history failed session_id=%s error_type=%s",
+            _short_id(session_id),
+            type(e).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="상담 기록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
+        ) from e
+
+
 def _save_message(supabase: Client, session_id: str, user_msg: str, ai_msg: str) -> None:
     """Persist the user message and AI response to DB."""
+    user_stored = _strip_user_markdown_suffix(user_msg)
     supabase.table("counseling_history").insert([
-        {"session_id": session_id, "role": "user", "content": user_msg},
+        {"session_id": session_id, "role": "user", "content": user_stored},
         {"session_id": session_id, "role": "assistant", "content": ai_msg},
     ]).execute()
 
@@ -119,10 +167,12 @@ async def send_counseling_message(
                 detail="이미 종료된 상담이에요. 새 상담을 시작해 주세요.",
             )
 
-        # 1. Build conversation context (recent N turns + summary if threshold exceeded)
-        summary, history = prepare_session_context(supabase, payload.session_id)
+        user_plain = _strip_user_markdown_suffix(payload.message)
 
-        # 2. Run AI pipeline
+        # 1. Build conversation context (recent N turns + summary if threshold exceeded)
+        summary, history = await prepare_session_context(supabase, payload.session_id)
+
+        # 2. Run AI pipeline (원문+접미사로 마크다운 지시, DB에는 본문만 저장)
         result = await get_ai_response(
             user_id=payload.user_id,
             session_id=payload.session_id,
@@ -132,7 +182,7 @@ async def send_counseling_message(
         )
 
         # 3. Save this turn to DB
-        _save_message(supabase, payload.session_id, payload.message, result["message"])
+        _save_message(supabase, payload.session_id, user_plain, result["message"])
 
         return {**result, "status": "ok"}
     except HTTPException:
