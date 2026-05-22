@@ -702,6 +702,7 @@ export function MoodPickDashboard() {
   const [isSurveyStateLoading, setIsSurveyStateLoading] = useState(true)
   const surveyEnter = !gad.isDone || !phq.isDone || !pss.isDone
   const shouldShowSurvey = Boolean(user?.id) && !isSurveyStateLoading && !surveySave && surveyEnter
+  const [showMenu, setShowMenu]=useState(false)
 
   const [readIntroduce, setReadIntroduce]=useState(false)
   const handleCheckIntroduce=()=>{setReadIntroduce(true)}
@@ -1178,6 +1179,7 @@ export function MoodPickDashboard() {
       return
     }
     setActiveTab(itemId)
+    setShowMenu(false)
   }
 
   const handlePreSurveyComplete = async () => {
@@ -1769,7 +1771,7 @@ export function MoodPickDashboard() {
   }
 
   // Show onboarding if first time after login
-  if (!DEMO_HIDE_ONBOARDING && !hasCompletedOnboarding) {
+  if (!hasCompletedOnboarding) {
     return (
       <OnboardingScreen
         selectedConcerns={selectedConcerns}
@@ -1779,7 +1781,6 @@ export function MoodPickDashboard() {
         onComplete={handleCompleteOnboarding}
         isSaving={isSavingOnboarding}
         errorMessage={onboardingErrorMessage}
-        activeTab={activeTab}
       />
     )
   }
@@ -1804,59 +1805,25 @@ export function MoodPickDashboard() {
     return (
       <Introduce introduceCheck={handleCheckIntroduce}/>
     )
-  }  
+  }
 
   return (
     <div className="flex h-screen bg-background">
+      {showMenu && (
+      <div className="fixed inset-0 z-50 md:hidden">
+        <div
+          className="absolute inset-0 z-0 bg-black/40"
+          onClick={() => setShowMenu(false)}
+        />
+        <div className="absolute left-0 top-0 z-10 h-full">
+          <SideMenu activeTab={activeTab} setActiveTab={setActiveTab} navItems={navItems} handleSelectNavTab={handleSelectNavTab} sidebarEncouragement={sidebarEncouragement}/>
+        </div>
+      </div>
+    )}
       {/* Sidebar */}
-      <aside className="w-64 bg-sidebar border-r border-sidebar-border flex flex-col">
-        <div className="p-6 border-b border-sidebar-border">
-          <button
-            type="button"
-            onClick={() => setActiveTab("home")}
-            className="flex w-full items-center gap-3 rounded-xl text-left transition-colors hover:bg-sidebar-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label="홈으로 이동"
-          >
-            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-              <Heart className="w-5 h-5 text-primary-foreground" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-sidebar-foreground">무드픽</h1>
-              <p className="text-xs text-muted-foreground">MoodPick</p>
-            </div>
-          </button>
-        </div>
-
-        <nav className="flex-1 p-4">
-          <ul className="space-y-2">
-            {navItems.map((item) => (
-              <li key={item.id}>
-                <button
-                  onClick={() => handleSelectNavTab(item.id)}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all duration-200 ${
-                    activeTab === item.id
-                      ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  }`}
-                >
-                  <item.icon className="w-5 h-5" />
-                  <span>{item.label}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </nav>
-
-        <div className="p-4 border-t border-sidebar-border">
-          <Card className="bg-secondary/50 border-0 shadow-none">
-            <CardContent className="p-4">
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                {sidebarEncouragement}
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-      </aside>
+      <div className="hidden md:flex">
+        <SideMenu activeTab={activeTab} setActiveTab={setActiveTab} navItems={navItems} handleSelectNavTab={handleSelectNavTab} sidebarEncouragement={sidebarEncouragement}/>
+      </div>
 
       {/* Main Content */}
       <main className="flex-1 min-w-0 overflow-auto">
@@ -1868,9 +1835,10 @@ export function MoodPickDashboard() {
             currentContent={currentContent}
             onPlayRecommended={() => {
               setIsPlaying(true)
-              setActiveTab("counseling")
+              setDashboardHistoryFullscreenOpen(true)
             }}
             flowMessage={syncWarningMessage}
+            setShowMenu={setShowMenu}
           />
         )}
         <Dialog open={showStartSessionPrompt} onOpenChange={setShowStartSessionPrompt}>
@@ -1918,7 +1886,7 @@ export function MoodPickDashboard() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-        {activeTab === "counseling" && (
+        {activeTab === "counseling" && showPreSurvey === false && (
           <CounselingView
             messages={messages}
             onSendMessage={handleSendMessage}
@@ -1940,6 +1908,7 @@ export function MoodPickDashboard() {
             idleWrapUpBanner={showIdleWrapUpBanner}
             onDismissIdleWrapUp={() => setShowIdleWrapUpBanner(false)}
             onRequestEndFromIdle={handleEndSession}
+            setShowMenu={setShowMenu}
           />
         )}
         {activeTab === "dashboard" && (
@@ -1958,6 +1927,7 @@ export function MoodPickDashboard() {
             userStats={userStats}
             onCalendarDayClick={handleCalendarDayClick}
             onPlayContentHistory={handlePlayContentFromHistory}
+            setShowMenu={setShowMenu}
           />
         )}
         {activeTab === "mypage" && (
@@ -1991,6 +1961,7 @@ export function MoodPickDashboard() {
             setHasCompletedOnboarding={setHasCompletedOnboarding}
             setSurveySave={setSurveySave}
             surveyEnter={surveyEnter}
+            setShowMenu={setShowMenu}
           />
         )}
       </main>
@@ -2046,6 +2017,7 @@ export function MoodPickDashboard() {
             syncWarningMessage={syncWarningMessage}
             onSelectRecommendedContent={setCurrentContent}
             onExitFullscreen={() => setDashboardHistoryFullscreenOpen(false)}
+            allowFeedback={false}
           />
         </div>
       )}
@@ -2142,6 +2114,7 @@ function HomeView({
   currentContent,
   onPlayRecommended,
   flowMessage,
+  setShowMenu
 }: {
   onStartNewSession: () => void
   userStats: UserStats | null
@@ -2149,6 +2122,7 @@ function HomeView({
   currentContent: ContentHistoryItem
   onPlayRecommended: () => void
   flowMessage: string | null
+  setShowMenu: React.Dispatch<React.SetStateAction<boolean>>
 }) {
   const weeklyMoodEmoji = scoreToEmoji(emotionSummary?.average_score ?? 3)
   const homePlayback = resolvePlayback({
@@ -2165,14 +2139,22 @@ function HomeView({
   return (
     <div className="p-8 max-w-4xl mx-auto">
       {/* Greeting Section */}
-      <div className="mb-10">
-        <h2 className="text-3xl font-bold text-foreground mb-3 text-balance">
-          오늘 하루, 당신의 마음은 어떤 색인가요?
-        </h2>
-        {flowMessage && (
-          <p className="mt-3 text-sm text-destructive bg-destructive/10 rounded-xl px-4 py-2">{flowMessage}</p>
-        )}
+      <div className="flex items-start gap-3">
+        <button className="md:hidden" onClick={()=>setShowMenu(true)}>
+          <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
+            <Home className="w-5 h-5 text-primary-foreground" />
+          </div>
+        </button>
+        <div className="mb-10">
+          <h2 className="text-3xl font-bold text-foreground mb-3 text-balance">
+            오늘 하루, 당신의 마음은 어떤 색인가요?
+          </h2>
+          {flowMessage && (
+            <p className="mt-3 text-sm text-destructive bg-destructive/10 rounded-xl px-4 py-2">{flowMessage}</p>
+          )}
+        </div>
       </div>
+      
 
       {/* Start New Session Button */}
       <div className="mb-10">
@@ -2195,8 +2177,8 @@ function HomeView({
           </CardTitle>
         </CardHeader>
         <CardContent className="p-6">
-          <div className="flex gap-6">
-            <div className="w-48 h-32 rounded-xl bg-muted flex items-center justify-center overflow-hidden shrink-0">
+          <div className="flex flex-col md:flex-row gap-6">
+            <div className="w-48 h-32 mx-auto md:mx-0 rounded-xl bg-muted flex items-center justify-center overflow-hidden shrink-0">
               {homeThumbUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={homeThumbUrl} alt="" className="w-full h-full object-cover" />
@@ -2268,6 +2250,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
   onSelectRecommendedContent,
   onRequestFullscreen,
   onExitFullscreen,
+  allowFeedback
 }: {
   variant: "sidebar" | "fullscreen"
   currentContent: ContentHistoryItem
@@ -2283,6 +2266,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
   onSelectRecommendedContent: (value: ContentHistoryItem) => void
   onRequestFullscreen?: () => void
   onExitFullscreen?: () => void
+  allowFeedback?: boolean
 }) {
   const isFullscreen = variant === "fullscreen"
   const playback = resolvePlayback({
@@ -2719,7 +2703,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
             <div className="flex flex-col items-center gap-1.5">
               <button
                 type="button"
-                disabled={feedbackDisabled}
+                disabled={feedbackDisabled || !allowFeedback}
                 onClick={() => onMediaFeedbackChange("like")}
                 className={cn(
                   "flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-2xl border-2 text-3xl sm:text-4xl transition-all",
@@ -2738,7 +2722,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
             <div className="flex flex-col items-center gap-1.5">
               <button
                 type="button"
-                disabled={feedbackDisabled}
+                disabled={feedbackDisabled || !allowFeedback}
                 onClick={() => onMediaFeedbackChange("dislike")}
                 className={cn(
                   "flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-2xl border-2 text-3xl sm:text-4xl transition-all",
@@ -2868,6 +2852,7 @@ function CounselingView({
   idleWrapUpBanner = false,
   onDismissIdleWrapUp,
   onRequestEndFromIdle,
+  setShowMenu
 }: {
   messages: Message[]
   onSendMessage: (messageText: string) => boolean
@@ -2889,6 +2874,7 @@ function CounselingView({
   idleWrapUpBanner?: boolean
   onDismissIdleWrapUp?: () => void
   onRequestEndFromIdle?: () => void
+  setShowMenu: React.Dispatch<React.SetStateAction<boolean>>
 }) {
   const [contentFullscreen, setContentFullscreen] = useState(false)
   const [draft, setDraft] = useState("")
@@ -2956,14 +2942,29 @@ function CounselingView({
         <div className="p-4 border-b border-border bg-card">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
-                <MessageCircle className="w-5 h-5 text-primary-foreground" />
-              </div>
+              <button onClick={()=>setShowMenu(true)}>
+                <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
+                  <MessageCircle className="w-5 h-5 text-primary-foreground" />
+                </div>
+              </button>
               <div>
                 <h3 className="font-semibold text-foreground">무드픽 상담사</h3>
                 <p className="text-xs text-muted-foreground">AI 심리 상담</p>
               </div>
             </div>
+
+          {!contentFullscreen && (
+            <Button
+              type="button"
+              variant="outline" size="sm" className="rounded-lg md:hidden"
+              onClick={()=>setContentFullscreen(true)}
+              // aria-label="콘텐츠 전체 화면"
+            >
+              <Maximize2 className="w-4 h-4" />
+              콘텐츠 보기
+            </Button>
+          )}
+
             <Button onClick={onStartNewSession} variant="outline" size="sm" className="rounded-lg">
               <Plus className="w-4 h-4 mr-1" />
               새 채팅
@@ -3038,7 +3039,7 @@ function CounselingView({
       </div>
 
       <div className={cn(
-        contentFullscreen ? "fixed inset-0 z-50 bg-background p-4 sm:p-6" : "w-96 shrink-0 bg-card p-6 min-h-0", "overflow-y-auto flex flex-col")}
+        contentFullscreen ? "fixed inset-0 z-50 bg-background p-4 sm:p-6" : "hidden md:flex w-96 shrink-0 bg-card p-6 min-h-0", "overflow-y-auto flex-col")}
         role={contentFullscreen ? "dialog" : undefined}
         aria-modal={contentFullscreen? "true" : undefined}
         aria-label={contentFullscreen? "추천 콘텐츠 전체 화면" : undefined}
@@ -3048,6 +3049,7 @@ function CounselingView({
           {...mediaProps}
           onRequestFullscreen={contentFullscreen ? undefined : () => setContentFullscreen(true)}
           onExitFullscreen={contentFullscreen ? () => setContentFullscreen(false) : undefined}
+          allowFeedback={true}
         />
       </div>
 
@@ -3070,6 +3072,7 @@ function DashboardView({
   userStats,
   onCalendarDayClick,
   onPlayContentHistory,
+  setShowMenu
 }: {
   calendarYear: number
   currentMonth: number
@@ -3085,17 +3088,24 @@ function DashboardView({
   userStats: UserStats | null
   onCalendarDayClick: (day: number) => void
   onPlayContentHistory: (item: ContentHistoryItem) => void
+  setShowMenu: React.Dispatch<React.SetStateAction<boolean>>
 }) {
   return (
     <div className="p-8 max-w-6xl mx-auto">
-      <div className="mb-8">
-        <h2 className="text-2xl font-bold text-foreground mb-2">나의 감정 기록</h2>
-        <p className="text-muted-foreground">
-          당신의 감정 여정을 한눈에 확인하세요
-        </p>
+      <div className="flex items-start gap-3">
+        <button className="md:hidden" onClick={()=>setShowMenu(true)}>
+          <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
+            <BarChart3 className="w-5 h-5 text-primary-foreground" />
+          </div>
+        </button>
+        <div className="mb-8">
+          <h2 className="text-2xl font-bold text-foreground mb-2">나의 감정 기록</h2>
+          <p className="text-muted-foreground">
+            당신의 감정 여정을 한눈에 확인하세요
+          </p>
+        </div>
       </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         <Card className="border-0 bg-secondary/40">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">총 상담 세션</p>
@@ -3132,7 +3142,7 @@ function DashboardView({
         </Card>
       </div>
 
-      <div className="grid grid-cols-2 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
         {/* Calendar */}
         <Card className="border-0 shadow-lg">
           <CardHeader className="pb-2">
@@ -3184,6 +3194,13 @@ function DashboardView({
                   )}
                 </button>
               ))}
+            </div>
+              <div className="flex justify-center gap-4 mt-4">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">😢 낮음</span>
+                <div className="w-16 h-2 bg-gradient-to-r from-blue-300 via-sky-300 to-amber-300 rounded-full" />
+                <span className="text-xs text-muted-foreground">😊 높음</span>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -3258,13 +3275,6 @@ function DashboardView({
                 ))}
               </div>
             )}
-            <div className="flex justify-center gap-4 mt-4">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">😢 낮음</span>
-                <div className="w-16 h-2 bg-gradient-to-r from-blue-300 via-sky-300 to-amber-300 rounded-full" />
-                <span className="text-xs text-muted-foreground">😊 높음</span>
-              </div>
-            </div>
           </CardContent>
         </Card>
       </div>
@@ -3322,7 +3332,7 @@ function DashboardView({
           <CardTitle className="text-lg">상담 기록</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-h-[400px] md:max-h-none overflow-y-auto md:overflow-visible">
             {sessionHistory.map((session) => (
               <Card key={session.sessionId} className="border border-border bg-muted/30">
                 <CardContent className="p-4">
@@ -3483,7 +3493,7 @@ function LoginScreen({
                     </Label>
                     <Input
                       id="signup-birth-year"
-                      type="number"
+                      type="text"
                       inputMode="numeric"
                       min={1900}
                       max={new Date().getFullYear()}
@@ -3651,7 +3661,6 @@ function OnboardingScreen({
   onComplete,
   isSaving,
   errorMessage,
-  activeTab
 }: {
   selectedConcerns: string[]
   setSelectedConcerns: (value: string[]) => void
@@ -3660,7 +3669,6 @@ function OnboardingScreen({
   onComplete: () => void
   isSaving: boolean
   errorMessage: string | null
-  activeTab: TabType
 }) {
   const concerns = [
     { id: "study", label: "학업/취업" },
@@ -3767,17 +3775,8 @@ function OnboardingScreen({
               className="w-full h-12 rounded-xl text-base font-medium"
               disabled={(selectedConcerns.length === 0 && selectedComfortStyle.length === 0) || isSaving}
             >
-              {isSaving ? "저장 중..." : activeTab==="mypage"? "저장" : "시작하기"}
+              {isSaving ? "저장 중..." : "시작하기"}
             </Button>
-
-            {/* Skip Option */}
-            <button
-              onClick={onComplete}
-              disabled={isSaving}
-              className="w-full mt-4 text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              나중에 설정할게요
-            </button>
             {errorMessage && <p className="mt-3 text-center text-xs text-destructive">{errorMessage}</p>}
           </CardContent>
         </Card>
@@ -4113,10 +4112,8 @@ function Introduce({introduceCheck}: {introduceCheck: () => void}){
             <div className="rounded-xl border p-3">
               <ul className="list-disc pl-5 text-lg">
                 <li>무드픽은 사용자의 실시간 감정 맥락을 파악해 정서적 개선 및 개인화 콘텐츠를 제공하는 AI 에이전트 시스템입니다.</li>
-                {/* 띄든가 말든가 */}
                 <li>무드픽은 대화 전에 더 나은 추천을 위해 온보딩, 문진, 사전질문을 받습니다.</li>
                 <li>더 나은 추천을 위해 사후질문에 꼭 답을 해주시기 바랍니다.</li>
-
               </ul>             
             </div>
           </div>
@@ -4163,7 +4160,8 @@ function MyPageView({
   exportMyDataMessage,
   setHasCompletedOnboarding,
   setSurveySave,
-  surveyEnter
+  surveyEnter,
+  setShowMenu
 }: {
   autoPlayEnabled: boolean
   setAutoPlayEnabled: (value: boolean) => void
@@ -4194,6 +4192,7 @@ function MyPageView({
   setHasCompletedOnboarding: (value: boolean)=>void
   setSurveySave: (value: boolean)=>void
   surveyEnter: boolean
+  setShowMenu: React.Dispatch<React.SetStateAction<boolean>>
 }) {
   const [profileOpen, setProfileOpen] = useState(false)
   const [draftDisplayName, setDraftDisplayName] = useState("")
@@ -4215,11 +4214,17 @@ function MyPageView({
 
   return (
     <div className="p-8 max-w-3xl mx-auto">
-      <div className="mb-8">
-        <h2 className="text-2xl font-bold text-foreground mb-2">마이페이지</h2>
-        <p className="text-muted-foreground">계정 설정 및 환경설정을 관리하세요</p>
+      <div className="flex items-start gap-3">
+        <button className="md:hidden" onClick={()=>setShowMenu(true)}>
+          <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
+            <User className="w-5 h-5 text-primary-foreground" />
+          </div>
+        </button>
+        <div className="mb-8">
+          <h2 className="text-2xl font-bold text-foreground mb-2">마이페이지</h2>
+          <p className="text-muted-foreground">계정 설정 및 환경설정을 관리하세요</p>
+        </div>
       </div>
-
       <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
         <DialogContent>
           <DialogHeader>
@@ -4269,28 +4274,32 @@ function MyPageView({
           <CardTitle className="text-lg">프로필</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center gap-6">
-            <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center">
-              <User className="w-10 h-10 text-primary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <h3 className="text-xl font-semibold text-foreground mb-1 truncate">{shownName}</h3>
-              <p className="text-muted-foreground break-all">{userEmail}</p>
-              <div className="flex items-center gap-2 mt-3 flex-wrap">
-                <span className="px-3 py-1 bg-primary/10 text-primary text-xs rounded-full font-medium">
-                  일반 회원
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  가입일: {joinedAtText}
-                </span>
+          <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-6 w-full md:w-auto">
+              <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center">
+                <User className="w-10 h-10 text-primary" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-xl font-semibold text-foreground mb-1 truncate">{shownName}</h3>
+                <p className="text-muted-foreground break-all">{userEmail}</p>
+                <div className="flex items-center gap-2 mt-3 flex-wrap">
+                  <span className="px-3 py-1 bg-primary/10 text-primary text-xs rounded-full font-medium">
+                    일반 회원
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    가입일: {joinedAtText}
+                  </span>
+                </div>
               </div>
             </div>
-            <Button variant="outline" className="rounded-xl shrink-0" type="button" onClick={openProfileEdit}>
-              프로필 수정
-            </Button>
-            <Button variant="outline" className="rounded-xl shrink-0" type="button" disabled={!surveyEnter} onClick={()=>setSurveySave(false)}>
-              설문
-            </Button>
+            <div className="flex items-center justify-center md:justify-start gap-6 w-full md:w-auto">
+              <Button variant="outline" className="rounded-xl shrink-0" type="button" onClick={openProfileEdit}>
+                프로필 수정
+              </Button>
+              <Button variant="outline" className="rounded-xl shrink-0" type="button" disabled={!surveyEnter} onClick={()=>setSurveySave(false)}>
+                문진
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -4299,9 +4308,6 @@ function MyPageView({
       <Card className="border-0 shadow-lg mb-6">
         <CardHeader className="flex justify-between">
           <CardTitle className="text-lg">맞춤 설정</CardTitle>
-          {!DEMO_HIDE_ONBOARDING ? (
-            <Button variant="outline" className="rounded-xl shrink-0" type="button" onClick={()=>setHasCompletedOnboarding(false)}>온보딩</Button>
-          ) : null}
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Auto-play Toggle */}
@@ -4616,5 +4622,68 @@ function PostSurveyOverlay({
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+function SideMenu({activeTab, setActiveTab, navItems, handleSelectNavTab, sidebarEncouragement}: {
+  activeTab: TabType;
+  setActiveTab: React.Dispatch<React.SetStateAction<TabType>>;
+  navItems: {
+    id: TabType
+    label: string
+    icon: React.ComponentType<any>
+  }[];
+  handleSelectNavTab: (itemId: TabType) => void;
+  sidebarEncouragement: string;
+}){
+  return(
+    <aside className="z-60 w-64 bg-sidebar border-r border-sidebar-border flex h-full flex-col">
+        <div className="p-6 border-b border-sidebar-border">
+          <button
+            type="button"
+            onClick={() => setActiveTab("home")}
+            className="flex w-full items-center gap-3 rounded-xl text-left transition-colors hover:bg-sidebar-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="홈으로 이동"
+          >
+            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
+              <Heart className="w-5 h-5 text-primary-foreground" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-sidebar-foreground">무드픽</h1>
+              <p className="text-xs text-muted-foreground">MoodPick</p>
+            </div>
+          </button>
+        </div>
+
+        <nav className="flex-1 p-4">
+          <ul className="space-y-2">
+            {navItems.map((item) => (
+              <li key={item.id}>
+                <button
+                  onClick={() => handleSelectNavTab(item.id)}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all duration-200 ${
+                    activeTab === item.id
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <item.icon className="w-5 h-5" />
+                  <span>{item.label}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </nav>
+
+        <div className="p-4 border-t border-sidebar-border mt-auto">
+          <Card className="bg-secondary/50 border-0 shadow-none">
+            <CardContent className="p-4">
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                {sidebarEncouragement}
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </aside>
   )
 }
