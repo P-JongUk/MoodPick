@@ -19,9 +19,9 @@ class EmotionAnalysisResponse(BaseModel):
     recommendations: List[str] = []
 
 
-class EmotionRecordResponse(BaseModel):
-    emotion: str
-    recorded_at: str
+# class EmotionRecordResponse(BaseModel):
+#     emotion: str
+#     recorded_at: str
 
 
 @router.post("/analyze", response_model=EmotionAnalysisResponse)
