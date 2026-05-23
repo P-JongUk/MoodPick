@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 
 _ISO_DURATION_RE = re.compile(r"^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$")
 
+# YouTube Shorts는 최대 3분(180초)까지 가능하지만, 1~3분의 정상 영상도 함께
+# 걸리는 트레이드오프를 피하기 위해 임계값을 120초로 둔다.
+_SHORTS_MAX_SECONDS = 120
+
 
 def _parse_iso8601_duration(value: str) -> int:
     """Return total seconds for an ISO 8601 duration like 'PT1M30S'.
@@ -229,8 +233,8 @@ async def search_youtube(
     filtered_out = 0
     for c in candidates:
         dur = durations.get(c["video_id"], 0)
-        # 0(파싱 실패·라이브 등)이나 60초 미만은 보수적으로 제외
-        if dur < 60:
+        # 0(파싱 실패·라이브 등)이나 _SHORTS_MAX_SECONDS 이하는 보수적으로 제외
+        if dur <= _SHORTS_MAX_SECONDS:
             filtered_out += 1
             continue
         c["duration_seconds"] = dur

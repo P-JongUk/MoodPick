@@ -247,27 +247,6 @@ export async function recordWatchedContent(
   return response.json()
 }
 
-export type ContentMediaPreferenceQuery = "all" | "youtube" | "podcast"
-
-export async function getContentRecommendations(
-  userId: string,
-  options?: { limit?: number; media?: ContentMediaPreferenceQuery }
-): Promise<any[]> {
-  const limit = options?.limit ?? 8
-  const media = options?.media ?? "all"
-  const response = await fetch(
-    `${API_BASE_URL}/content/recommendations/${userId}?limit=${limit}&media=${media}`,
-    { method: "GET" }
-  )
-
-  if (!response.ok) {
-    throw new Error(`Get content recommendations failed: ${response.statusText}`)
-  }
-
-  const data = await response.json()
-  return data || []
-}
-
 export async function getContentHistory(userId: string, limit = 20): Promise<any[]> {
   const response = await fetch(`${API_BASE_URL}/content/history/${userId}?limit=${limit}`, {
     method: "GET",

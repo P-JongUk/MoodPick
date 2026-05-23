@@ -28,9 +28,7 @@ import {
   getReminderPreference,
   upsertReminderPreference,
   upsertUserProfile,
-  getContentRecommendations,
   type DailySummary,
-  type ContentMediaPreferenceQuery,
   type SessionResponse,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -115,6 +113,14 @@ interface RecommendedContent {
   thumbnail?: string
   reason?: string
   search_query?: string
+  candidate_pool?: Array<{
+    video_id?: string
+    title?: string
+    thumbnail?: string
+    url?: string
+    media_provider?: string
+    score?: number
+  }>
 }
 
 interface Message {
@@ -266,12 +272,6 @@ function clearSessionContentFeedbackStorage(sessionId: string): void {
   } catch {
     /* noop */
   }
-}
-
-function mediaPreferenceToQueryParam(pref: string): ContentMediaPreferenceQuery {
-  if (pref === "youtube") return "youtube"
-  if (pref === "podcast") return "podcast"
-  return "all"
 }
 
 const scoreToEmoji = (score: number) => {
@@ -483,6 +483,7 @@ export function MoodPickDashboard() {
   const [contentHistory, setContentHistory] = useState<ContentHistoryItem[]>([])
   const [currentContent, setCurrentContent] = useState<ContentHistoryItem>(defaultContentItem)
   const [recommendedQueue, setRecommendedQueue] = useState<ContentHistoryItem[]>([])
+  const [topCandidates, setTopCandidates] = useState<ContentHistoryItem[]>([])
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState("")
@@ -499,7 +500,6 @@ export function MoodPickDashboard() {
 
   // My page settings state
   const [autoPlayEnabled, setAutoPlayEnabled] = useState(true)
-  const [mediaPreference, setMediaPreference] = useState("youtube")
   const [dailyReminderEnabled, setDailyReminderEnabled] = useState(true)
   const [dailyReminderTime, setDailyReminderTime] = useState("22:00")
   const [dailyReminderTimezone, setDailyReminderTimezone] = useState("Asia/Seoul")
@@ -783,14 +783,12 @@ export function MoodPickDashboard() {
       }
 
       try {
-        const mediaQuery = mediaPreferenceToQueryParam(mediaPreference)
         const [
           statsResult,
           emotionRecordsResult,
           summaryResult,
           sessionsResult,
           contentsResult,
-          recsResult,
           profileResult,
         ] = await Promise.allSettled([
           getUserStats(user.id),
@@ -798,7 +796,6 @@ export function MoodPickDashboard() {
           getEmotionSummary(user.id, 7),
           getUserSessions(user.id, 10),
           getContentHistory(user.id, 20),
-          getContentRecommendations(user.id, { limit: 10, media: mediaQuery }),
           getUserProfile(user.id),
         ])
 
@@ -882,7 +879,6 @@ export function MoodPickDashboard() {
         )
 
         const contentsRaw = contentsResult.status === "fulfilled" ? contentsResult.value : []
-        const recsRaw = recsResult.status === "fulfilled" ? recsResult.value : []
         const sessionsRaw = sessionsResult.status === "fulfilled" ? sessionsResult.value : null
 
         const contentItems = ((contentsRaw as unknown[]) ?? []).map((r) =>
@@ -891,18 +887,6 @@ export function MoodPickDashboard() {
         setContentHistory(contentItems)
         const first = contentItems[0] ?? defaultContentItem
         setCurrentContent(first)
-
-        const recItems = ((recsRaw as unknown[]) ?? []).map((r) =>
-          mapContentHistoryRow(r as Record<string, unknown>)
-        )
-        const fromApi = recItems.filter((c) => c.content_id !== first.content_id).slice(0, 6)
-        if (fromApi.length > 0) {
-          setRecommendedQueue(fromApi)
-        } else {
-          setRecommendedQueue(
-            contentItems.slice(1, 4).filter((c) => c.content_id !== first.content_id)
-          )
-        }
 
         const contentBySession = new Map<string, string>()
         contentItems.forEach((content) => {
@@ -948,7 +932,7 @@ export function MoodPickDashboard() {
     }
 
     void loadDashboardData()
-  }, [currentMonth, calendarYear, user?.id, mediaPreference, dashboardRefreshKey])
+  }, [currentMonth, calendarYear, user?.id, dashboardRefreshKey])
 
   useEffect(() => {
     const loadReminderPreference = async () => {
@@ -1024,15 +1008,11 @@ export function MoodPickDashboard() {
   useEffect(() => {
     if (!user) return
     const meta = user.user_metadata as {
-      moodpick_preferences?: { autoplay_enabled?: boolean; media_preference?: string }
+      moodpick_preferences?: { autoplay_enabled?: boolean }
     }
     const prefs = meta.moodpick_preferences
     if (prefs && typeof prefs.autoplay_enabled === "boolean") {
       setAutoPlayEnabled(prefs.autoplay_enabled)
-    }
-    if (prefs && typeof prefs.media_preference === "string") {
-      const p = prefs.media_preference
-      setMediaPreference(p === "spotify" ? "mixed" : p)
     }
   }, [user])
 
@@ -1509,17 +1489,51 @@ export function MoodPickDashboard() {
         if (recommended?.video_id) {
           const contentId = recommended.video_id.toString()
           const isPodcast = contentId.toLowerCase().startsWith("podcast:")
+          const nowIso = new Date().toISOString()
 
-          setCurrentContent({
+          const mainItem: ContentHistoryItem = {
             id: contentId,
             content_id: contentId,
             content_title: recommended.title ?? "추천 콘텐츠",
             thumbnail_url: recommended.thumbnail,
             media_provider: isPodcast ? "podcast" : "youtube",
             media_url: isPodcast ? (recommended.url ?? null) : null,
-            watched_at: new Date().toISOString(),
+            watched_at: nowIso,
             session_id: currentSessionId,
-          })
+          }
+
+          const pool = recommended.candidate_pool ?? []
+          const poolItems: ContentHistoryItem[] = pool
+            .filter((c) => c.video_id)
+            .map((c) => {
+              const id = String(c.video_id)
+              const itemIsPodcast = id.toLowerCase().startsWith("podcast:")
+              const provider: "youtube" | "podcast" =
+                c.media_provider === "podcast" || c.media_provider === "youtube"
+                  ? c.media_provider
+                  : itemIsPodcast
+                    ? "podcast"
+                    : "youtube"
+              return {
+                id,
+                content_id: id,
+                content_title: c.title ?? "추천 콘텐츠",
+                thumbnail_url: c.thumbnail ?? null,
+                media_provider: provider,
+                media_url: itemIsPodcast ? (c.url ?? null) : null,
+                watched_at: nowIso,
+                session_id: currentSessionId,
+              }
+            })
+
+          // top-4 풀: 메인을 맨 앞으로 두고 풀에서 메인 중복 제거. candidate_pool에
+          // 메인이 빠져 있더라도 안전하도록 mainItem을 명시적으로 선두에 둠.
+          const dedupedPool = poolItems.filter((c) => c.content_id !== contentId)
+          const top4 = [mainItem, ...dedupedPool].slice(0, 4)
+
+          setTopCandidates(top4)
+          setCurrentContent(mainItem)
+          setRecommendedQueue(top4.filter((c) => c.content_id !== contentId).slice(0, 3))
           setIsPlaying(true)
         }
       } catch (error) {
@@ -1587,7 +1601,6 @@ export function MoodPickDashboard() {
         data: {
           moodpick_preferences: {
             autoplay_enabled: autoPlayEnabled,
-            media_preference: mediaPreference,
           },
         },
       })
@@ -1651,6 +1664,14 @@ export function MoodPickDashboard() {
     } finally {
       setDayDetailLoading(false)
     }
+  }
+
+  const handleSelectRecommendedFromQueue = (item: ContentHistoryItem) => {
+    setCurrentContent(item)
+    setIsPlaying(true)
+    setRecommendedQueue(
+      topCandidates.filter((c) => c.content_id !== item.content_id).slice(0, 3)
+    )
   }
 
   const handlePlayContentFromHistory = (item: ContentHistoryItem) => {
@@ -1954,7 +1975,7 @@ export function MoodPickDashboard() {
             syncWarningMessage={syncWarningMessage}
             currentContent={currentContent}
             recommendedQueue={recommendedQueue}
-            onSelectRecommendedContent={setCurrentContent}
+            onSelectRecommendedContent={handleSelectRecommendedFromQueue}
             idleWrapUpBanner={showIdleWrapUpBanner}
             onDismissIdleWrapUp={() => setShowIdleWrapUpBanner(false)}
             onRequestEndFromIdle={handleEndSession}
@@ -1982,8 +2003,6 @@ export function MoodPickDashboard() {
           <MyPageView
             autoPlayEnabled={autoPlayEnabled}
             setAutoPlayEnabled={setAutoPlayEnabled}
-            mediaPreference={mediaPreference}
-            setMediaPreference={setMediaPreference}
             onLogout={handleLogout}
             userEmail={user?.email ?? "-"}
             displayName={profileDisplayName ?? (user?.user_metadata?.display_name as string | undefined) ?? null}
@@ -4195,8 +4214,6 @@ function Introduce({introduceCheck}: {introduceCheck: () => void}){
 function MyPageView({
   autoPlayEnabled,
   setAutoPlayEnabled,
-  mediaPreference,
-  setMediaPreference,
   onLogout,
   userEmail,
   displayName,
@@ -4225,8 +4242,6 @@ function MyPageView({
 }: {
   autoPlayEnabled: boolean
   setAutoPlayEnabled: (value: boolean) => void
-  mediaPreference: string
-  setMediaPreference: (value: string) => void
   onLogout: () => void
   userEmail: string
   displayName: string | null
@@ -4378,26 +4393,6 @@ function MyPageView({
               checked={autoPlayEnabled}
               onCheckedChange={setAutoPlayEnabled}
             />
-          </div>
-
-          {/* Media Preference */}
-          <div>
-            <Label className="text-base font-medium text-foreground">
-              선호 미디어 유형
-            </Label>
-            <p className="text-sm text-muted-foreground mt-1 mb-3">
-              추천받고 싶은 콘텐츠 유형을 선택하세요
-            </p>
-            <Select value={mediaPreference} onValueChange={setMediaPreference}>
-              <SelectTrigger className="w-full rounded-xl bg-muted border-0 h-12">
-                <SelectValue placeholder="미디어 유형 선택" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="youtube">YouTube 영상 위주</SelectItem>
-                <SelectItem value="podcast">팟캐스트 위주</SelectItem>
-                <SelectItem value="mixed">혼합 추천</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
 
           <div className="flex flex-col sm:flex-row sm:items-center gap-2">

@@ -396,7 +396,17 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
         if ranked_videos:
             video = ranked_videos[0]
             selected_score = video.get("score", 0.0)
-            candidate_pool = [{"video_id": v.get("content_id"), "score": v.get("score", 0.0)} for v in ranked_videos]
+            candidate_pool = [
+                {
+                    "video_id": v.get("content_id"),
+                    "title": v.get("title", ""),
+                    "thumbnail": v.get("thumbnail", ""),
+                    "url": v.get("url", ""),
+                    "media_provider": v.get("media_provider"),
+                    "score": v.get("score", 0.0),
+                }
+                for v in ranked_videos
+            ]
 
     # ── 7. Store result ─────────────────────────────────────────────────
     secondary_for_log = ambiguity_info["secondary"]  # None일 수 있음 (모호 임계 미충족)
