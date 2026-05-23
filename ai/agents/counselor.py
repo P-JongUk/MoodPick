@@ -82,7 +82,7 @@ _TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_user_profile",
-            "description": "사용자의 온보딩 프로필(고민 카테고리, 선호 위로 방식)과 최근 감정 이력을 조회한다. 첫 응답 시 호출하여 개인화된 상담을 제공한다.",
+            "description": "사용자의 온보딩 프로필(고민 카테고리, 선호 위로 방식)과 최근 감정 이력을 조회한다. 첫 응답 시 1회 호출. 결과의 concerns는 사용자가 현재 발화에서 구체적 주제를 명시하지 않은 경우에만 부드러운 화두 열기 단서로 활용하고, 사용자가 다른 주제를 꺼냈다면 무시한다. concerns 라벨은 사용자에게 직접 노출하지 않는다.",
             "parameters": {
                 "type": "object",
                 "properties": {
