@@ -102,7 +102,7 @@ import {
 } from "@/components/ui/alert-dialog"
 
 const REMINDER_FEATURE_ENABLED = process.env.NEXT_PUBLIC_REMINDER_ENABLED === "true"
-const DEMO_HIDE_ONBOARDING = true
+const DEMO_HIDE_ONBOARDING = false
 
 type TabType = "home" | "counseling" | "dashboard" | "mypage"
 
@@ -494,7 +494,8 @@ export function MoodPickDashboard() {
 
   // Onboarding state
   const [selectedConcerns, setSelectedConcerns] = useState<string[]>([])
-  const [selectedComfortStyle, setSelectedComfortStyle] = useState<string[]>([])
+  const [selectedCounselingTone, setSelectedCounselingTone] = useState<string[]>([])
+  const [selectedContentPreference, setSelectedContentPreference] = useState<string[]>([])
 
   // My page settings state
   const [autoPlayEnabled, setAutoPlayEnabled] = useState(true)
@@ -985,7 +986,8 @@ export function MoodPickDashboard() {
     if (!user) {
       setHasCompletedOnboarding(true)
       setSelectedConcerns([])
-      setSelectedComfortStyle([])
+      setSelectedCounselingTone([])
+      setSelectedContentPreference([])
       setOnboardingErrorMessage(null)
       setIsOnboardingStateLoading(false)
       return
@@ -1002,7 +1004,8 @@ export function MoodPickDashboard() {
       onboarding_completed?: boolean
       onboarding_profile?: {
         concerns?: string[]
-        comfort_style?: string[]
+        counseling_tone?: string[]
+        content_preference?: string[]
       }
     }
 
@@ -1012,7 +1015,8 @@ export function MoodPickDashboard() {
 
     const profile = metadata.onboarding_profile
     setSelectedConcerns(Array.isArray(profile?.concerns) ? profile.concerns : [])
-    setSelectedComfortStyle(Array.isArray(profile?.comfort_style) ? profile.comfort_style : [])
+    setSelectedCounselingTone(Array.isArray(profile?.counseling_tone) ? profile.counseling_tone : [])
+    setSelectedContentPreference(Array.isArray(profile?.content_preference) ? profile.content_preference : [])
     setOnboardingErrorMessage(null)
     setIsOnboardingStateLoading(false)
   }, [user])
@@ -1109,20 +1113,32 @@ export function MoodPickDashboard() {
 
     try {
       const supabase = getSupabaseClient()
+      const onboardingProfile = {
+        concerns: selectedConcerns,
+        counseling_tone: selectedCounselingTone,
+        content_preference: selectedContentPreference,
+        collected_at: new Date().toISOString(),
+      }
+
       const { error } = await supabase.auth.updateUser({
         data: {
           onboarding_completed: true,
-          onboarding_profile: {
-            concerns: selectedConcerns,
-            comfort_style: selectedComfortStyle,
-            collected_at: new Date().toISOString(),
-          },
+          onboarding_profile: onboardingProfile,
         },
       })
 
       if (error) {
         throw error
       }
+
+      // AI 백엔드는 public.user_profiles.onboarding_profile을 읽으므로 여기에도 동기화.
+      // 기존 패턴(/api/user/profile route, service_role)을 따라 client는 anon key로
+      // user_profiles 테이블에 직접 접근하지 않는다. upsertUserProfile은 display_name을
+      // 필수로 받으므로 metadata에서 꺼내 같이 보낸다(기존 행이 있으면 같은 값으로 덮어쓰여도 무해).
+      const metadata = (user.user_metadata ?? {}) as { display_name?: string }
+      const displayName =
+        metadata.display_name?.trim() || user.email?.split("@")[0] || user.id
+      await upsertUserProfile(user.id, displayName, undefined, undefined, onboardingProfile)
 
       setHasCompletedOnboarding(true)
     } catch (error) {
@@ -1774,8 +1790,10 @@ export function MoodPickDashboard() {
       <OnboardingScreen
         selectedConcerns={selectedConcerns}
         setSelectedConcerns={setSelectedConcerns}
-        selectedComfortStyle={selectedComfortStyle}
-        setSelectedComfortStyle={setSelectedComfortStyle}
+        selectedCounselingTone={selectedCounselingTone}
+        setSelectedCounselingTone={setSelectedCounselingTone}
+        selectedContentPreference={selectedContentPreference}
+        setSelectedContentPreference={setSelectedContentPreference}
         onComplete={handleCompleteOnboarding}
         isSaving={isSavingOnboarding}
         errorMessage={onboardingErrorMessage}
@@ -3646,8 +3664,10 @@ function LoginScreen({
 function OnboardingScreen({
   selectedConcerns,
   setSelectedConcerns,
-  selectedComfortStyle,
-  setSelectedComfortStyle,
+  selectedCounselingTone,
+  setSelectedCounselingTone,
+  selectedContentPreference,
+  setSelectedContentPreference,
   onComplete,
   isSaving,
   errorMessage,
@@ -3655,8 +3675,10 @@ function OnboardingScreen({
 }: {
   selectedConcerns: string[]
   setSelectedConcerns: (value: string[]) => void
-  selectedComfortStyle: string[]
-  setSelectedComfortStyle: (value: string[]) => void
+  selectedCounselingTone: string[]
+  setSelectedCounselingTone: (value: string[]) => void
+  selectedContentPreference: string[]
+  setSelectedContentPreference: (value: string[]) => void
   onComplete: () => void
   isSaving: boolean
   errorMessage: string | null
@@ -3670,9 +3692,12 @@ function OnboardingScreen({
     { id: "other", label: "기타" },
   ]
 
-  const comfortStyles = [
+  const counselingTones = [
     { id: "listen", label: "조용히 들어주기" },
     { id: "advice", label: "현실적인 조언" },
+  ]
+
+  const contentPreferences = [
     { id: "music", label: "신나는 음악" },
     { id: "video", label: "차분한 영상" },
   ]
@@ -3685,11 +3710,19 @@ function OnboardingScreen({
     }
   }
 
-  const toggleComfortStyle = (id: string) => {
-    if (selectedComfortStyle.includes(id)) {
-      setSelectedComfortStyle(selectedComfortStyle.filter((s) => s !== id))
+  const toggleCounselingTone = (id: string) => {
+    if (selectedCounselingTone.includes(id)) {
+      setSelectedCounselingTone(selectedCounselingTone.filter((s) => s !== id))
     } else {
-      setSelectedComfortStyle([...selectedComfortStyle, id])
+      setSelectedCounselingTone([...selectedCounselingTone, id])
+    }
+  }
+
+  const toggleContentPreference = (id: string) => {
+    if (selectedContentPreference.includes(id)) {
+      setSelectedContentPreference(selectedContentPreference.filter((s) => s !== id))
+    } else {
+      setSelectedContentPreference([...selectedContentPreference, id])
     }
   }
 
@@ -3736,26 +3769,51 @@ function OnboardingScreen({
               </div>
             </div>
 
-            {/* Question 2 */}
-            <div className="mb-8">
+            {/* Question 2 — 상담 방식 */}
+            <div className="mb-6">
               <h3 className="text-base font-semibold text-foreground mb-3">
-                어떤 방식의 위로를 선호하시나요?
+                어떤 상담 방식을 선호하시나요?
               </h3>
               <p className="text-xs text-muted-foreground mb-4">
                 여러 개를 선택할 수 있어요
               </p>
               <div className="flex flex-wrap gap-2">
-                {comfortStyles.map((style) => (
+                {counselingTones.map((tone) => (
                   <button
-                    key={style.id}
-                    onClick={() => toggleComfortStyle(style.id)}
+                    key={tone.id}
+                    onClick={() => toggleCounselingTone(tone.id)}
                     className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${
-                      selectedComfortStyle.includes(style.id)
+                      selectedCounselingTone.includes(tone.id)
                         ? "bg-primary text-primary-foreground"
                         : "bg-muted text-muted-foreground hover:bg-muted/80"
                     }`}
                   >
-                    {style.label}
+                    {tone.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Question 3 — 콘텐츠 선호 */}
+            <div className="mb-8">
+              <h3 className="text-base font-semibold text-foreground mb-3">
+                어떤 콘텐츠를 더 좋아하시나요?
+              </h3>
+              <p className="text-xs text-muted-foreground mb-4">
+                여러 개를 선택할 수 있어요
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {contentPreferences.map((pref) => (
+                  <button
+                    key={pref.id}
+                    onClick={() => toggleContentPreference(pref.id)}
+                    className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${
+                      selectedContentPreference.includes(pref.id)
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80"
+                    }`}
+                  >
+                    {pref.label}
                   </button>
                 ))}
               </div>
@@ -3765,7 +3823,7 @@ function OnboardingScreen({
             <Button
               onClick={onComplete}
               className="w-full h-12 rounded-xl text-base font-medium"
-              disabled={(selectedConcerns.length === 0 && selectedComfortStyle.length === 0) || isSaving}
+              disabled={(selectedConcerns.length === 0 && selectedCounselingTone.length === 0 && selectedContentPreference.length === 0) || isSaving}
             >
               {isSaving ? "저장 중..." : activeTab==="mypage"? "저장" : "시작하기"}
             </Button>

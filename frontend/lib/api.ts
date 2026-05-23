@@ -355,7 +355,8 @@ export async function upsertUserProfile(
   userId: string,
   displayName: string,
   gender?: string | null,
-  birthYear?: number | null
+  birthYear?: number | null,
+  onboardingProfile?: Record<string, unknown> | null,
 ): Promise<any> {
   const payload: Record<string, unknown> = {
     user_id: userId,
@@ -364,6 +365,7 @@ export async function upsertUserProfile(
 
   if (gender != null) payload.gender = gender
   if (birthYear != null) payload.birth_year = birthYear
+  if (onboardingProfile !== undefined) payload.onboarding_profile = onboardingProfile
 
   const response = await fetch(`/api/user/profile`, {
     method: "PUT",

@@ -28,6 +28,7 @@ from ai.utils import load_prompt
 from ai.tools.content_history import get_content_history, _get_supabase, get_recent_liked_titles
 from ai.tools.user_profile import get_user_profile
 from ai.tools.emotion_va_map import compute_emotion_ambiguity
+from ai.tools.preference_map import content_preference_to_korean
 from ai.agents.reranker import compute_emotion_trend, hybrid_rerank
 from ai.meditation_audio_clarify import meditation_audio_format_applies_to_current_message
 from ai.meditation_audio_signals import (
@@ -144,11 +145,11 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
     emotion_records = [] if isinstance(emotion_result, Exception) else (emotion_result or [])
 
     concerns = ", ".join(profile.get("concerns", [])) or "없음"
-    profile_styles = profile.get("comfort_style", []) or []
+    profile_prefs = profile.get("content_preference", []) or []
     if is_video_content(state.content_format):
         comfort_style = "영상"
-    elif profile_styles:
-        comfort_style = ", ".join(profile_styles)
+    elif profile_prefs:
+        comfort_style = content_preference_to_korean(profile_prefs) or "음악"
     elif is_audio_content(state.content_format):
         comfort_style = "오디오"
     else:
@@ -266,7 +267,7 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
                     f"사용자 요청: {state.message}\n"
                     f"현재 감정: {emotion} (인접 감정: {secondary_emotion}, 강도: {intensity}, 트렌드: {trend})\n"
                     f"고민: {concerns}\n"
-                    f"위로 방식: {comfort_style}\n"
+                    f"선호 콘텐츠: {comfort_style}\n"
                     f"좋아한 콘텐츠 제목들: {liked_hints}\n"
                     f"{music_only_note}"
                 ),

@@ -27,6 +27,7 @@ from ai.tools.rag_search import search_rag_context
 from ai.tools.user_profile import get_user_profile
 from ai.tools.emotion_record import save_emotion_record
 from ai.tools.emotion_va_map import get_nearest_emotion
+from ai.tools.preference_map import counseling_tone_guidance
 
 
 logger = logging.getLogger(__name__)
@@ -181,6 +182,23 @@ def _build_system_message(state: CounselingState) -> str:
     """Build system prompt with injected context."""
     base_prompt = load_prompt("system_prompt.md")
 
+    # 사용자 프로필 캐시가 없으면 1회 동기 fetch — GPT 도구 호출 의존성 없이
+    # 매 턴 일관되게 톤 가이드를 시스템 메시지에 포함시키기 위함.
+    profile = state.user_profile
+    if not profile:
+        try:
+            profile = get_user_profile(state.user_id) or {}
+            state.user_profile = profile
+        except Exception as e:
+            logger.warning(
+                "Failed to prefetch user_profile for tone block user_id=%s error_type=%s",
+                _short_id(state.user_id),
+                type(e).__name__,
+            )
+            profile = {}
+
+    tone_block = counseling_tone_guidance(profile.get("counseling_tone", []) or [])
+
     # Inject user_id and session_id so GPT can pass them to tools
     session_context = (
         f"\n\n### [Module 0: Session Context]\n"
@@ -199,7 +217,7 @@ def _build_system_message(state: CounselingState) -> str:
             f"{state.session_summary}\n"
         )
 
-    return base_prompt + session_context + summary_block
+    return base_prompt + session_context + tone_block + summary_block
 
 
 
