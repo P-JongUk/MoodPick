@@ -28,6 +28,7 @@ import {
   getReminderPreference,
   upsertReminderPreference,
   upsertUserProfile,
+  type CounselorPersona,
   type DailySummary,
   type SessionResponse,
 } from "@/lib/api"
@@ -467,6 +468,7 @@ export function MoodPickDashboard() {
   const [showStartSessionPrompt, setShowStartSessionPrompt] = useState(false)
   const [preSurveyFromCounselingTabNav, setPreSurveyFromCounselingTabNav] = useState(false)
   const [preSurveyMood, setPreSurveyMood] = useState<string | null>(null)
+  const [preSurveyPersona, setPreSurveyPersona] = useState<CounselorPersona | null>(null)
   const [postSurveyMood, setPostSurveyMood] = useState<string | null>(null)
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
   const [syncWarningMessage, setSyncWarningMessage] = useState<string | null>(null)
@@ -560,6 +562,7 @@ export function MoodPickDashboard() {
     setShowStartSessionPrompt(false)
     setPreSurveyFromCounselingTabNav(false)
     setPreSurveyMood(null)
+    setPreSurveyPersona(null)
     setPostSurveyMood(null)
     setCurrentSessionId(null)
     setSyncWarningMessage(null)
@@ -1155,6 +1158,7 @@ export function MoodPickDashboard() {
     setShowStartSessionPrompt(false)
     setSyncWarningMessage(null)
     setPreSurveyMood(null)
+    setPreSurveyPersona(null)
     setShowPreSurvey(true)
   }
 
@@ -1169,6 +1173,7 @@ export function MoodPickDashboard() {
       setShowStartSessionPrompt(false)
       setSyncWarningMessage(null)
       setPreSurveyMood(null)
+      setPreSurveyPersona(null)
       setShowPreSurvey(true)
       setActiveTab("counseling")
       return
@@ -1179,6 +1184,10 @@ export function MoodPickDashboard() {
   const handlePreSurveyComplete = async () => {
     if (!preSurveyMood) {
       setSyncWarningMessage("사전 문진: 마음 온도를 먼저 선택해 주세요.")
+      return
+    }
+    if (!preSurveyPersona) {
+      setSyncWarningMessage("상담사 페르소나를 먼저 선택해 주세요.")
       return
     }
 
@@ -1196,7 +1205,7 @@ export function MoodPickDashboard() {
         }
       }
 
-      createdSessionId = await startCounselingSession()
+      createdSessionId = await startCounselingSession(undefined, preSurveyPersona)
 
       if (createdSessionId) {
         await saveSurveyResponse(createdSessionId, "pre", preSurveyMood)
@@ -1300,6 +1309,7 @@ export function MoodPickDashboard() {
       setCurrentSessionId(null)
       setPostSurveyMood(null)
       setPreSurveyMood(null)
+      setPreSurveyPersona(null)
       setMediaFeedback(null)
       if (shouldRefreshDashboard) {
         setDashboardRefreshKey((value) => value + 1)
@@ -2038,10 +2048,13 @@ export function MoodPickDashboard() {
           <PreSurveyOverlay
             selectedMood={preSurveyMood}
             setSelectedMood={setPreSurveyMood}
+            selectedPersona={preSurveyPersona}
+            setSelectedPersona={setPreSurveyPersona}
             onStart={handlePreSurveyComplete}
             showCounselingTabGateHint={preSurveyFromCounselingTabNav}
             onClose={() => {
               setShowPreSurvey(false)
+              setPreSurveyPersona(null)
               if (preSurveyFromCounselingTabNav) {
                 setActiveTab("home")
               }
@@ -4519,22 +4532,32 @@ function MyPageView({
   )
 }
 
+const PERSONA_OPTIONS: { value: CounselorPersona; label: string; description: string; emoji: string }[] = [
+  { value: "friend", label: "친구", description: "편하게 수다 떠는 친한 친구", emoji: "🧃" },
+  { value: "teacher", label: "선생님", description: "차분히 다 받아주는 따뜻한 선생님", emoji: "🌿" },
+  { value: "expert", label: "전문상담사", description: "정중한 존댓말의 임상 상담사", emoji: "🩺" },
+]
+
 function PreSurveyOverlay({
   selectedMood,
   setSelectedMood,
+  selectedPersona,
+  setSelectedPersona,
   onStart,
   onClose,
   showCounselingTabGateHint = false,
 }: {
   selectedMood: string | null
   setSelectedMood: (value: string | null) => void
+  selectedPersona: CounselorPersona | null
+  setSelectedPersona: (value: CounselorPersona | null) => void
   onStart: () => void | Promise<void>
   onClose: () => void
   showCounselingTabGateHint?: boolean
 }) {
   return (
-    <div className="fixed inset-0 z-[550] bg-background/95 backdrop-blur-sm flex items-center justify-center p-4">
-      <Card className="relative z-10 w-full max-w-lg border-0 shadow-2xl pointer-events-auto">
+    <div className="fixed inset-0 z-[550] bg-background/95 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+      <Card className="relative z-10 w-full max-w-lg border-0 shadow-2xl pointer-events-auto my-8">
         <CardContent className="p-8">
           {/* Close Button */}
           <button
@@ -4559,7 +4582,7 @@ function PreSurveyOverlay({
             <p className="text-muted-foreground">상담 시작 전, 지금의 마음 상태를 알려주세요</p>
           </div>
 
-          {/* Question */}
+          {/* Mood */}
           <div className="mb-8">
             <h3 className="text-lg font-semibold text-center text-foreground mb-6">
               지금 마음의 온도는 어떤가요?
@@ -4585,13 +4608,45 @@ function PreSurveyOverlay({
             </div>
           </div>
 
+          {/* Persona */}
+          <div className="mb-8">
+            <h3 className="text-lg font-semibold text-center text-foreground mb-2">
+              어떤 상담사와 이야기하고 싶나요?
+            </h3>
+            <p className="text-xs text-muted-foreground text-center mb-6">
+              이 세션 동안만 적용돼요. 다음 상담에서 다시 고를 수 있어요.
+            </p>
+            <div className="flex flex-col gap-2">
+              {PERSONA_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setSelectedPersona(option.value)}
+                  className={`flex items-center gap-3 p-3 rounded-xl text-left transition-all duration-200 ${
+                    selectedPersona === option.value
+                      ? "bg-primary/10 ring-2 ring-primary"
+                      : "bg-muted hover:bg-muted/80"
+                  }`}
+                >
+                  <span className="text-2xl">{option.emoji}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-foreground">{option.label}</div>
+                    <div className="text-xs text-muted-foreground whitespace-normal">
+                      {option.description}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Start Button */}
           <Button
             type="button"
             onClick={() => void onStart()}
             className={cn(
               "w-full h-12 rounded-xl text-base font-medium",
-              !selectedMood && "opacity-80"
+              (!selectedMood || !selectedPersona) && "opacity-80"
             )}
           >
             상담 시작

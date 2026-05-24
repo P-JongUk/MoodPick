@@ -37,19 +37,26 @@ async function buildCounselingError(response: Response): Promise<Error> {
 
 // ============ Session API ============
 
+export type CounselorPersona = "friend" | "teacher" | "expert"
+
 export interface SessionResponse {
   id: string
   user_id: string
   status: string
   started_at: string
   ended_at?: string
+  persona?: CounselorPersona
 }
 
-export async function createSession(userId: string, context?: string): Promise<SessionResponse> {
+export async function createSession(
+  userId: string,
+  context?: string,
+  persona: CounselorPersona = "expert",
+): Promise<SessionResponse> {
   const response = await fetch(`${API_BASE_URL}/session/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ user_id: userId, context }),
+    body: JSON.stringify({ user_id: userId, context, persona }),
   })
 
   if (!response.ok) {

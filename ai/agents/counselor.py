@@ -27,7 +27,7 @@ from ai.tools.rag_search import search_rag_context
 from ai.tools.user_profile import get_user_profile
 from ai.tools.emotion_record import save_emotion_record
 from ai.tools.emotion_va_map import get_nearest_emotion
-from ai.tools.preference_map import counseling_tone_guidance
+from ai.tools.preference_map import counseling_tone_guidance, counselor_persona_guidance
 
 
 logger = logging.getLogger(__name__)
@@ -181,6 +181,11 @@ async def _execute_tool_call(tool_call, state: CounselingState) -> str:
 def _build_system_message(state: CounselingState) -> str:
     """Build system prompt with injected context."""
     base_prompt = load_prompt("system_prompt.md")
+
+    # 세션의 persona를 Module 1 위치에 주입 — system_prompt.md의 {{persona_block}} 치환
+    base_prompt = base_prompt.replace(
+        "{{persona_block}}", counselor_persona_guidance(state.persona)
+    )
 
     # 사용자 프로필 캐시가 없으면 1회 동기 fetch — GPT 도구 호출 의존성 없이
     # 매 턴 일관되게 톤 가이드를 시스템 메시지에 포함시키기 위함.
