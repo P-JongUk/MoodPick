@@ -102,7 +102,7 @@ import {
 } from "@/components/ui/alert-dialog"
 
 const REMINDER_FEATURE_ENABLED = process.env.NEXT_PUBLIC_REMINDER_ENABLED === "true"
-const DEMO_HIDE_ONBOARDING = true
+const DEMO_HIDE_ONBOARDING = false
 
 type TabType = "home" | "counseling" | "dashboard" | "mypage"
 
@@ -527,6 +527,9 @@ export function MoodPickDashboard() {
   const surveyOverlayBlocksInteractionRef = useRef(false)
   /** 정상 종료 직후 getCurrentSession 지연 등으로 이어가기 다이얼로그가 뜨는 것을 막음 (epoch ms) */
   const suppressResumeDialogUntilRef = useRef(0)
+  const preSurveySubmittingRef = useRef(false)
+  const sendingMessageRef = useRef(false)
+  const surveyCompletionSubmittingRef = useRef(false)
   const postSurveySubmittingRef = useRef(false)
   const [isPostSurveySubmitting, setIsPostSurveySubmitting] = useState(false)
   const [showResumeSessionDialog, setShowResumeSessionDialog] = useState(false)
@@ -568,6 +571,9 @@ export function MoodPickDashboard() {
     setShowIdleWrapUpBanner(false)
     lastCounselingActivityRef.current = 0
     counselingActiveSessionIdRef.current = null
+    preSurveySubmittingRef.current = false
+    sendingMessageRef.current = false
+    surveyCompletionSubmittingRef.current = false
     postSurveySubmittingRef.current = false
     setIsPostSurveySubmitting(false)
     suppressResumeDialogUntilRef.current = 0
@@ -738,6 +744,8 @@ export function MoodPickDashboard() {
 
   const handleSurveySave = async () => {
     if (!user?.id) return
+    if (surveyCompletionSubmittingRef.current) return
+    surveyCompletionSubmittingRef.current = true
 
     setIsSavingSurvey(true)
     setSurveyErrorMessage(null)
@@ -761,6 +769,7 @@ export function MoodPickDashboard() {
       setSurveyErrorMessage(message)
       throw error
     } finally {
+      surveyCompletionSubmittingRef.current = false
       setIsSavingSurvey(false)
     }
   }
@@ -936,8 +945,7 @@ export function MoodPickDashboard() {
         })
 
         setSessionHistory(mappedSessionHistory)
-      } catch (error) {
-        console.error("Failed to load dashboard data", error)
+      } catch {
         setUserStats(null)
         setEmotionSummary(null)
         setEmotionData([])
@@ -1187,6 +1195,9 @@ export function MoodPickDashboard() {
     }
 
     let initialCounselingMessage = "안녕하세요, 저는 무드픽 상담사입니다. 오늘 하루 어떠셨나요? 편하게 이야기해 주세요."
+    if (preSurveySubmittingRef.current) return
+    preSurveySubmittingRef.current = true
+
     let createdSessionId: string | null = null
 
     try {
@@ -1214,6 +1225,7 @@ export function MoodPickDashboard() {
     }
 
     if (!createdSessionId) {
+      preSurveySubmittingRef.current = false
       return
     }
 
@@ -1236,6 +1248,7 @@ export function MoodPickDashboard() {
       },
     ])
     touchCounselingActivity()
+    preSurveySubmittingRef.current = false
   }
 
   const handleEndSession = () => {
@@ -1423,7 +1436,7 @@ export function MoodPickDashboard() {
 
   const handleSendMessage = (messageText: string): boolean => {
     const trimmedMessage = messageText.trim()
-    if (!trimmedMessage || isSendingMessage) return false
+    if (!trimmedMessage || isSendingMessage || sendingMessageRef.current) return false
     if (!user?.id) {
       setSyncWarningMessage("로그인 후 상담 메시지를 보낼 수 있어요.")
       return false
@@ -1446,6 +1459,7 @@ export function MoodPickDashboard() {
     }
 
     setMessages((prev) => [...prev, newMessage])
+    sendingMessageRef.current = true
     setIsSendingMessage(true)
     touchCounselingActivity()
 
@@ -1525,6 +1539,7 @@ export function MoodPickDashboard() {
         }
         setMessages((prev) => [...prev, fallbackResponse])
       } finally {
+        sendingMessageRef.current = false
         setIsSendingMessage(false)
       }
     })()
@@ -1548,7 +1563,7 @@ export function MoodPickDashboard() {
         data: { display_name: trimmed },
       })
       if (error) {
-        console.warn("Failed to sync auth metadata display name:", error)
+        console.warn("Failed to sync auth metadata display name")
       }
       setProfileDisplayName(trimmed)
       setProfileSaveMessage("이름이 저장되었습니다.")
@@ -1610,7 +1625,6 @@ export function MoodPickDashboard() {
       URL.revokeObjectURL(url)
       setExportMyDataMessage("JSON 파일로 내보냈습니다.")
     } catch (e) {
-      console.error(e)
       setExportMyDataMessage(
         e instanceof Error ? e.message : "내보내기에 실패했습니다. 잠시 후 다시 시도해 주세요."
       )

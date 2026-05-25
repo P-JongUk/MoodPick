@@ -22,10 +22,10 @@ const checks = [
     validate: (status, body) => status === 200 && body.includes("mood_general"),
   },
   {
-    name: "Backend survey history (dummy user)",
+    name: "Backend survey history requires auth",
     url: `${backendBase}/survey/history/00000000-0000-0000-0000-000000000000`,
     method: "GET",
-    validate: (status, body) => status === 200 && body.includes('"status":"success"'),
+    validate: (status) => status === 401 || status === 403,
   },
   {
     name: "Frontend home",

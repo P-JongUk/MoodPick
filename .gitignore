@@ -90,3 +90,7 @@ logs/
 
 # Local preview pages
 /frontend/app/markdown-preview/
+
+# local
+CONTEXT.md
+BETA_DEPLOY_PREP_SUMMARY.md

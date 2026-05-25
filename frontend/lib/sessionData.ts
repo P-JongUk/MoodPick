@@ -8,22 +8,8 @@ import {
 export type SurveyPhase = "pre" | "post"
 export type ContentFeedbackType = "like" | "dislike"
 
-const moodScoreMap: Record<string, number> = {
-  great: 5,
-  good: 4,
-  neutral: 3,
-  low: 2,
-  bad: 1,
-}
-
 // Get userId from Supabase auth
 async function getCurrentUserId() {
-  // 이 함수는 프론트엔드에서 auth context에서 가져올 수 있음
-  // 임시로 localStorage에서 가져오거나, useAuth hook 사용
-  const stored = localStorage.getItem("__moodpick_user_id")
-  if (stored) return stored
-  
-  // fallback: Supabase auth에서 가져오기
   const { getSupabaseClient } = await import("./supabaseClient")
   const supabase = getSupabaseClient()
   const { data, error } = await supabase.auth.getUser()

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from supabase import Client
 
+from app.auth import CurrentUser, get_current_user, require_same_user
 from app.config import get_settings
 from app.services.embedding_service import create_text_embedding
 from app.services.supabase_service import get_supabase_client
@@ -35,7 +36,7 @@ def _run_similarity_search(
     supabase: Client,
     query_embedding: List[float],
     top_k: int,
-    user_id: Optional[str] = None,
+    user_id: str,
 ) -> List[RagSearchResult]:
     rpc_payload: dict[str, Any] = {
         "query_embedding": query_embedding,
@@ -66,7 +67,7 @@ async def rag_health(supabase: Client = Depends(get_supabase_client)):
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"RAG health check failed: {e}",
+            detail="RAG health check failed",
         )
 
 
@@ -74,9 +75,12 @@ async def rag_health(supabase: Client = Depends(get_supabase_client)):
 async def rag_search(
     payload: RagSearchRequest,
     supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """입력 임베딩으로 유사한 RAG 청크를 검색합니다."""
     settings = get_settings()
+    if payload.user_id is not None:
+        require_same_user(payload.user_id, current_user)
     if len(payload.query_embedding) != settings.rag_embedding_dimensions:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -88,12 +92,12 @@ async def rag_search(
             supabase=supabase,
             query_embedding=payload.query_embedding,
             top_k=payload.top_k,
-            user_id=payload.user_id,
+            user_id=current_user.id,
         )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"RAG search failed: {e}",
+            detail="RAG search failed",
         )
 
 
@@ -101,28 +105,33 @@ async def rag_search(
 async def rag_search_by_text(
     payload: RagSearchByTextRequest,
     supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """입력 텍스트를 임베딩으로 변환한 뒤 유사한 RAG 청크를 검색합니다."""
     try:
+        if payload.user_id is not None:
+            require_same_user(payload.user_id, current_user)
         query_embedding = create_text_embedding(payload.query_text)
         return _run_similarity_search(
             supabase=supabase,
             query_embedding=query_embedding,
             top_k=payload.top_k,
-            user_id=payload.user_id,
+            user_id=current_user.id,
         )
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            detail="query_text must not be empty",
         )
     except RuntimeError as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="RAG search-by-text failed",
         )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"RAG search-by-text failed: {e}",
+            detail="RAG search-by-text failed",
         )

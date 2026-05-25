@@ -9,10 +9,13 @@ Output: state.is_crisis, state.intent, state.needs_recommendation
 """
 
 import json
+import logging
 
 from ai.clients import get_openai
 from ai.state import CounselingState
 from ai.utils import load_prompt
+
+logger = logging.getLogger(__name__)
 
 _MODEL = "gpt-4o-mini"
 _HISTORY_TURNS = 4          # 직전 2턴분 (user/assistant 쌍 2개)
@@ -57,7 +60,23 @@ async def orchestrator_agent(state: CounselingState) -> CounselingState:
     )
 
     raw = response.choices[0].message.content or "{}"
-    result = json.loads(raw)
+    try:
+        result = json.loads(raw)
+        if not isinstance(result, dict):
+            raise ValueError("orchestrator JSON root is not an object")
+    except (json.JSONDecodeError, ValueError, TypeError):
+        logger.warning(
+            "Orchestrator JSON parse failed user_id=%s session_id=%s",
+            state.user_id[:8],
+            state.session_id[:8],
+        )
+        result = {
+            "is_crisis": False,
+            "intent": "상담",
+            "needs_recommendation": False,
+            "content_format": "unspecified",
+            "content_query_hints": [],
+        }
 
     state.is_crisis = bool(result.get("is_crisis", False))
     state.intent = result.get("intent", "상담")

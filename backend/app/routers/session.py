@@ -3,6 +3,7 @@ import logging
 from typing import Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, status
+from app.auth import CurrentUser, get_current_user, get_owned_session, require_same_user
 from app.services.supabase_service import get_supabase_client
 from supabase import Client
 
@@ -38,10 +39,12 @@ class SessionResponse(BaseModel):
 @router.post("/start", response_model=SessionResponse)
 async def start_session(
     payload: SessionStartRequest,
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """새 상담 세션 시작 (사용자당 동시 active는 하나만 유지)"""
     try:
+        require_same_user(payload.user_id, current_user)
         now = datetime.now(timezone.utc).isoformat()
         # 프론트/네트워크 실수로 active가 여러 개면 종료한 세션만 ended 되고 나머지가 남을 수 있음
         (
@@ -71,18 +74,20 @@ async def start_session(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Internal server error"
         )
 
 
 @router.post("/end", response_model=dict)
 async def end_session(
     payload: SessionEndRequest,
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """상담 세션 종료"""
     try:
         now = datetime.now(timezone.utc).isoformat()
+        get_owned_session(supabase, payload.session_id, current_user.id)
         # select()와 함께 PATCH하면 환경에 따라 data가 비어 404→500으로 잘못 전달되는 경우가 있어,
         # cleanup-stale과 동일하게 update만 실행한 뒤 별도 조회로 검증합니다.
         (
@@ -134,20 +139,26 @@ async def end_session(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("end_session failed session_id=%s", payload.session_id)
+        logger.warning(
+            "end_session failed session_id=%s error_type=%s",
+            payload.session_id,
+            type(e).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal server error",
         ) from e
 
 
 @router.get("/current/{user_id}", response_model=Optional[SessionResponse])
 async def get_current_session(
     user_id: str,
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """사용자의 현재 활성 세션 조회"""
     try:
+        require_same_user(user_id, current_user)
         result = supabase.table("counseling_sessions").select("*").eq(
             "user_id", user_id
         ).eq("status", "active").order(
@@ -164,7 +175,7 @@ async def get_current_session(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Internal server error"
         )
 
 
@@ -181,12 +192,14 @@ def _parse_ts(value: str) -> datetime:
 async def cleanup_stale_sessions_for_user(
     payload: StaleSessionCleanupRequest,
     supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     사용자 기준으로 오래 방치된 active 세션을 ended로 정리합니다.
     (로그인 직후 등에서 호출 — 사후 문진 없이 종료 처리)
     """
     try:
+        require_same_user(payload.user_id, current_user)
         sessions_result = (
             supabase.table("counseling_sessions")
             .select("id, started_at")
@@ -256,8 +269,10 @@ async def cleanup_stale_sessions_for_user(
             "closed_session_ids": closed_ids,
             "closed_count": len(closed_ids),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal server error",
         ) from e

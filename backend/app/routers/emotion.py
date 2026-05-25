@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status
+from app.auth import CurrentUser, get_current_user, require_same_user
 from app.services.supabase_service import get_supabase_client
 from supabase import Client
 from datetime import datetime, timedelta, timezone
@@ -69,10 +70,12 @@ async def analyze_emotion(
             emotion=emotion,
             recommendations=recommendations
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Internal server error"
         )
 
 
@@ -80,10 +83,12 @@ async def analyze_emotion(
 async def get_emotion_records(
     user_id: str,
     days: int = 7,
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """사용자의 감정 기록 조회 (최근 N일)"""
     try:
+        require_same_user(user_id, current_user)
         days_ago = datetime.now(timezone.utc) - timedelta(days=days)
 
         sessions_result = supabase.table("counseling_sessions").select("id").eq(
@@ -115,10 +120,12 @@ async def get_emotion_records(
                 })
             return emotions
         return []
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Internal server error"
         )
 
 
@@ -126,10 +133,12 @@ async def get_emotion_records(
 async def get_emotion_summary(
     user_id: str,
     days: int = 7,
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """사용자의 감정 요약 (최근 N일 평균)"""
     try:
+        require_same_user(user_id, current_user)
         days_ago = datetime.now(timezone.utc) - timedelta(days=days)
 
         sessions_result = supabase.table("counseling_sessions").select("id").eq(
@@ -205,10 +214,12 @@ async def get_emotion_summary(
             "total_responses": len(scores),
             "days_range": days
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Internal server error"
         )
 
 

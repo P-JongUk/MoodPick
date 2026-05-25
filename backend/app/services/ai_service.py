@@ -32,11 +32,15 @@ async def get_ai_response(
             messages=messages,
             session_summary=session_summary,
         )
+        recommended_content = state.recommended_content
+        if isinstance(recommended_content, dict):
+            recommended_content = dict(recommended_content)
+            recommended_content.pop("search_query", None)
         return {
             "message": state.response,
             "is_crisis": state.is_crisis,
             "emotion": state.emotion_score,
-            "recommended_content": state.recommended_content,
+            "recommended_content": recommended_content,
             "fallback": False,
         }
     except Exception as exc:
@@ -47,7 +51,7 @@ async def get_ai_response(
             type(exc).__name__,
         )
         return {
-            "message": "지금 감정을 한 문장으로 표현해 보면 원인을 더 명확히 찾는 데 도움이 돼요.",
+            "message": "지금 답변을 만드는 중 잠시 문제가 생겼어요. 괜찮다면 방금 이야기해 준 내용을 한 번만 다시 보내주세요.",
             "is_crisis": False,
             "emotion": {},
             "recommended_content": None,

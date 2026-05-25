@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from supabase import Client
 
+from app.auth import CurrentUser, get_current_user, require_same_user
 from app.services.supabase_service import get_supabase_client
 from app.time_utils import local_day_to_utc_range, parse_iso_date
 from app.routers.survey import _mood_general_pre_post
@@ -56,10 +57,12 @@ class UserProfileUpsertRequest(BaseModel):
 @router.get("/profile/{user_id}", response_model=UserProfileResponse)
 async def get_user_profile(
     user_id: str,
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """사용자 프로필 조회"""
     try:
+        require_same_user(user_id, current_user)
         profile_result = supabase.table("user_profiles").select(
             "display_name, gender, birth_year, created_at"
         ).eq("user_id", user_id).limit(1).execute()
@@ -95,10 +98,12 @@ async def get_user_profile(
             "avatar_url": None,
             "created_at": created_at,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Internal server error"
         )
 
 
@@ -106,9 +111,11 @@ async def get_user_profile(
 async def upsert_user_profile(
     payload: UserProfileUpsertRequest,
     supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """사용자 프로필 이름 저장/수정"""
     try:
+        require_same_user(payload.user_id, current_user)
         display_name = payload.display_name.strip()
         if not display_name:
             raise HTTPException(
@@ -148,7 +155,7 @@ async def upsert_user_profile(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal server error",
         )
 
 
@@ -156,10 +163,12 @@ async def upsert_user_profile(
 async def get_user_sessions(
     user_id: str,
     limit: int = 10,
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """사용자의 세션 목록 조회 (최근 10개)"""
     try:
+        require_same_user(user_id, current_user)
         result = supabase.table("counseling_sessions").select("*").eq(
             "user_id", user_id
         ).order("started_at", desc=True).limit(limit).execute()
@@ -173,20 +182,24 @@ async def get_user_sessions(
             "user_id": user_id,
             "sessions": []
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Internal server error"
         )
 
 
 @router.get("/stats/{user_id}")
 async def get_user_stats(
     user_id: str,
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """사용자 통계 (세션, 피드백, 시청 기록)"""
     try:
+        require_same_user(user_id, current_user)
         # 세션 수
         sessions = supabase.table("counseling_sessions").select(
             "id, started_at"
@@ -231,10 +244,12 @@ async def get_user_stats(
             "likes": likes,
             "dislikes": total_feedback - likes
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Internal server error"
         )
 
 
@@ -244,9 +259,11 @@ async def get_daily_summary(
     date: str = Query(..., description="YYYY-MM-DD"),
     timezone: str = Query("Asia/Seoul"),
     supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     """특정 로컬 날짜의 세션·문진·시청 기록 요약 (캘린더 상세용)."""
     try:
+        require_same_user(user_id, current_user)
         d = parse_iso_date(date)
         start_utc, end_utc = local_day_to_utc_range(timezone, d)
 
@@ -359,8 +376,10 @@ async def get_daily_summary(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="date must be YYYY-MM-DD",
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal server error",
         )

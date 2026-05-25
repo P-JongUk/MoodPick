@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from supabase import Client
 
+from app.auth import CurrentUser, get_current_user, get_owned_session, require_same_user
 from app.services.supabase_service import get_supabase_client
 from app.services.ai_service import get_ai_response
 from app.services.session_summary import prepare_session_context
@@ -54,8 +55,10 @@ def _build_initial_message(mood_value: str | None) -> str:
 async def get_initial_counseling_message(
     session_id: str,
     supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     try:
+        get_owned_session(supabase, session_id, current_user.id)
         response = supabase.table("survey_responses").select(
             "emoji_value"
         ).eq("session_id", session_id).eq("phase", "pre").eq(
@@ -106,9 +109,11 @@ async def get_counseling_history(
     session_id: str,
     user_id: str = Query(..., description="Supabase auth user id"),
     supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """상담 세션의 저장된 대화 목록(시간순)."""
     try:
+        require_same_user(user_id, current_user)
         _get_session_for_user(supabase, session_id, user_id)
         hist = (
             supabase.table("counseling_history")
@@ -152,6 +157,7 @@ def _save_message(supabase: Client, session_id: str, user_msg: str, ai_msg: str)
 async def send_counseling_message(
     payload: CounselingMessageRequest,
     supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     if not payload.session_id:
         raise HTTPException(
@@ -160,6 +166,7 @@ async def send_counseling_message(
         )
 
     try:
+        require_same_user(payload.user_id, current_user)
         session = _get_session_for_user(supabase, payload.session_id, payload.user_id)
         if session.get("status") == "ended":
             raise HTTPException(

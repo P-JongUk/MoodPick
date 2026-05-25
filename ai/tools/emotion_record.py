@@ -5,10 +5,15 @@ Saves emotion analysis results to the database after each Counselor response.
 Uses the emotion_records table created in migration 006.
 """
 
+import logging
+
 from supabase import create_client, Client
 
 from ai.config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 from ai.tools.emotion_va_map import get_nearest_emotion
+
+
+logger = logging.getLogger(__name__)
 
 
 def _get_supabase() -> Client:
@@ -71,4 +76,5 @@ def save_emotion_record(
 
     except Exception as e:
         # Non-fatal: log and continue
-        return {"success": False, "error": str(e)}
+        logger.warning("save_emotion_record failed error_type=%s", type(e).__name__)
+        return {"success": False, "error": "emotion_record_save_failed"}

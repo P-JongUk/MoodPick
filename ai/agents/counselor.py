@@ -36,6 +36,24 @@ def _short_id(value: str | None) -> str:
     return value[:8] if value else "-"
 
 
+def _parse_tool_arguments(tool_call, state: CounselingState) -> dict:
+    raw_args = tool_call.function.arguments or "{}"
+    try:
+        args = json.loads(raw_args)
+        if isinstance(args, dict):
+            return args
+    except json.JSONDecodeError:
+        pass
+
+    logger.warning(
+        "AI tool arguments parse failed fn=%s user_id=%s session_id=%s",
+        tool_call.function.name,
+        _short_id(state.user_id),
+        _short_id(state.session_id),
+    )
+    return {}
+
+
 def _build_emotion_score(args: dict) -> dict:
     """save_emotion_record 인자에서 후속 에이전트들이 쓰는 통합 emotion_score를 만든다."""
     valence = float(args.get("valence", 0.0))
@@ -137,7 +155,7 @@ async def _execute_tool_call(tool_call, state: CounselingState) -> str:
     동기 도구(Supabase/OpenAI sync SDK)는 asyncio.to_thread로 감싸 이벤트 루프를 막지 않는다.
     """
     fn_name = tool_call.function.name
-    fn_args = json.loads(tool_call.function.arguments)
+    fn_args = _parse_tool_arguments(tool_call, state)
 
     logger.info(
         "AI tool call fn=%s user_id=%s session_id=%s arg_keys=%s",
@@ -148,21 +166,22 @@ async def _execute_tool_call(tool_call, state: CounselingState) -> str:
     )
 
     if fn_name == "search_rag_context":
+        query_text = str(fn_args.get("query_text") or state.message or "").strip()
         result = await asyncio.to_thread(
             search_rag_context,
-            query_text=fn_args["query_text"],
+            query_text=query_text,
             top_k=fn_args.get("top_k", 3),
         )
     elif fn_name == "get_user_profile":
         result = await asyncio.to_thread(
             get_user_profile,
-            user_id=fn_args["user_id"],
+            user_id=state.user_id,
         )
     elif fn_name == "save_emotion_record":
         result = await asyncio.to_thread(
             save_emotion_record,
-            user_id=fn_args["user_id"],
-            session_id=fn_args["session_id"],
+            user_id=state.user_id,
+            session_id=state.session_id,
             valence=fn_args.get("valence", 0.0),
             arousal=fn_args.get("arousal", 0.0),
             emotion_description=fn_args.get("emotion_description", ""),
@@ -173,8 +192,8 @@ async def _execute_tool_call(tool_call, state: CounselingState) -> str:
 
     try:
         return json.dumps(result, ensure_ascii=False, default=str)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    except Exception:
+        return json.dumps({"error": "tool_result_serialization_failed"})
 
 
 def _build_system_message(state: CounselingState) -> str:
@@ -269,7 +288,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
             if tool_call.function.name == "save_emotion_record":
                 save_emotion_called = True
                 try:
-                    args = json.loads(tool_call.function.arguments)
+                    args = _parse_tool_arguments(tool_call, state)
                     state.emotion_score = _build_emotion_score(args)
                 except (json.JSONDecodeError, TypeError):
                     pass
@@ -285,7 +304,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
     # 빈 메시지가 전달될 수 있어 안전장치를 둔다.
     final_content = (response.choices[0].message.content or "").strip()
     if not final_content:
-        final_content = "지금은 답변을 정리하기 어렵네요. 다시 한 번 말씀해 주실 수 있을까요?"
+        final_content = "지금은 답변을 정리하기가 잠시 어려워요. 괜찮다면 방금 내용을 한 번만 다시 말해 주세요."
     state.response = final_content
 
     # ── Guarantee: save emotion even if GPT skipped the tool ────────────
@@ -307,7 +326,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
                 if tc.function.name == "save_emotion_record":
                     await _execute_tool_call(tc, state)
                     try:
-                        args = json.loads(tc.function.arguments)
+                        args = _parse_tool_arguments(tc, state)
                         state.emotion_score = _build_emotion_score(args)
                     except (json.JSONDecodeError, TypeError):
                         pass

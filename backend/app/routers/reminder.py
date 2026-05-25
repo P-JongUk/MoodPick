@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
 from supabase import Client
 
+from app.auth import CurrentUser, get_current_user, require_same_user
 from app.services.supabase_service import get_supabase_client
 
 
@@ -128,12 +129,12 @@ def dispatch_due_reminders(supabase: Client, source: str = "scheduler") -> dict:
             failed_count += 1
             try:
                 _insert_dispatch_log(
-                    supabase,
-                    user_id=user_id,
-                    status_text="failed",
-                    source=source,
-                    detail=str(e),
-                )
+                supabase,
+                user_id=user_id,
+                status_text="failed",
+                source=source,
+                detail=type(e).__name__,
+            )
             except Exception:
                 pass
 
@@ -151,8 +152,10 @@ def dispatch_due_reminders(supabase: Client, source: str = "scheduler") -> dict:
 async def upsert_reminder_preference(
     payload: ReminderPreferenceRequest,
     supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     try:
+        require_same_user(payload.user_id, current_user)
         now_iso = datetime.now(timezone.utc).isoformat()
 
         result = supabase.table("user_reminder_preferences").upsert(
@@ -185,7 +188,7 @@ async def upsert_reminder_preference(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal server error",
         )
 
 
@@ -193,8 +196,10 @@ async def upsert_reminder_preference(
 async def get_reminder_preference(
     user_id: str,
     supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     try:
+        require_same_user(user_id, current_user)
         result = supabase.table("user_reminder_preferences").select("*").eq(
             "user_id", user_id
         ).limit(1).execute()
@@ -219,13 +224,14 @@ async def get_reminder_preference(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal server error",
         )
 
 
 @router.get("/due")
 async def get_due_reminders(
     supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     try:
         now_utc = datetime.now(timezone.utc)
@@ -244,7 +250,7 @@ async def get_due_reminders(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal server error",
         )
 
 
@@ -252,8 +258,10 @@ async def get_due_reminders(
 async def mark_reminder_sent(
     payload: ReminderMarkSentRequest,
     supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     try:
+        require_same_user(payload.user_id, current_user)
         now_iso = datetime.now(timezone.utc).isoformat()
         result = supabase.table("user_reminder_preferences").update(
             {
@@ -278,18 +286,19 @@ async def mark_reminder_sent(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal server error",
         )
 
 
 @router.post("/dispatch")
 async def dispatch_due_reminder_now(
     supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     try:
         return dispatch_due_reminders(supabase, source="manual-api")
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal server error",
         )
