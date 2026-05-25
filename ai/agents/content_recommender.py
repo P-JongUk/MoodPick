@@ -359,8 +359,9 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
     # ── 6. 하이브리드 재랭킹 (NEW) ──────────────────────────────────────
     video = None
     candidate_pool = []
+    alternative_links: list[dict] = []
     selected_score = 0.0
-    
+
     if videos:
         # candidates의 형식을 통일
         formatted_cands = []
@@ -396,6 +397,15 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
             video = ranked_videos[0]
             selected_score = video.get("score", 0.0)
             candidate_pool = [{"video_id": v.get("content_id"), "score": v.get("score", 0.0)} for v in ranked_videos]
+            for v in ranked_videos[1:3]:
+                alt_title = (v.get("title") or "").strip()
+                alt_url = (v.get("url") or "").strip()
+                if alt_title and alt_url:
+                    alternative_links.append({
+                        "title": alt_title,
+                        "url": alt_url,
+                        "video_id": v.get("content_id") or v.get("video_id"),
+                    })
 
     # ── 7. Store result ─────────────────────────────────────────────────
     secondary_for_log = ambiguity_info["secondary"]  # None일 수 있음 (모호 임계 미충족)
@@ -416,6 +426,7 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
             "reason": reason,
             "search_query": search_query,
             "candidate_pool": candidate_pool,
+            "alternative_links": alternative_links,
             "selected_score": selected_score,
             "ambiguity": ambiguity,
             "secondary_emotion": secondary_for_log,

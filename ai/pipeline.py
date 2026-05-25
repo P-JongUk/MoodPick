@@ -13,7 +13,7 @@ import logging
 import time
 
 from ai.state import CounselingState
-from ai.utils import load_crisis_response
+from ai.utils import append_verified_recommendation_block, load_crisis_response
 from ai.agents.orchestrator import orchestrator_agent
 from ai.agents.counselor import counselor_agent
 from ai.agents.content_recommender import content_recommender_agent
@@ -111,15 +111,20 @@ async def run_counseling_pipeline(
         state = await content_recommender_agent(state)
         logger.info("[PERF] content_recommender=%.3fs", time.perf_counter() - _t)
 
-        # ④ Post-processing: append recommendation info to counselor response
+        # ④ Post-processing: strip AI links, append API-verified links + card guide
         if state.recommended_content:
             title = state.recommended_content.get("title", "")
             reason = state.recommended_content.get("reason", "")
-            if title:
-                state.response += f"\n\n'{title}'을(를) 추천해드릴게요. {reason}"
+            video_id = state.recommended_content.get("video_id")
+            state.response = append_verified_recommendation_block(
+                state.response,
+                title=title,
+                reason=reason,
+                alternative_links=state.recommended_content.get("alternative_links"),
+                has_primary_video=bool(video_id),
+            )
 
             # ⑤ Save recommended content to watched_content_records
-            video_id = state.recommended_content.get("video_id")
             if video_id:
                 try:
                     media_url = None

@@ -199,7 +199,16 @@ def _build_system_message(state: CounselingState) -> str:
             f"{state.session_summary}\n"
         )
 
-    return base_prompt + session_context + summary_block
+    recommendation_block = ""
+    if state.needs_recommendation:
+        recommendation_block = (
+            "\n\n### [Module 0.25: Content Recommendation Turn]\n"
+            "이 턴은 곧 시스템이 YouTube/팟캐스트 추천을 이어서 붙입니다.\n"
+            "- http/https URL, 마크다운 링크, 아티스트·곡명·플레이리스트 목록을 넣지 마십시오.\n"
+            "- 2~3문장 공감과 짧은 안내만 작성하십시오.\n"
+        )
+
+    return base_prompt + session_context + summary_block + recommendation_block
 
 
 
