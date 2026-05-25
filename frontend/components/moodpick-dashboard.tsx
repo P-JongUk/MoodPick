@@ -2388,6 +2388,33 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
     return () => el.removeEventListener("canplay", tryPlay)
   }, [currentContent.content_id, playback.kind, autoPlayEnabled])
 
+  useEffect(() => {
+    if (playback.kind !== "youtube" || !playback.youtubeVideoId) return
+
+    function handleYouTubeMessage(event: MessageEvent) {
+      if (
+        event.origin !== "https://www.youtube-nocookie.com" &&
+        event.origin !== "https://www.youtube.com"
+      ) return
+
+      let data: { event?: string; info?: number }
+      try {
+        data = typeof event.data === "string" ? JSON.parse(event.data) : event.data
+      } catch {
+        return
+      }
+
+      // 100 = 영상 없음(삭제), 101/150 = Content ID 또는 소유자 차단
+      if (data.event === "onError" && [100, 101, 150].includes(data.info ?? -1)) {
+        const next = recommendedQueue[0]
+        if (next) onSelectRecommendedContent(next)
+      }
+    }
+
+    window.addEventListener("message", handleYouTubeMessage)
+    return () => window.removeEventListener("message", handleYouTubeMessage)
+  }, [playback.kind, playback.youtubeVideoId, recommendedQueue, onSelectRecommendedContent])
+
   const formatPodcastTime = (sec: number) => {
     const s = Number.isFinite(sec) ? sec : 0
     const m = Math.floor(s / 60)
