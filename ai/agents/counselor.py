@@ -16,9 +16,11 @@ Flow:
 """
 
 import asyncio
+import dataclasses
 import json
 import logging
 import time
+from typing import AsyncGenerator
 
 from ai.clients import get_openai
 from ai.state import CounselingState
@@ -31,6 +33,19 @@ from ai.tools.preference_map import counseling_tone_guidance, counselor_persona_
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclasses.dataclass
+class _FunctionLike:
+    name: str
+    arguments: str
+
+
+@dataclasses.dataclass
+class _ToolCallLike:
+    """Minimal duck-type of OpenAI's tool_call object, built from streaming chunks."""
+    id: str
+    function: _FunctionLike
 
 
 def _short_id(value: str | None) -> str:
@@ -132,7 +147,7 @@ _TOOL_DEFINITIONS = [
 
 # ── Tool dispatcher ─────────────────────────────────────────────────────────
 
-async def _execute_tool_call(tool_call, state: CounselingState) -> str:
+async def _execute_tool_call(tool_call: "_ToolCallLike | object", state: CounselingState) -> str:
     """Execute a single tool call and return the result as a JSON string.
 
     동기 도구(Supabase/OpenAI sync SDK)는 asyncio.to_thread로 감싸 이벤트 루프를 막지 않는다.
@@ -343,3 +358,151 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
             )
 
     return state
+
+
+async def counselor_agent_stream(state: CounselingState) -> AsyncGenerator[str, None]:
+    """
+    counselor_agent의 스트리밍 버전.
+
+    툴 호출 라운드: 청크에서 tool_calls 조각을 모아 실행 (텍스트 미출력)
+    텍스트 생성 라운드: 청크에서 content가 도착하는 즉시 yield → 프론트엔드로 전송
+    루프 종료 후 state.response, state.emotion_score 세팅 (기존과 동일)
+    """
+    client = get_openai()
+
+    messages = [{"role": "system", "content": _build_system_message(state)}]
+    for msg in state.messages:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": state.message})
+
+    max_iterations = 5
+    save_emotion_called = False
+
+    for _round in range(max_iterations):
+        _t = time.perf_counter()
+        stream = await client.chat.completions.create(
+            model=_MODEL,
+            temperature=0.7,
+            max_tokens=500,
+            tools=_TOOL_DEFINITIONS,
+            messages=messages,
+            stream=True,
+        )
+
+        content_pieces: list[str] = []
+        # index → {"id": str, "name": str, "arguments": str}
+        tool_calls_acc: dict[int, dict] = {}
+        finish_reason: str | None = None
+
+        async for chunk in stream:
+            choice = chunk.choices[0]
+            if choice.finish_reason:
+                finish_reason = choice.finish_reason
+            delta = choice.delta
+
+            if delta.content:
+                content_pieces.append(delta.content)
+                yield delta.content  # 텍스트 청크를 즉시 내보냄
+
+            if delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index
+                    if idx not in tool_calls_acc:
+                        tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                    if tc_delta.id:
+                        tool_calls_acc[idx]["id"] += tc_delta.id
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            tool_calls_acc[idx]["name"] += tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            tool_calls_acc[idx]["arguments"] += tc_delta.function.arguments
+
+        logger.info("[PERF] counselor_stream.llm[%d]=%.3fs", _round, time.perf_counter() - _t)
+
+        # 텍스트 응답 완료 (툴 호출 없음)
+        if finish_reason == "stop" or not tool_calls_acc:
+            state.response = "".join(content_pieces).strip()
+            if not state.response:
+                state.response = "지금은 답변을 정리하기 어렵네요. 다시 한 번 말씀해 주실 수 있을까요?"
+            break
+
+        # 툴 호출 처리
+        sorted_tcs = [tool_calls_acc[i] for i in sorted(tool_calls_acc)]
+        assembled_tool_calls = [
+            {"id": tc["id"], "type": "function",
+             "function": {"name": tc["name"], "arguments": tc["arguments"]}}
+            for tc in sorted_tcs
+        ]
+
+        messages.append({
+            "role": "assistant",
+            "content": "".join(content_pieces) or None,
+            "tool_calls": assembled_tool_calls,
+        })
+
+        for tc_dict in assembled_tool_calls:
+            tool_call_obj = _ToolCallLike(
+                id=tc_dict["id"],
+                function=_FunctionLike(
+                    name=tc_dict["function"]["name"],
+                    arguments=tc_dict["function"]["arguments"],
+                ),
+            )
+            _t = time.perf_counter()
+            result_str = await _execute_tool_call(tool_call_obj, state)
+            logger.info(
+                "[PERF] counselor_stream.tool[%s]=%.3fs",
+                tc_dict["function"]["name"],
+                time.perf_counter() - _t,
+            )
+
+            if tc_dict["function"]["name"] == "get_user_profile":
+                try:
+                    profile_data = json.loads(result_str)
+                    if "error" not in profile_data:
+                        state.user_profile = profile_data
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            if tc_dict["function"]["name"] == "save_emotion_record":
+                save_emotion_called = True
+                try:
+                    args = json.loads(tc_dict["function"]["arguments"])
+                    state.emotion_score = _build_emotion_score(args)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc_dict["id"],
+                "content": result_str,
+            })
+
+    # 감정 저장이 누락된 경우 강제 호출 (기존 counselor_agent와 동일)
+    if not save_emotion_called:
+        try:
+            _t = time.perf_counter()
+            forced = await get_openai().chat.completions.create(
+                model=_MODEL,
+                temperature=0.0,
+                max_tokens=150,
+                tools=_TOOL_DEFINITIONS,
+                tool_choice={"type": "function", "function": {"name": "save_emotion_record"}},
+                messages=messages,
+            )
+            logger.info("[PERF] counselor_stream.forced_emotion_llm=%.3fs", time.perf_counter() - _t)
+            for tc in (forced.choices[0].message.tool_calls or []):
+                if tc.function.name == "save_emotion_record":
+                    await _execute_tool_call(tc, state)
+                    try:
+                        args = json.loads(tc.function.arguments)
+                        state.emotion_score = _build_emotion_score(args)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+        except Exception as e:
+            logger.warning(
+                "Forced emotion save failed (stream) user_id=%s session_id=%s error_type=%s",
+                _short_id(state.user_id),
+                _short_id(state.session_id),
+                type(e).__name__,
+            )

@@ -1,11 +1,13 @@
+import json
 import logging
 
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from supabase import Client
 
 from app.services.supabase_service import get_supabase_client
-from app.services.ai_service import get_ai_response
+from app.services.ai_service import get_ai_response, get_ai_response_stream
 from app.services.session_summary import prepare_session_context
 
 
@@ -237,3 +239,88 @@ async def send_counseling_message(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="상담 메시지 처리 중 오류가 발생했어요. 잠시 후 다시 시도해 주세요.",
         )
+
+
+@router.post("/message/stream")
+async def send_counseling_message_stream(
+    payload: CounselingMessageRequest,
+    supabase: Client = Depends(get_supabase_client),
+):
+    """SSE 스트리밍 엔드포인트. 상담사 텍스트를 실시간으로 전달한다.
+
+    이벤트 포맷:
+      data: {"type": "chunk", "text": "..."}
+      data: {"type": "done", "is_crisis": bool, "emotion": {...}, "recommended_content": {...}}
+      data: {"type": "error", "message": "..."}
+    """
+    if not payload.session_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="상담 시작 후 메시지를 보내 주세요.",
+        )
+
+    try:
+        session = _get_session_for_user(supabase, payload.session_id, payload.user_id)
+    except HTTPException:
+        raise
+
+    if session.get("status") == "ended":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="이미 종료된 상담이에요. 새 상담을 시작해 주세요.",
+        )
+
+    user_plain = _strip_user_markdown_suffix(payload.message)
+    session_id = payload.session_id
+
+    async def event_generator():
+        full_text = ""
+        is_crisis = False
+        try:
+            summary, history = await prepare_session_context(supabase, session_id)
+
+            async for event in get_ai_response_stream(
+                user_id=payload.user_id,
+                session_id=session_id,
+                message=payload.message,
+                messages=history,
+                session_summary=summary,
+                persona=session.get("persona") or "expert",
+            ):
+                if event.get("type") == "chunk":
+                    full_text += event.get("text", "")
+                if event.get("type") == "done":
+                    is_crisis = event.get("is_crisis", False)
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+        except Exception as e:
+            logger.warning(
+                "Counseling stream failed user_id=%s session_id=%s error_type=%s",
+                _short_id(payload.user_id),
+                _short_id(session_id),
+                type(e).__name__,
+            )
+            error_event = {"type": "error", "message": "상담 메시지 처리 중 오류가 발생했어요. 잠시 후 다시 시도해 주세요."}
+            yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+            return
+
+        # 스트리밍 완료 후 대화 내용을 DB에 저장 (위기 응답도 저장)
+        if full_text:
+            try:
+                _save_message(supabase, session_id, user_plain, full_text)
+            except Exception as e:
+                logger.warning(
+                    "Stream message save failed user_id=%s session_id=%s error_type=%s",
+                    _short_id(payload.user_id),
+                    _short_id(session_id),
+                    type(e).__name__,
+                )
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

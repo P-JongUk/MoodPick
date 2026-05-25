@@ -24,7 +24,7 @@ import {
   getUserSessions,
   getUserStats,
   getUserProfile,
-  sendCounselingMessage,
+  sendCounselingMessageStream,
   getReminderPreference,
   upsertReminderPreference,
   upsertUserProfile,
@@ -128,8 +128,9 @@ interface Message {
   id: number
   sender: "user" | "ai"
   text: string
-  timestamp: string
+  timestamp?: string
   recommendedContent?: RecommendedContent | null
+  isStreaming?: boolean
 }
 
 interface SessionHistory {
@@ -1455,119 +1456,138 @@ export function MoodPickDashboard() {
     setIsSendingMessage(true)
     touchCounselingActivity()
 
-    void (async () => {
-      try {
-        const response = await sendCounselingMessage(
-          user.id,
-          trimmedMessage + COUNSELING_USER_MARKDOWN_SUFFIX,
-          currentSessionId
-        )
+    // aiMsgId는 onChunk에서 버블 생성 시 사용 (즉시 생성하지 않음)
+    const aiMsgId = Date.now() + 1
 
-        if (response?.is_crisis) {
-          setCrisisModalText(response.message ?? "")
+    const applyRecommendedContent = (recommended: any) => {
+      if (!recommended?.video_id) return
+      const contentId = recommended.video_id.toString()
+      const isPodcast = contentId.toLowerCase().startsWith("podcast:")
+      const nowIso = new Date().toISOString()
+
+      const mainItem: ContentHistoryItem = {
+        id: contentId,
+        content_id: contentId,
+        content_title: recommended.title ?? "추천 콘텐츠",
+        thumbnail_url: recommended.thumbnail,
+        media_provider: isPodcast ? "podcast" : "youtube",
+        media_url: isPodcast ? (recommended.url ?? null) : null,
+        watched_at: nowIso,
+        session_id: currentSessionId,
+      }
+
+      const pool = recommended.candidate_pool ?? []
+      const poolItems: ContentHistoryItem[] = pool
+        .filter((c: any) => c.video_id)
+        .map((c: any) => {
+          const id = String(c.video_id)
+          const itemIsPodcast = id.toLowerCase().startsWith("podcast:")
+          const provider: "youtube" | "podcast" =
+            c.media_provider === "podcast" || c.media_provider === "youtube"
+              ? c.media_provider
+              : itemIsPodcast
+                ? "podcast"
+                : "youtube"
+          return {
+            id,
+            content_id: id,
+            content_title: c.title ?? "추천 콘텐츠",
+            thumbnail_url: c.thumbnail ?? null,
+            media_provider: provider,
+            media_url: itemIsPodcast ? (c.url ?? null) : null,
+            watched_at: nowIso,
+            session_id: currentSessionId,
+          }
+        })
+
+      // top-4 풀: 메인을 맨 앞으로 두고 풀에서 메인 중복 제거. candidate_pool에
+      // 메인이 빠져 있더라도 안전하도록 mainItem을 명시적으로 선두에 둠.
+      const dedupedPool = poolItems.filter((c) => c.content_id !== contentId)
+      const top4 = [mainItem, ...dedupedPool].slice(0, 4)
+
+      setTopCandidates(top4)
+      setCurrentContent(mainItem)
+      setRecommendedQueue(top4.filter((c) => c.content_id !== contentId).slice(0, 3))
+      setIsPlaying(true)
+    }
+
+    // onChunk에서 누적한 텍스트를 onDone(위기 모달)에서 참조하기 위한 클로저 변수
+    let streamedText = ""
+    let isFirstChunk = true
+
+    void sendCounselingMessageStream(
+      user.id,
+      trimmedMessage + COUNSELING_USER_MARKDOWN_SUFFIX,
+      currentSessionId ?? "",
+      (chunk) => {
+        streamedText += chunk
+        if (isFirstChunk) {
+          isFirstChunk = false
+          // 첫 청크 도착 시 버블을 새로 생성 (타임스탬프는 완료 시 설정)
+          setMessages((prev) => [
+            ...prev,
+            { id: aiMsgId, sender: "ai", text: chunk, isStreaming: true },
+          ])
+        } else {
+          setMessages((prev) =>
+            prev.map((m) => m.id === aiMsgId ? { ...m, text: m.text + chunk } : m)
+          )
+        }
+      },
+      (meta) => {
+        const completionTime = new Date().toLocaleTimeString("ko-KR", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        })
+
+        if (meta.is_crisis) {
+          // 위기 상황: 버블 제거 후 모달 표시
+          setMessages((prev) => prev.filter((m) => m.id !== aiMsgId))
+          setCrisisModalText(streamedText)
           setSyncWarningMessage(null)
+          setIsSendingMessage(false)
           return
         }
 
-        const recommended = response?.recommended_content ?? null
-        const aiResponse: Message = {
-          id: Date.now() + 1,
-          sender: "ai",
-          text:
-            response?.message ??
-            "메시지를 받았어요. 현재는 AI 연동 전 단계라 기본 상담 응답으로 안내해드리고 있어요.",
-          timestamp: new Date().toLocaleTimeString("ko-KR", {
-            hour: "numeric",
-            minute: "2-digit",
-            hour12: true,
-          }),
-          recommendedContent: recommended,
-        }
-
-        setMessages((prev) => [...prev, aiResponse])
-
+        const recommended = meta.recommended_content ?? null
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === aiMsgId
+              ? { ...m, isStreaming: false, timestamp: completionTime, recommendedContent: recommended }
+              : m
+          )
+        )
         touchCounselingActivity()
 
-        if (response?.fallback) {
-          setSyncWarningMessage("AI 응답이 일시적으로 불안정해 기본 상담 응답으로 안내했어요.")
-        } else if (recommended && !recommended.video_id) {
+        if (recommended && !recommended.video_id) {
           setSyncWarningMessage("추천 영상을 불러오지 못했어요. 상담은 계속 이용할 수 있고, 잠시 후 다시 요청해 주세요.")
         } else {
           setSyncWarningMessage(null)
         }
 
-        if (recommended?.video_id) {
-          const contentId = recommended.video_id.toString()
-          const isPodcast = contentId.toLowerCase().startsWith("podcast:")
-          const nowIso = new Date().toISOString()
-
-          const mainItem: ContentHistoryItem = {
-            id: contentId,
-            content_id: contentId,
-            content_title: recommended.title ?? "추천 콘텐츠",
-            thumbnail_url: recommended.thumbnail,
-            media_provider: isPodcast ? "podcast" : "youtube",
-            media_url: isPodcast ? (recommended.url ?? null) : null,
-            watched_at: nowIso,
-            session_id: currentSessionId,
-          }
-
-          const pool = recommended.candidate_pool ?? []
-          const poolItems: ContentHistoryItem[] = pool
-            .filter((c) => c.video_id)
-            .map((c) => {
-              const id = String(c.video_id)
-              const itemIsPodcast = id.toLowerCase().startsWith("podcast:")
-              const provider: "youtube" | "podcast" =
-                c.media_provider === "podcast" || c.media_provider === "youtube"
-                  ? c.media_provider
-                  : itemIsPodcast
-                    ? "podcast"
-                    : "youtube"
-              return {
-                id,
-                content_id: id,
-                content_title: c.title ?? "추천 콘텐츠",
-                thumbnail_url: c.thumbnail ?? null,
-                media_provider: provider,
-                media_url: itemIsPodcast ? (c.url ?? null) : null,
-                watched_at: nowIso,
-                session_id: currentSessionId,
-              }
-            })
-
-          // top-4 풀: 메인을 맨 앞으로 두고 풀에서 메인 중복 제거. candidate_pool에
-          // 메인이 빠져 있더라도 안전하도록 mainItem을 명시적으로 선두에 둠.
-          const dedupedPool = poolItems.filter((c) => c.content_id !== contentId)
-          const top4 = [mainItem, ...dedupedPool].slice(0, 4)
-
-          setTopCandidates(top4)
-          setCurrentContent(mainItem)
-          setRecommendedQueue(top4.filter((c) => c.content_id !== contentId).slice(0, 3))
-          setIsPlaying(true)
-        }
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error && error.message
-            ? error.message
-            : "상담 메시지 전송에 실패했어요. 잠시 후 다시 시도해 주세요."
-        setSyncWarningMessage(errorMessage)
-
-        const fallbackResponse: Message = {
-          id: Date.now() + 1,
-          sender: "ai",
-          text: errorMessage,
-          timestamp: new Date().toLocaleTimeString("ko-KR", {
-            hour: "numeric",
-            minute: "2-digit",
-            hour12: true,
-          }),
-        }
-        setMessages((prev) => [...prev, fallbackResponse])
-      } finally {
+        applyRecommendedContent(recommended)
         setIsSendingMessage(false)
-      }
-    })()
+      },
+      (error) => {
+        const completionTime = new Date().toLocaleTimeString("ko-KR", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        })
+        const errorMessage =
+          error.message || "상담 메시지 전송에 실패했어요. 잠시 후 다시 시도해 주세요."
+        setSyncWarningMessage(errorMessage)
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === aiMsgId
+              ? { ...m, text: errorMessage, isStreaming: false, timestamp: completionTime }
+              : m
+          )
+        )
+        setIsSendingMessage(false)
+      },
+    )
 
     return true
   }
@@ -2912,13 +2932,15 @@ const CounselChatBubble = memo(function CounselChatBubble({ message }: { message
             </div>
           </div>
         )}
-        <p
-          className={`text-xs mt-1 ${
-            message.sender === "user" ? "text-primary-foreground/70" : "text-muted-foreground"
-          }`}
-        >
-          {message.timestamp}
-        </p>
+        {message.timestamp && (
+          <p
+            className={`text-xs mt-1 ${
+              message.sender === "user" ? "text-primary-foreground/70" : "text-muted-foreground"
+            }`}
+          >
+            {message.timestamp}
+          </p>
+        )}
       </div>
     </div>
   )
@@ -3082,7 +3104,7 @@ function CounselingView({
             {messages.map((message) => (
               <CounselChatBubble key={message.id} message={message} />
             ))}
-            {isSendingMessage && (
+            {isSendingMessage && !messages.some((m) => m.isStreaming) && (
               <div className="w-8 h-8 border-[3px] border-primary border-t-transparent rounded-full animate-spin" />
             )}
             <div ref={bottomRef} />

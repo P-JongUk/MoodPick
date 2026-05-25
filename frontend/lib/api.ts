@@ -415,6 +415,71 @@ export async function sendCounselingMessage(userId: string, message: string, ses
   return response.json()
 }
 
+export async function sendCounselingMessageStream(
+  userId: string,
+  message: string,
+  sessionId: string,
+  onChunk: (text: string) => void,
+  onDone: (meta: { is_crisis: boolean; emotion: any; recommended_content: any }) => void,
+  onError: (err: Error) => void,
+): Promise<void> {
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE_URL}/counseling/message/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, message, session_id: sessionId }),
+    })
+  } catch {
+    onError(new Error("백엔드 서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요."))
+    return
+  }
+
+  if (!response.ok) {
+    onError(await buildCounselingError(response))
+    return
+  }
+
+  const reader = response.body!.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      // SSE는 "\n\n"으로 이벤트를 구분
+      const parts = buffer.split("\n\n")
+      buffer = parts.pop() ?? ""
+
+      for (const part of parts) {
+        const line = part.trim()
+        if (!line.startsWith("data: ")) continue
+        try {
+          const event = JSON.parse(line.slice(6))
+          if (event.type === "chunk") {
+            onChunk(event.text ?? "")
+          } else if (event.type === "done") {
+            onDone({
+              is_crisis: event.is_crisis ?? false,
+              emotion: event.emotion ?? {},
+              recommended_content: event.recommended_content ?? null,
+            })
+          } else if (event.type === "error") {
+            onError(new Error(event.message ?? "상담 메시지 처리 중 오류가 발생했어요."))
+          }
+        } catch {
+          // JSON 파싱 실패 시 무시
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
 export async function getInitialCounselingMessage(sessionId: string): Promise<any> {
   const response = await fetch(`${API_BASE_URL}/counseling/initial-message/${sessionId}`, {
     method: "GET",
