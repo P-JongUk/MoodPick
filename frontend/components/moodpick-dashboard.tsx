@@ -100,6 +100,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import {Spinner} from "@/components/ui/spinner"
 
 const REMINDER_FEATURE_ENABLED = process.env.NEXT_PUBLIC_REMINDER_ENABLED === "true"
 const DEMO_HIDE_ONBOARDING = true
@@ -707,6 +708,8 @@ export function MoodPickDashboard() {
   const [readIntroduce, setReadIntroduce]=useState(false)
   const handleCheckIntroduce=()=>{setReadIntroduce(true)}
 
+  const [loadingText, setLoadingText] = useState("")
+
   useEffect(() => {
     if (!user?.id) {
       setGad(createSurveyState("GAD", true))
@@ -1164,6 +1167,7 @@ export function MoodPickDashboard() {
   }
 
   const handleSelectNavTab = (itemId: TabType) => {
+    setShowMenu(false)
     if (itemId === "counseling" && !isSessionActive) {
       // 이미 사전 문진 중이면 무드 선택을 지우지 않음(같은 탭·네비 재클릭 시 상담 시작이 막히던 문제)
       if (showPreSurvey) {
@@ -1179,7 +1183,6 @@ export function MoodPickDashboard() {
       return
     }
     setActiveTab(itemId)
-    setShowMenu(false)
   }
 
   const handlePreSurveyComplete = async () => {
@@ -1771,7 +1774,7 @@ export function MoodPickDashboard() {
   }
 
   // Show onboarding if first time after login
-  if (!hasCompletedOnboarding) {
+  if (!DEMO_HIDE_ONBOARDING && !hasCompletedOnboarding) {
     return (
       <OnboardingScreen
         selectedConcerns={selectedConcerns}
@@ -1781,6 +1784,7 @@ export function MoodPickDashboard() {
         onComplete={handleCompleteOnboarding}
         isSaving={isSavingOnboarding}
         errorMessage={onboardingErrorMessage}
+        activeTab={activeTab}
       />
     )
   }
@@ -1810,19 +1814,19 @@ export function MoodPickDashboard() {
   return (
     <div className="flex h-screen bg-background">
       {showMenu && (
-      <div className="fixed inset-0 z-50 md:hidden">
-        <div
-          className="absolute inset-0 z-0 bg-black/40"
-          onClick={() => setShowMenu(false)}
-        />
-        <div className="absolute left-0 top-0 z-10 h-full">
-          <SideMenu activeTab={activeTab} setActiveTab={setActiveTab} navItems={navItems} handleSelectNavTab={handleSelectNavTab} sidebarEncouragement={sidebarEncouragement}/>
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div
+            className="absolute inset-0 z-0 bg-black/40"
+            onClick={() => setShowMenu(false)}
+          />
+          <div className="absolute left-0 top-0 z-10 h-full">
+            <SideMenu activeTab={activeTab} navItems={navItems} handleSelectNavTab={handleSelectNavTab} sidebarEncouragement={sidebarEncouragement}/>
+          </div>
         </div>
-      </div>
-    )}
+      )}
       {/* Sidebar */}
       <div className="hidden md:flex">
-        <SideMenu activeTab={activeTab} setActiveTab={setActiveTab} navItems={navItems} handleSelectNavTab={handleSelectNavTab} sidebarEncouragement={sidebarEncouragement}/>
+        <SideMenu activeTab={activeTab} navItems={navItems} handleSelectNavTab={handleSelectNavTab} sidebarEncouragement={sidebarEncouragement}/>
       </div>
 
       {/* Main Content */}
@@ -1886,7 +1890,7 @@ export function MoodPickDashboard() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-        {activeTab === "counseling" && showPreSurvey === false && (
+        {activeTab === "counseling" && (
           <CounselingView
             messages={messages}
             onSendMessage={handleSendMessage}
@@ -1909,6 +1913,10 @@ export function MoodPickDashboard() {
             onDismissIdleWrapUp={() => setShowIdleWrapUpBanner(false)}
             onRequestEndFromIdle={handleEndSession}
             setShowMenu={setShowMenu}
+            showPreSurvey={showPreSurvey}
+            showPostSurvey={showPostSurvey}
+            loadingText={loadingText}
+            setLoadingText={setLoadingText}
           />
         )}
         {activeTab === "dashboard" && (
@@ -2137,7 +2145,7 @@ function HomeView({
       : null)
 
   return (
-    <div className="p-8 max-w-4xl mx-auto">
+    <div className="pt-8 p-4 md:p-8 max-w-4xl mx-auto">
       {/* Greeting Section */}
       <div className="flex items-start gap-3">
         <button className="md:hidden" onClick={()=>setShowMenu(true)}>
@@ -2213,19 +2221,19 @@ function HomeView({
       {/* Quick Stats */}
       <div className="grid grid-cols-3 gap-4 mt-8">
         <Card className="border-0 bg-secondary/50">
-          <CardContent className="p-6 text-center">
+          <CardContent className="p-3 md:p-6 text-center">
             <p className="text-3xl font-bold text-primary mb-1">{userStats?.weekly_record_days ?? 0}</p>
             <p className="text-sm text-muted-foreground">이번 주 기록일</p>
           </CardContent>
         </Card>
         <Card className="border-0 bg-secondary/50">
-          <CardContent className="p-6 text-center">
+          <CardContent className="p-3 md:p-6 text-center">
             <p className="text-3xl font-bold text-primary mb-1">{userStats?.total_sessions ?? 0}</p>
             <p className="text-sm text-muted-foreground">총 상담 횟수</p>
           </CardContent>
         </Card>
         <Card className="border-0 bg-secondary/50">
-          <CardContent className="p-6 text-center">
+          <CardContent className="p-3 md:p-6 text-center">
             <p className="text-3xl font-bold text-primary mb-1">{weeklyMoodEmoji}</p>
             <p className="text-sm text-muted-foreground">주간 평균 기분</p>
           </CardContent>
@@ -2852,7 +2860,11 @@ function CounselingView({
   idleWrapUpBanner = false,
   onDismissIdleWrapUp,
   onRequestEndFromIdle,
-  setShowMenu
+  setShowMenu,
+  showPreSurvey,
+  showPostSurvey,
+  loadingText,
+  setLoadingText
 }: {
   messages: Message[]
   onSendMessage: (messageText: string) => boolean
@@ -2875,6 +2887,10 @@ function CounselingView({
   onDismissIdleWrapUp?: () => void
   onRequestEndFromIdle?: () => void
   setShowMenu: React.Dispatch<React.SetStateAction<boolean>>
+  showPreSurvey: boolean
+  showPostSurvey: boolean
+  loadingText: string | null
+  setLoadingText: React.Dispatch<React.SetStateAction<string>>
 }) {
   const [contentFullscreen, setContentFullscreen] = useState(false)
   const [draft, setDraft] = useState("")
@@ -2899,6 +2915,27 @@ function CounselingView({
       behavior: "smooth",
     })
   }, [messages])
+
+  useEffect(() => {
+  if (!isSendingMessage) {
+    setLoadingText("")
+    return
+  }
+
+  const text = "무드픽이 답변을 준비하고 있어요..."
+  let index = 0
+
+  const interval = setInterval(() => {
+    index += 1
+    setLoadingText(text.slice(0, index))
+
+    if (index >= text.length) {
+      index = 0
+    }
+  }, 80)
+
+  return () => clearInterval(interval)
+}, [isSendingMessage])
 
   const mediaProps = useMemo(
     () => ({
@@ -2948,27 +2985,29 @@ function CounselingView({
                 </div>
               </button>
               <div>
-                <h3 className="font-semibold text-foreground">무드픽 상담사</h3>
+                <h3 className="font-semibold text-foreground">무드픽 채팅</h3>
                 <p className="text-xs text-muted-foreground">AI 심리 상담</p>
               </div>
             </div>
 
+            <Button 
+              variant="outline" size="sm" className="flex flex-col md:flex-row py-2.5 md:py-0 justify-center h-auto md:h-8 rounded-lg"
+              onClick={onStartNewSession} 
+            >
+              <Plus className="w-4 h-4 mr-1" />
+              <p>새 채팅</p>
+            </Button>
+
           {!contentFullscreen && (
             <Button
-              type="button"
-              variant="outline" size="sm" className="rounded-lg md:hidden"
+              variant="outline" size="sm" className="flex flex-col md:flex-row py-2.5 md:py-0 justify-center h-auto rounded-lg md:hidden"
               onClick={()=>setContentFullscreen(true)}
-              // aria-label="콘텐츠 전체 화면"
             >
               <Maximize2 className="w-4 h-4" />
-              콘텐츠 보기
+              <p>콘텐츠 보기</p>
             </Button>
           )}
 
-            <Button onClick={onStartNewSession} variant="outline" size="sm" className="rounded-lg">
-              <Plus className="w-4 h-4 mr-1" />
-              새 채팅
-            </Button>
           </div>
         </div>
 
@@ -3007,7 +3046,10 @@ function CounselingView({
               <CounselChatBubble key={message.id} message={message} />
             ))}
             {isSendingMessage && (
-              <div className="w-8 h-8 border-[3px] border-primary border-t-transparent rounded-full animate-spin" />
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Spinner className="size-5 text-primary" />
+                <span>{loadingText}</span>
+              </div>
             )}
             <div ref={bottomRef} />
           </div>
@@ -3037,9 +3079,9 @@ function CounselingView({
           )}
         </div>
       </div>
-
+      {!showPreSurvey && !showPostSurvey && (
       <div className={cn(
-        contentFullscreen ? "fixed inset-0 z-50 bg-background p-4 sm:p-6" : "hidden md:flex w-96 shrink-0 bg-card p-6 min-h-0", "overflow-y-auto flex-col")}
+        contentFullscreen ? "fixed inset-0 z-[100] bg-background p-4 sm:p-6" : "hidden md:flex w-96 shrink-0 bg-card p-6 min-h-0", "overflow-y-auto flex-col")}
         role={contentFullscreen ? "dialog" : undefined}
         aria-modal={contentFullscreen? "true" : undefined}
         aria-label={contentFullscreen? "추천 콘텐츠 전체 화면" : undefined}
@@ -3052,7 +3094,7 @@ function CounselingView({
           allowFeedback={true}
         />
       </div>
-
+      )}
     </div>
   )
 }
@@ -3091,7 +3133,7 @@ function DashboardView({
   setShowMenu: React.Dispatch<React.SetStateAction<boolean>>
 }) {
   return (
-    <div className="p-8 max-w-6xl mx-auto">
+    <div className="pt-8 p-4 md:p-8 max-w-6xl mx-auto">
       <div className="flex items-start gap-3">
         <button className="md:hidden" onClick={()=>setShowMenu(true)}>
           <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
@@ -3106,19 +3148,19 @@ function DashboardView({
         </div>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <Card className="border-0 bg-secondary/40">
+        <Card className="py-3 md:py-6 border-0 bg-secondary/40">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">총 상담 세션</p>
             <p className="text-2xl font-bold text-foreground">{userStats?.total_sessions ?? 0}</p>
           </CardContent>
         </Card>
-        <Card className="border-0 bg-secondary/40">
+        <Card className="py-3 md:py-6 border-0 bg-secondary/40">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">시청 콘텐츠</p>
             <p className="text-2xl font-bold text-foreground">{userStats?.total_content_watched ?? 0}</p>
           </CardContent>
         </Card>
-        <Card className="border-0 bg-secondary/40">
+        <Card className="py-3 md:py-6 border-0 bg-secondary/40">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">좋아요 비율</p>
             <p className="text-2xl font-bold text-foreground">
@@ -3128,7 +3170,7 @@ function DashboardView({
             </p>
           </CardContent>
         </Card>
-        <Card className="border-0 bg-secondary/40">
+        <Card className="py-3 md:py-6 border-0 bg-secondary/40">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">최근 세션 변화</p>
             <p
@@ -3145,7 +3187,7 @@ function DashboardView({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
         {/* Calendar */}
         <Card className="border-0 shadow-lg">
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-2 px-4 md:px-6">
             <div className="flex items-center justify-between">
               <CardTitle className="text-lg">감정 캘린더</CardTitle>
               <div className="flex items-center gap-2">
@@ -3161,7 +3203,7 @@ function DashboardView({
               </div>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-4 md:px-6">
             <div className="grid grid-cols-7 gap-1 mb-2">
               {["일", "월", "화", "수", "목", "금", "토"].map((day) => (
                 <div key={day} className="text-center text-xs font-medium text-muted-foreground py-2">
@@ -3210,7 +3252,7 @@ function DashboardView({
           <CardHeader className="pb-2">
             <CardTitle className="text-lg">최근 30일 감정 변화 추이</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-4 md:px-6">
             <div className="h-64">
               {emotionData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
@@ -3661,6 +3703,7 @@ function OnboardingScreen({
   onComplete,
   isSaving,
   errorMessage,
+  activeTab
 }: {
   selectedConcerns: string[]
   setSelectedConcerns: (value: string[]) => void
@@ -3669,6 +3712,7 @@ function OnboardingScreen({
   onComplete: () => void
   isSaving: boolean
   errorMessage: string | null
+  activeTab: TabType
 }) {
   const concerns = [
     { id: "study", label: "학업/취업" },
@@ -3775,7 +3819,7 @@ function OnboardingScreen({
               className="w-full h-12 rounded-xl text-base font-medium"
               disabled={(selectedConcerns.length === 0 && selectedComfortStyle.length === 0) || isSaving}
             >
-              {isSaving ? "저장 중..." : "시작하기"}
+              {isSaving ? "저장 중..." : activeTab==="mypage"? "저장" : "시작하기"}
             </Button>
             {errorMessage && <p className="mt-3 text-center text-xs text-destructive">{errorMessage}</p>}
           </CardContent>
@@ -4213,7 +4257,7 @@ function MyPageView({
   }
 
   return (
-    <div className="p-8 max-w-3xl mx-auto">
+    <div className="pt-8 p-4 md:p-8 max-w-3xl mx-auto">
       <div className="flex items-start gap-3">
         <button className="md:hidden" onClick={()=>setShowMenu(true)}>
           <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
@@ -4269,15 +4313,15 @@ function MyPageView({
       </Dialog>
 
       {/* Profile Section */}
-      <Card className="border-0 shadow-lg mb-6">
+      <Card className="py-3 md:py-6 gap-3 md:gap-6 border-0 shadow-lg mb-6">
         <CardHeader>
           <CardTitle className="text-lg">프로필</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-            <div className="flex items-center gap-6 w-full md:w-auto">
-              <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center">
-                <User className="w-10 h-10 text-primary" />
+            <div className="flex items-center gap-3 md:gap-6 w-full md:w-auto">
+              <div className="w-10 h-10 md:w-20 md:h-20 rounded-full bg-primary/10 flex items-center justify-center">
+                <User className="w-5 h-5 md:w-10 md:h-10 text-primary" />
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="text-xl font-semibold text-foreground mb-1 truncate">{shownName}</h3>
@@ -4305,9 +4349,12 @@ function MyPageView({
       </Card>
 
       {/* Preferences Section */}
-      <Card className="border-0 shadow-lg mb-6">
+      <Card className="py-3 md:py-6 gap-3 md:gap-6 border-0 shadow-lg mb-6">
         <CardHeader className="flex justify-between">
           <CardTitle className="text-lg">맞춤 설정</CardTitle>
+          {!DEMO_HIDE_ONBOARDING ? (
+            <Button variant="outline" className="rounded-xl shrink-0" type="button" onClick={()=>setHasCompletedOnboarding(false)}>온보딩</Button>
+          ) : null}
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Auto-play Toggle */}
@@ -4412,7 +4459,7 @@ function MyPageView({
       </Card>
 
       {/* Data Management Section */}
-      <Card className="border-0 shadow-lg mb-6">
+      <Card className="py-3 md:py-6 gap-3 md:gap-6 border-0 shadow-lg mb-6">
         <CardHeader>
           <CardTitle className="text-lg">데이터 관리</CardTitle>
         </CardHeader>
@@ -4625,9 +4672,8 @@ function PostSurveyOverlay({
   )
 }
 
-function SideMenu({activeTab, setActiveTab, navItems, handleSelectNavTab, sidebarEncouragement}: {
+function SideMenu({activeTab, navItems, handleSelectNavTab, sidebarEncouragement}: {
   activeTab: TabType;
-  setActiveTab: React.Dispatch<React.SetStateAction<TabType>>;
   navItems: {
     id: TabType
     label: string
@@ -4637,11 +4683,11 @@ function SideMenu({activeTab, setActiveTab, navItems, handleSelectNavTab, sideba
   sidebarEncouragement: string;
 }){
   return(
-    <aside className="z-60 w-64 bg-sidebar border-r border-sidebar-border flex h-full flex-col">
+    <aside className="z-[200] md:z-[60] w-64 bg-sidebar border-r border-sidebar-border flex h-full flex-col">
         <div className="p-6 border-b border-sidebar-border">
           <button
             type="button"
-            onClick={() => setActiveTab("home")}
+            onClick={() => handleSelectNavTab("home")}
             className="flex w-full items-center gap-3 rounded-xl text-left transition-colors hover:bg-sidebar-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="홈으로 이동"
           >
