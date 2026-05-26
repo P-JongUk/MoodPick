@@ -52,6 +52,8 @@ import {
   Flame,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
   User,
   LogOut,
   Trash2,
@@ -2535,30 +2537,41 @@ function HomeView({
         </CardHeader>
         <CardContent className="p-4 md:p-6">
           <div className="flex flex-col gap-4 md:flex-row md:gap-6">
-            <div className="mx-auto flex h-32 w-48 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-muted md:mx-0">
-              {homeThumbUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={homeThumbUrl} alt="" className="w-full h-full object-cover" />
-              ) : (
-                <div className="text-center">
-                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-2">
-                    <Play className="w-6 h-6 text-primary" />
+            <div className="relative mx-auto h-32 w-48 shrink-0 md:mx-0">
+              <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-xl bg-muted">
+                {homeThumbUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={homeThumbUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="text-center">
+                    <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-2">
+                      <Play className="w-6 h-6 text-primary" />
+                    </div>
+                    <p className="text-xs text-muted-foreground">썸네일</p>
                   </div>
-                  <p className="text-xs text-muted-foreground">썸네일</p>
-                </div>
-              )}
+                )}
+              </div>
+              <Button
+                type="button"
+                size="icon"
+                className="absolute -bottom-2 -right-4 h-11 w-11 rounded-full shadow-lg md:hidden"
+                onClick={onPlayRecommended}
+                aria-label="추천 콘텐츠 재생"
+              >
+                <Play className="h-5 w-5" />
+              </Button>
             </div>
             <div className="flex min-w-0 flex-1 flex-col justify-between">
               <div>
                 <h3 className="font-semibold text-lg mb-2 text-foreground">
                   {currentContent.content_title}
                 </h3>
-                <p className="text-muted-foreground text-sm leading-relaxed">
+                <p className="hidden text-muted-foreground text-sm leading-relaxed md:block">
                   최근 시청한 콘텐츠를 기준으로 위로 콘텐츠를 우선 노출하고 있어요.
                   상담 중 반응 데이터를 바탕으로 추천 정밀도를 점진적으로 높입니다.
                 </p>
               </div>
-              <Button className="w-fit mt-4 rounded-xl" type="button" onClick={onPlayRecommended}>
+              <Button className="mt-4 hidden w-fit rounded-xl md:flex" type="button" onClick={onPlayRecommended}>
                 <Play className="w-4 h-4 mr-2" />
                 바로 재생하기
               </Button>
@@ -3513,6 +3526,17 @@ function DashboardView({
   onPlayContentHistory: (item: ContentHistoryItem) => void
   onOpenMobileMenu: () => void
 }) {
+  const [openSections, setOpenSections] = useState({
+    calendar: false,
+    graph: false,
+    media: false,
+    session: false,
+  })
+
+  const toggleSection = (section: keyof typeof openSections) => {
+    setOpenSections((prev) => ({ ...prev, [section]: !prev[section] }))
+  }
+
   return (
     <div className="mx-auto max-w-6xl p-4 pt-6 md:p-8">
       <div className="mb-8">
@@ -3526,19 +3550,19 @@ function DashboardView({
       </div>
 
       <div className="mb-8 grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
-        <Card className="border-0 bg-secondary/40">
+        <Card className="border-0 bg-secondary/40 py-3 md:py-6">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">총 상담 세션</p>
             <p className="text-2xl font-bold text-foreground">{userStats?.total_sessions ?? 0}</p>
           </CardContent>
         </Card>
-        <Card className="border-0 bg-secondary/40">
+        <Card className="border-0 bg-secondary/40 py-3 md:py-6">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">시청 콘텐츠</p>
             <p className="text-2xl font-bold text-foreground">{userStats?.total_content_watched ?? 0}</p>
           </CardContent>
         </Card>
-        <Card className="border-0 bg-secondary/40">
+        <Card className="border-0 bg-secondary/40 py-3 md:py-6">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">좋아요 비율</p>
             <p className="text-2xl font-bold text-foreground">
@@ -3548,7 +3572,7 @@ function DashboardView({
             </p>
           </CardContent>
         </Card>
-        <Card className="border-0 bg-secondary/40">
+        <Card className="border-0 bg-secondary/40 py-3 md:py-6">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">최근 세션 변화</p>
             <p
@@ -3568,7 +3592,7 @@ function DashboardView({
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <CardTitle className="text-lg">감정 캘린더</CardTitle>
-              <div className="flex items-center gap-2">
+              <div className="hidden items-center gap-2 md:flex">
                 <Button variant="ghost" size="icon" className="h-8 w-8" onClick={goCalendarPrev}>
                   <ChevronLeft className="w-4 h-4" />
                 </Button>
@@ -3579,9 +3603,30 @@ function DashboardView({
                   <ChevronRight className="w-4 h-4" />
                 </Button>
               </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 md:hidden"
+                onClick={() => toggleSection("calendar")}
+                aria-label="감정 캘린더 열기"
+              >
+                {openSections.calendar ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </Button>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className={cn(openSections.calendar ? "block" : "hidden", "md:block")}>
+            <div className="mb-3 flex items-center justify-center gap-2 md:hidden">
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={goCalendarPrev}>
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <span className="text-sm font-medium min-w-[100px] text-center">
+                {calendarYear}년 {currentMonth}월
+              </span>
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={goCalendarNext}>
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
             <div className="grid grid-cols-7 gap-1 mb-2">
               {["일", "월", "화", "수", "목", "금", "토"].map((day) => (
                 <div key={day} className="text-center text-xs font-medium text-muted-foreground py-2">
@@ -3615,15 +3660,34 @@ function DashboardView({
                 </button>
               ))}
             </div>
+            <div className="mt-4 flex justify-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">낮음</span>
+                <div className="w-16 h-2 bg-gradient-to-r from-blue-300 via-sky-300 to-amber-300 rounded-full" />
+                <span className="text-xs text-muted-foreground">높음</span>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
         {/* Emotion Trend Graph */}
         <Card className="border-0 shadow-lg">
           <CardHeader className="pb-2">
-            <CardTitle className="text-lg">최근 30일 감정 변화 추이</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg">최근 30일 감정 변화 추이</CardTitle>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 md:hidden"
+                onClick={() => toggleSection("graph")}
+                aria-label="감정 그래프 열기"
+              >
+                {openSections.graph ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </Button>
+            </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className={cn(openSections.graph ? "block" : "hidden", "md:block")}>
             <div className="h-64">
               {emotionData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
@@ -3687,14 +3751,7 @@ function DashboardView({
                   </div>
                 ))}
               </div>
-            )}
-            <div className="flex justify-center gap-4 mt-4">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">😢 낮음</span>
-                <div className="w-16 h-2 bg-gradient-to-r from-blue-300 via-sky-300 to-amber-300 rounded-full" />
-                <span className="text-xs text-muted-foreground">😊 높음</span>
-              </div>
-            </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -3702,9 +3759,21 @@ function DashboardView({
       {/* Comforting Media History */}
       <Card className="border-0 shadow-lg mb-8">
         <CardHeader>
-          <CardTitle className="text-lg">내가 위로받은 콘텐츠</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-lg">내가 위로받은 콘텐츠</CardTitle>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 md:hidden"
+              onClick={() => toggleSection("media")}
+              aria-label="콘텐츠 기록 열기"
+            >
+              {openSections.media ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </Button>
+          </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className={cn(openSections.media ? "block" : "hidden", "md:block")}>
           <div className="flex gap-4 overflow-x-auto pb-4 -mx-2 px-2">
             {contentHistory.map((media) => (
               <div
@@ -3749,10 +3818,22 @@ function DashboardView({
       {/* Session History */}
       <Card className="border-0 shadow-lg">
         <CardHeader>
-          <CardTitle className="text-lg">상담 기록</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-lg">상담 기록</CardTitle>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 md:hidden"
+              onClick={() => toggleSection("session")}
+              aria-label="상담 기록 열기"
+            >
+              {openSections.session ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </Button>
+          </div>
         </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <CardContent className={cn(openSections.session ? "block" : "hidden", "md:block")}>
+          <div className="grid max-h-[220px] grid-cols-1 gap-4 overflow-y-auto pr-1 md:max-h-none md:grid-cols-2 md:overflow-visible md:pr-0 xl:grid-cols-3">
             {sessionHistory.map((session) => (
               <Card key={session.sessionId} className="border border-border bg-muted/30">
                 <CardContent className="p-4">
@@ -4141,8 +4222,8 @@ function OnboardingScreen({
   return (
     <div className="min-h-screen bg-background flex items-start justify-center overflow-y-auto p-4 py-6 sm:items-center">
       <div className="w-full max-w-lg">
-        <Card className="max-h-[calc(100dvh-2rem)] overflow-y-auto border-0 shadow-2xl">
-          <CardContent className="p-4 sm:p-8">
+        <Card className="max-h-[calc(100dvh-2rem)] overflow-y-auto border-0 py-3 shadow-2xl md:py-6">
+          <CardContent className="p-4 md:p-8">
             {/* Logo */}
             <div className="text-center mb-6">
               <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4">
@@ -4436,7 +4517,7 @@ function SurveyScreen({
   return (
     <div className="min-h-screen bg-background flex items-start justify-center overflow-y-auto p-4 py-6 sm:items-center">
       <div className="w-full max-w-2xl">
-        <Card className="min-h-[560px] max-h-[calc(100dvh-2rem)] overflow-y-auto border-0 shadow-2xl sm:min-h-[680px]">
+        <Card className="min-h-[560px] max-h-[calc(100dvh-2rem)] overflow-y-auto border-0 py-3 shadow-2xl sm:min-h-[680px] md:py-6">
           <CardContent className="flex min-h-[560px] flex-col p-4 sm:min-h-[680px] sm:p-8">
             <div className="mb-5 text-center">
               <div className="mx-auto mb-4 flex h-14 w-full max-w-sm items-center justify-evenly overflow-hidden rounded-2xl bg-primary">
@@ -4668,8 +4749,8 @@ function ScaledOverlay({
 function Introduce({introduceCheck}: {introduceCheck: () => void}){
   return (
     <ScaledOverlay className="z-50">
-      <Card className="w-[32rem] border-0 shadow-2xl">
-        <CardContent className="p-8">
+      <Card className="w-[32rem] border-0 py-3 shadow-2xl md:py-6">
+        <CardContent className="p-4 md:p-8">
           {/* Logo */}
           <div className="text-center mb-8">
               <div className="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4">
@@ -4839,12 +4920,22 @@ function MyPageView({
       </Dialog>
 
       {/* Profile Section */}
-      <Card className="border-0 shadow-lg mb-6">
+      <Card className="mb-6 gap-3 border-0 py-3 shadow-lg md:gap-6 md:py-6">
         <CardHeader>
-          <CardTitle className="text-lg">프로필</CardTitle>
+          <CardTitle className="flex items-center justify-between text-lg">
+            <span>프로필</span>
+            <div className="flex gap-2 lg:hidden">
+              <Button variant="outline" size="sm" className="rounded-xl" type="button" onClick={openProfileEdit}>
+                프로필 수정
+              </Button>
+              <Button variant="outline" size="sm" className="rounded-xl" type="button" disabled={!surveyEnter} onClick={() => setSurveySave(false)}>
+                설문
+              </Button>
+            </div>
+          </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center gap-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
             <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center">
               <User className="w-10 h-10 text-primary" />
             </div>
@@ -4860,10 +4951,10 @@ function MyPageView({
                 </span>
               </div>
             </div>
-            <Button variant="outline" className="rounded-xl shrink-0" type="button" onClick={openProfileEdit}>
+            <Button variant="outline" className="hidden rounded-xl shrink-0 lg:flex" type="button" onClick={openProfileEdit}>
               프로필 수정
             </Button>
-            <Button variant="outline" className="rounded-xl shrink-0" type="button" disabled={!surveyEnter} onClick={()=>setSurveySave(false)}>
+            <Button variant="outline" className="hidden rounded-xl shrink-0 lg:flex" type="button" disabled={!surveyEnter} onClick={()=>setSurveySave(false)}>
               설문
             </Button>
           </div>
@@ -4871,7 +4962,7 @@ function MyPageView({
       </Card>
 
       {/* Preferences Section */}
-      <Card className="border-0 shadow-lg mb-6">
+      <Card className="mb-6 gap-3 border-0 py-3 shadow-lg md:gap-6 md:py-6">
         <CardHeader className="flex justify-between">
           <CardTitle className="text-lg">맞춤 설정</CardTitle>
           {!DEMO_HIDE_ONBOARDING ? (
@@ -4961,7 +5052,7 @@ function MyPageView({
       </Card>
 
       {/* Data Management Section */}
-      <Card className="border-0 shadow-lg mb-6">
+      <Card className="mb-6 gap-3 border-0 py-3 shadow-lg md:gap-6 md:py-6">
         <CardHeader>
           <CardTitle className="text-lg">데이터 관리</CardTitle>
         </CardHeader>
@@ -5046,8 +5137,8 @@ function PreSurveyOverlay({
 }) {
   return (
     <ScaledOverlay className="z-[550]">
-      <Card className="relative z-10 w-[32rem] border-0 shadow-2xl pointer-events-auto">
-        <CardContent className="p-8">
+      <Card className="relative z-10 w-[32rem] border-0 py-3 shadow-2xl pointer-events-auto md:py-6">
+        <CardContent className="p-4 md:p-8">
           {/* Close Button */}
           <button
             type="button"
@@ -5159,8 +5250,8 @@ function PostSurveyOverlay({
 }) {
   return (
     <ScaledOverlay className="z-[550]">
-      <Card className="relative z-10 w-[32rem] border-0 shadow-2xl pointer-events-auto">
-        <CardContent className="p-8">
+      <Card className="relative z-10 w-[32rem] border-0 py-3 shadow-2xl pointer-events-auto md:py-6">
+        <CardContent className="p-4 md:p-8">
           {/* Logo */}
           <div className="text-center mb-8">
             <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4">
