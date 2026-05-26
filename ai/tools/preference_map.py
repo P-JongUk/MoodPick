@@ -146,3 +146,19 @@ def off_topic_reply(persona: str | None) -> str:
     """off-topic 메시지에 대한 페르소나 톤 정렬 거절 멘트를 반환."""
     key = persona if persona in _OFF_TOPIC_REPLIES else DEFAULT_COUNSELOR_PERSONA
     return _OFF_TOPIC_REPLIES[key]
+
+
+# 페르소나별 추천 안내 prefix 템플릿.
+# reason은 Recommender LLM이 이미 페르소나 톤으로 생성하므로 후처리 없이 그대로 결합한다.
+# title은 LLM 출력에 의존하지 않고 pipeline이 결합하므로 누락·중복 위험이 없다.
+_RECOMMENDATION_PREFIX_TEMPLATES: dict[str, str] = {
+    "friend": "\n\n'{title}' 어때? {reason}",
+    "teacher": "\n\n'{title}' 한번 들어 봐. {reason}",
+    "expert": "\n\n'{title}'을(를) 추천해드릴게요. {reason}",
+}
+
+
+def recommendation_suffix(persona: str | None, title: str, reason: str) -> str:
+    """페르소나에 맞춰 title과 reason을 결합한 추천 안내 문장을 반환."""
+    key = persona if persona in _RECOMMENDATION_PREFIX_TEMPLATES else DEFAULT_COUNSELOR_PERSONA
+    return _RECOMMENDATION_PREFIX_TEMPLATES[key].format(title=title, reason=reason)

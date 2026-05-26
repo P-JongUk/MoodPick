@@ -269,6 +269,7 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
                     f"고민: {concerns}\n"
                     f"선호 콘텐츠: {comfort_style}\n"
                     f"좋아한 콘텐츠 제목들: {liked_hints}\n"
+                    f"페르소나(persona): {state.persona}\n"
                     f"{music_only_note}"
                 ),
             },

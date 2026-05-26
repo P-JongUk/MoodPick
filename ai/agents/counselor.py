@@ -241,7 +241,26 @@ def _build_system_message(state: CounselingState) -> str:
             f"{state.session_summary}\n"
         )
 
-    return base_prompt + session_context + summary_block
+    # orchestrator가 이 턴을 추천으로 라우팅했다면 counselor에게 "정보 요청 질문/추천 수반 질문 없이"
+    # 평서문으로 마무리하라고 알려준다. 시스템이 직후에 추천 카드를 자동으로 덧붙이므로
+    # 사용자에게 답을 요구하는 질문으로 끝내면 흐름이 어색해진다.
+    routing_block = ""
+    if state.needs_recommendation:
+        routing_block = (
+            "\n\n### [Module 0.7: Routing Context]\n"
+            "이번 턴은 사용자가 이미 콘텐츠 추천을 명시적으로 요청했거나 "
+            "Orchestrator가 추천이 필요하다고 판단한 턴입니다. 응답 직후 시스템이 "
+            "자동으로 추천 콘텐츠를 덧붙입니다. 따라서 다음 규칙을 반드시 지키세요:\n"
+            "- 응답을 \"어떤 느낌의 노래를 듣고 싶어?\" 같은 **정보 요청 질문**으로 끝내지 마십시오. "
+            "사용자는 곧바로 추천을 받기를 기대합니다.\n"
+            "- \"추천해 드릴까요?\", \"한 곡 골라 드릴까요?\" 같은 **추천 수반 질문**으로 끝내지 마십시오. "
+            "추천은 이미 결정되어 있습니다.\n"
+            "- 대신 1~2문장의 짧은 공감 후, \"마음에 맞는 곡을 한 번 찾아볼게.\" 같이 "
+            "추천이 이어질 것을 자연스럽게 알리는 평서문으로 끝내십시오.\n"
+            "- 페르소나 톤은 그대로 유지하십시오."
+        )
+
+    return base_prompt + session_context + summary_block + routing_block
 
 
 
