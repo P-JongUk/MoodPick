@@ -3806,8 +3806,8 @@ function OnboardingScreen({
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-lg">
-        <Card className="border-0 shadow-2xl">
-          <CardContent className="p-8">
+        <Card className="border-0 shadow-2xl py-3 md:py-6">
+          <CardContent className="p-4 md:p-8">
             {/* Logo */}
             <div className="text-center mb-6">
               <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4">
@@ -4065,10 +4065,10 @@ function SurveyScreen({
         : "제출하기"
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+    <div className="min-h-dvh bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-2xl">
-        <Card className="min-h-[680px] border-0 shadow-2xl">
-          <CardContent className="flex min-h-[680px] flex-col p-6 sm:p-8">
+        <Card className="min-h-[calc(100dvh-32px)] border-0 shadow-2xl py-3 md:py-6">
+          <CardContent className="flex min-h-[calc(100dvh-32px)] flex-col py-3 md:p-6 sm:p-8">
             <div className="mb-5 text-center">
               <div className="mx-auto mb-4 flex h-14 w-full max-w-sm items-center justify-evenly overflow-hidden rounded-2xl bg-primary">
                 {surveyOrder.map((type) => {
@@ -4102,7 +4102,7 @@ function SurveyScreen({
               <p className="text-sm leading-relaxed text-muted-foreground">{currentConfig.description}</p>
             </div>
 
-            <div className="mb-8 flex-1">
+            <div className="mb-4 md:mb-8 flex-none">
               <div className="min-h-[132px]">
                 <h3 className="mb-3 text-base font-semibold leading-relaxed text-foreground">
                   {surveyIndex + 1}. {currentConfig.questions[surveyIndex]}
@@ -4157,34 +4157,35 @@ function SurveyScreen({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setSurveyIndex((prev) => Math.max(prev - 1, 0))}
-                className="h-12 rounded-xl text-base font-medium cursor-pointer"
-                disabled={surveyIndex === 0 || isSaving}
-              >
-                이전
-              </Button>
-              <Button
-                type="button"
-                onClick={() => {
-                  if (isSubmitted) return
-                  if (isCompleted) {
-                    void handleSubmitSurvey()
-                    return
-                  }
-                  moveToNextQuestion()
-                }}
-                className="h-12 rounded-xl text-base font-medium cursor-pointer"
-                disabled={isSaving || isSubmitted}
-              >
-                {nextButtonLabel}
-              </Button>
+            <div className="mt-auto">
+              <div className="grid grid-cols-2 gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setSurveyIndex((prev) => Math.max(prev - 1, 0))}
+                  className="h-12 rounded-xl text-base font-medium cursor-pointer"
+                  disabled={surveyIndex === 0 || isSaving}
+                >
+                  이전
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    if (isSubmitted) return
+                    if (isCompleted) {
+                      void handleSubmitSurvey()
+                      return
+                    }
+                    moveToNextQuestion()
+                  }}
+                  className="h-12 rounded-xl text-base font-medium cursor-pointer"
+                  disabled={isSaving || isSubmitted}
+                >
+                  {nextButtonLabel}
+                </Button>
+              </div>
+              {errorMessage && <p className="mt-3 text-center text-xs text-destructive">{errorMessage}</p>}
             </div>
-
-            {errorMessage && <p className="mt-3 text-center text-xs text-destructive">{errorMessage}</p>}
           </CardContent>
         </Card>
       </div>
@@ -4195,8 +4196,8 @@ function SurveyScreen({
 function Introduce({introduceCheck}: {introduceCheck: () => void}){
   return (
     <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex items-center justify-center p-4">
-      <Card className="w-full max-w-lg border-0 shadow-2xl">
-        <CardContent className="p-8">
+      <Card className="w-full max-w-lg border-0 shadow-2xl py-3 md:py-6">
+        <CardContent className="p-4 md:p-8">
           {/* Logo */}
           <div className="text-center mb-8">
               <div className="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4">
