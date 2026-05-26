@@ -3,6 +3,7 @@ import logging
 from pydantic import BaseModel
 from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
+from app.auth import CurrentUser, get_current_user, require_same_user
 from app.services.supabase_service import get_supabase_client
 from supabase import Client
 from datetime import datetime, timezone
@@ -124,10 +125,12 @@ def _validate_session_owner(supabase: Client, session_id: Optional[str], user_id
 async def submit_content_feedback(
     payload: ContentFeedbackRequest,
     background_tasks: BackgroundTasks,
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """콘텐츠 피드백 저장/변경 (👍/👎). (user_id, content_id) 단위 upsert."""
     try:
+        require_same_user(payload.user_id, current_user)
         if payload.feedback not in ["like", "dislike"]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -181,9 +184,11 @@ async def remove_content_feedback(
     content_id: str,
     background_tasks: BackgroundTasks,
     supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """좋아요/싫어요 토글 취소 — (user_id, content_id) row 제거."""
     try:
+        require_same_user(user_id, current_user)
         result = (
             supabase.table("content_feedback")
             .delete()
@@ -198,6 +203,8 @@ async def remove_content_feedback(
             background_tasks.add_task(refresh_user_taste_vector, user_id)
 
         return {"deleted": deleted, "user_id": user_id, "content_id": content_id}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning(
             "Content feedback remove failed user_id=%s content_id=%s error_type=%s",
@@ -214,10 +221,12 @@ async def remove_content_feedback(
 @router.post("/watched")
 async def record_watched_content(
     payload: WatchedContentRequest,
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """시청한 콘텐츠 기록"""
     try:
+        require_same_user(payload.user_id, current_user)
         _validate_session_owner(supabase, payload.session_id, payload.user_id)
 
         row: dict = {
@@ -276,10 +285,12 @@ async def record_watched_content(
 async def get_content_history(
     user_id: str,
     limit: int = 20,
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """사용자가 시청한 콘텐츠 기록 (최근 20개)"""
     try:
+        require_same_user(user_id, current_user)
         result = supabase.table("watched_content_records").select("*").eq(
             "user_id", user_id
         ).order("watched_at", desc=True).limit(limit).execute()
@@ -287,6 +298,8 @@ async def get_content_history(
         if result.data:
             return [WatchedContentResponse(**item) for item in result.data]
         return []
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning(
             "Content history fetch failed user_id=%s error_type=%s",
@@ -305,6 +318,7 @@ async def get_content_history(
 )
 async def get_content_recommendations(
     user_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
     limit: int = Query(8, ge=1, le=30),
     media: Literal["all", "youtube", "podcast"] = Query(
         "all",
@@ -312,7 +326,7 @@ async def get_content_recommendations(
     ),
 ):
     """자동 추천 콘텐츠 시드 목록. user_id는 향후 개인화 시 사용."""
-    _ = user_id
+    require_same_user(user_id, current_user)
     now = datetime.now(timezone.utc).isoformat()
     if media == "all":
         filtered = _SEED_RECOMMENDATIONS[:limit]
@@ -339,10 +353,12 @@ async def get_content_recommendations(
 @router.get("/feedback/{user_id}")
 async def get_feedback_summary(
     user_id: str,
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """사용자의 피드백 통계 (좋아요/싫어요 카운트)"""
     try:
+        require_same_user(user_id, current_user)
         result = supabase.table("content_feedback").select("*").eq(
             "user_id", user_id
         ).execute()
@@ -359,6 +375,8 @@ async def get_feedback_summary(
             "dislikes": dislikes,
             "total": likes + dislikes
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning(
             "Content feedback summary fetch failed user_id=%s error_type=%s",

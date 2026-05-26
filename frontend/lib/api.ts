@@ -3,10 +3,32 @@
  * 모든 API 호출의 중앙 집중식 관리
  */
 
+import { getSupabaseClient } from "./supabaseClient"
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ||
   process.env.NEXT_PUBLIC_BACKEND_URL ||
   "http://localhost:8000"
+
+async function getAuthHeaders(extra?: HeadersInit): Promise<HeadersInit> {
+  const supabase = getSupabaseClient()
+  const { data } = await supabase.auth.getSession()
+  const token = data.session?.access_token
+
+  if (!token) {
+    throw new Error("로그인이 필요합니다.")
+  }
+
+  return {
+    ...(extra ?? {}),
+    Authorization: `Bearer ${token}`,
+  }
+}
+
+async function authenticatedFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const headers = await getAuthHeaders(init.headers)
+  return fetch(input, { ...init, headers })
+}
 
 async function readErrorDetail(response: Response): Promise<string | null> {
   try {
@@ -37,19 +59,26 @@ async function buildCounselingError(response: Response): Promise<Error> {
 
 // ============ Session API ============
 
+export type CounselorPersona = "friend" | "teacher" | "expert"
+
 export interface SessionResponse {
   id: string
   user_id: string
   status: string
   started_at: string
   ended_at?: string
+  persona?: CounselorPersona
 }
 
-export async function createSession(userId: string, context?: string): Promise<SessionResponse> {
-  const response = await fetch(`${API_BASE_URL}/session/start`, {
+export async function createSession(
+  userId: string,
+  context?: string,
+  persona: CounselorPersona = "expert",
+): Promise<SessionResponse> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/session/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ user_id: userId, context }),
+    body: JSON.stringify({ user_id: userId, context, persona }),
   })
 
   if (!response.ok) {
@@ -60,7 +89,7 @@ export async function createSession(userId: string, context?: string): Promise<S
 }
 
 export async function endSession(sessionId: string): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}/session/end`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/session/end`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId }),
@@ -74,7 +103,7 @@ export async function endSession(sessionId: string): Promise<{ status: string }>
 }
 
 export async function getCurrentSession(userId: string): Promise<SessionResponse | null> {
-  const response = await fetch(`${API_BASE_URL}/session/current/${userId}`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/session/current/${userId}`, {
     method: "GET",
   })
 
@@ -116,7 +145,7 @@ export async function submitSurveyResponse(
   questionKey: string,
   emojiValue: string
 ): Promise<{ status: string; response_id: string; score: number }> {
-  const response = await fetch(`${API_BASE_URL}/survey/submit`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/survey/submit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -135,7 +164,7 @@ export async function submitSurveyResponse(
 }
 
 export async function getSurveyDelta(sessionId: string) {
-  const response = await fetch(`${API_BASE_URL}/survey/delta/${sessionId}`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/survey/delta/${sessionId}`, {
     method: "GET",
   })
 
@@ -177,7 +206,7 @@ export async function getDailySummary(
   timezone: string = "Asia/Seoul"
 ): Promise<DailySummary> {
   const params = new URLSearchParams({ date, timezone })
-  const response = await fetch(
+  const response = await authenticatedFetch(
     `${API_BASE_URL}/user/daily-summary/${userId}?${params.toString()}`,
     { method: "GET" }
   )
@@ -197,7 +226,7 @@ export async function submitContentFeedback(
   feedback: "like" | "dislike",
   sessionId?: string
 ): Promise<any> {
-  const response = await fetch(`${API_BASE_URL}/content/feedback`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/content/feedback`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -225,7 +254,7 @@ export async function recordWatchedContent(
   mediaProvider?: "youtube" | "podcast" | null,
   mediaUrl?: string | null
 ): Promise<any> {
-  const response = await fetch(`${API_BASE_URL}/content/watched`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/content/watched`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -255,7 +284,7 @@ export async function getContentRecommendations(
 ): Promise<any[]> {
   const limit = options?.limit ?? 8
   const media = options?.media ?? "all"
-  const response = await fetch(
+  const response = await authenticatedFetch(
     `${API_BASE_URL}/content/recommendations/${userId}?limit=${limit}&media=${media}`,
     { method: "GET" }
   )
@@ -269,7 +298,7 @@ export async function getContentRecommendations(
 }
 
 export async function getContentHistory(userId: string, limit = 20): Promise<any[]> {
-  const response = await fetch(`${API_BASE_URL}/content/history/${userId}?limit=${limit}`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/content/history/${userId}?limit=${limit}`, {
     method: "GET",
   })
 
@@ -282,7 +311,7 @@ export async function getContentHistory(userId: string, limit = 20): Promise<any
 }
 
 export async function getFeedbackSummary(userId: string): Promise<any> {
-  const response = await fetch(`${API_BASE_URL}/content/feedback/${userId}`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/content/feedback/${userId}`, {
     method: "GET",
   })
 
@@ -313,7 +342,7 @@ export async function analyzeEmotion(userInput: string, context?: string): Promi
 }
 
 export async function getEmotionRecords(userId: string, days = 7): Promise<any[]> {
-  const response = await fetch(`${API_BASE_URL}/emotion/records/${userId}?days=${days}`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/emotion/records/${userId}?days=${days}`, {
     method: "GET",
   })
 
@@ -326,7 +355,7 @@ export async function getEmotionRecords(userId: string, days = 7): Promise<any[]
 }
 
 export async function getEmotionSummary(userId: string, days = 7): Promise<any> {
-  const response = await fetch(`${API_BASE_URL}/emotion/summary/${userId}?days=${days}`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/emotion/summary/${userId}?days=${days}`, {
     method: "GET",
   })
 
@@ -340,7 +369,7 @@ export async function getEmotionSummary(userId: string, days = 7): Promise<any> 
 // ============ User API ============
 
 export async function getUserProfile(userId: string): Promise<any> {
-  const response = await fetch(`/api/user/profile?user_id=${encodeURIComponent(userId)}`, {
+  const response = await authenticatedFetch(`/api/user/profile?user_id=${encodeURIComponent(userId)}`, {
     method: "GET",
   })
 
@@ -355,7 +384,8 @@ export async function upsertUserProfile(
   userId: string,
   displayName: string,
   gender?: string | null,
-  birthYear?: number | null
+  birthYear?: number | null,
+  onboardingProfile?: Record<string, unknown> | null,
 ): Promise<any> {
   const payload: Record<string, unknown> = {
     user_id: userId,
@@ -364,8 +394,9 @@ export async function upsertUserProfile(
 
   if (gender != null) payload.gender = gender
   if (birthYear != null) payload.birth_year = birthYear
+  if (onboardingProfile !== undefined) payload.onboarding_profile = onboardingProfile
 
-  const response = await fetch(`/api/user/profile`, {
+  const response = await authenticatedFetch(`/api/user/profile`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -379,7 +410,7 @@ export async function upsertUserProfile(
 }
 
 export async function getUserSessions(userId: string, limit = 10): Promise<any> {
-  const response = await fetch(`${API_BASE_URL}/user/sessions/${userId}?limit=${limit}`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/user/sessions/${userId}?limit=${limit}`, {
     method: "GET",
   })
 
@@ -391,7 +422,7 @@ export async function getUserSessions(userId: string, limit = 10): Promise<any> 
 }
 
 export async function getUserStats(userId: string): Promise<any> {
-  const response = await fetch(`${API_BASE_URL}/user/stats/${userId}`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/user/stats/${userId}`, {
     method: "GET",
   })
 
@@ -407,7 +438,7 @@ export async function getUserStats(userId: string): Promise<any> {
 export async function sendCounselingMessage(userId: string, message: string, sessionId?: string): Promise<any> {
   let response: Response
   try {
-    response = await fetch(`${API_BASE_URL}/counseling/message`, {
+    response = await authenticatedFetch(`${API_BASE_URL}/counseling/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -427,8 +458,73 @@ export async function sendCounselingMessage(userId: string, message: string, ses
   return response.json()
 }
 
+export async function sendCounselingMessageStream(
+  userId: string,
+  message: string,
+  sessionId: string,
+  onChunk: (text: string) => void,
+  onDone: (meta: { is_crisis: boolean; emotion: any; recommended_content: any }) => void,
+  onError: (err: Error) => void,
+): Promise<void> {
+  let response: Response
+  try {
+    response = await authenticatedFetch(`${API_BASE_URL}/counseling/message/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, message, session_id: sessionId }),
+    })
+  } catch {
+    onError(new Error("백엔드 서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요."))
+    return
+  }
+
+  if (!response.ok) {
+    onError(await buildCounselingError(response))
+    return
+  }
+
+  const reader = response.body!.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      // SSE는 "\n\n"으로 이벤트를 구분
+      const parts = buffer.split("\n\n")
+      buffer = parts.pop() ?? ""
+
+      for (const part of parts) {
+        const line = part.trim()
+        if (!line.startsWith("data: ")) continue
+        try {
+          const event = JSON.parse(line.slice(6))
+          if (event.type === "chunk") {
+            onChunk(event.text ?? "")
+          } else if (event.type === "done") {
+            onDone({
+              is_crisis: event.is_crisis ?? false,
+              emotion: event.emotion ?? {},
+              recommended_content: event.recommended_content ?? null,
+            })
+          } else if (event.type === "error") {
+            onError(new Error(event.message ?? "상담 메시지 처리 중 오류가 발생했어요."))
+          }
+        } catch {
+          // JSON 파싱 실패 시 무시
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
 export async function getInitialCounselingMessage(sessionId: string): Promise<any> {
-  const response = await fetch(`${API_BASE_URL}/counseling/initial-message/${sessionId}`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/counseling/initial-message/${sessionId}`, {
     method: "GET",
   })
 
@@ -456,7 +552,7 @@ export async function getCounselingHistory(
   sessionId: string
 ): Promise<CounselingHistoryResponse> {
   const params = new URLSearchParams({ user_id: userId })
-  const response = await fetch(
+  const response = await authenticatedFetch(
     `${API_BASE_URL}/counseling/history/${sessionId}?${params.toString()}`,
     { method: "GET" }
   )
@@ -473,7 +569,7 @@ export async function cleanupStaleSessionsForUser(userId: string): Promise<{
   closed_session_ids: string[]
   closed_count: number
 }> {
-  const response = await fetch(`${API_BASE_URL}/session/cleanup-stale`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/session/cleanup-stale`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ user_id: userId }),
@@ -496,7 +592,7 @@ export interface ReminderPreferencePayload {
 }
 
 export async function getReminderPreference(userId: string): Promise<any> {
-  const response = await fetch(`${API_BASE_URL}/reminder/preferences/${userId}`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/reminder/preferences/${userId}`, {
     method: "GET",
   })
 
@@ -508,7 +604,7 @@ export async function getReminderPreference(userId: string): Promise<any> {
 }
 
 export async function upsertReminderPreference(payload: ReminderPreferencePayload): Promise<any> {
-  const response = await fetch(`${API_BASE_URL}/reminder/preferences`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/reminder/preferences`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),

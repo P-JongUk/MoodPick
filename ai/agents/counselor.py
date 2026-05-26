@@ -16,9 +16,11 @@ Flow:
 """
 
 import asyncio
+import dataclasses
 import json
 import logging
 import time
+from typing import AsyncGenerator
 
 from ai.clients import get_openai
 from ai.state import CounselingState
@@ -27,9 +29,23 @@ from ai.tools.rag_search import search_rag_context
 from ai.tools.user_profile import get_user_profile
 from ai.tools.emotion_record import save_emotion_record
 from ai.tools.emotion_va_map import get_nearest_emotion
+from ai.tools.preference_map import counseling_tone_guidance, counselor_persona_guidance
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclasses.dataclass
+class _FunctionLike:
+    name: str
+    arguments: str
+
+
+@dataclasses.dataclass
+class _ToolCallLike:
+    """Minimal duck-type of OpenAI's tool_call object, built from streaming chunks."""
+    id: str
+    function: _FunctionLike
 
 
 def _short_id(value: str | None) -> str:
@@ -81,7 +97,7 @@ _TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_user_profile",
-            "description": "사용자의 온보딩 프로필(고민 카테고리, 선호 위로 방식)과 최근 감정 이력을 조회한다. 첫 응답 시 호출하여 개인화된 상담을 제공한다.",
+            "description": "사용자의 온보딩 프로필(고민 카테고리, 선호 위로 방식)과 최근 감정 이력을 조회한다. 첫 응답 시 1회 호출. 결과의 concerns는 사용자가 현재 발화에서 구체적 주제를 명시하지 않은 경우에만 부드러운 화두 열기 단서로 활용하고, 사용자가 다른 주제를 꺼냈다면 무시한다. concerns 라벨은 사용자에게 직접 노출하지 않는다.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -131,7 +147,7 @@ _TOOL_DEFINITIONS = [
 
 # ── Tool dispatcher ─────────────────────────────────────────────────────────
 
-async def _execute_tool_call(tool_call, state: CounselingState) -> str:
+async def _execute_tool_call(tool_call: "_ToolCallLike | object", state: CounselingState) -> str:
     """Execute a single tool call and return the result as a JSON string.
 
     동기 도구(Supabase/OpenAI sync SDK)는 asyncio.to_thread로 감싸 이벤트 루프를 막지 않는다.
@@ -181,6 +197,32 @@ def _build_system_message(state: CounselingState) -> str:
     """Build system prompt with injected context."""
     base_prompt = load_prompt("system_prompt.md")
 
+    # 세션의 persona를 Module 1 위치에 주입 — system_prompt.md의 {{persona_block}} 치환
+    base_prompt = base_prompt.replace(
+        "{{persona_block}}", counselor_persona_guidance(state.persona)
+    )
+
+    # 사용자 프로필 캐시가 없으면 1회 동기 fetch — GPT 도구 호출 의존성 없이
+    # 매 턴 일관되게 톤 가이드를 시스템 메시지에 포함시키기 위함.
+    profile = state.user_profile
+    if not profile:
+        try:
+            profile = get_user_profile(state.user_id) or {}
+            state.user_profile = profile
+        except Exception as e:
+            logger.warning(
+                "Failed to prefetch user_profile for tone block user_id=%s error_type=%s",
+                _short_id(state.user_id),
+                type(e).__name__,
+            )
+            profile = {}
+
+    # tone_block은 Module 1 바로 뒤(Module 1.5)에 placeholder로 주입되어
+    # 페르소나 어조와 행동 가이드가 시각·구조적으로 인접하도록 한다.
+    # counseling_tone_guidance는 빈 배열에서도 fallback 블록을 반환하므로 placeholder가 빈 줄로 남지 않는다.
+    tone_block = counseling_tone_guidance(profile.get("counseling_tone", []) or [])
+    base_prompt = base_prompt.replace("{{tone_block}}", tone_block)
+
     # Inject user_id and session_id so GPT can pass them to tools
     session_context = (
         f"\n\n### [Module 0: Session Context]\n"
@@ -199,7 +241,28 @@ def _build_system_message(state: CounselingState) -> str:
             f"{state.session_summary}\n"
         )
 
-    return base_prompt + session_context + summary_block
+    # orchestrator가 이 턴을 추천으로 라우팅했다면 counselor에게 "정보 요청 질문/추천 수반 질문 없이"
+    # 평서문으로 마무리하라고 알려준다. 시스템이 직후에 추천 카드를 자동으로 덧붙이므로
+    # 사용자에게 답을 요구하는 질문으로 끝내면 흐름이 어색해진다.
+    routing_block = ""
+    if state.needs_recommendation:
+        routing_block = (
+            "\n\n### [Module 0.7: Routing Context]\n"
+            "이번 턴은 사용자가 이미 콘텐츠 추천을 명시적으로 요청했거나 "
+            "Orchestrator가 추천이 필요하다고 판단한 턴입니다. 응답 직후 시스템이 "
+            "자동으로 추천 콘텐츠를 덧붙입니다. 따라서 다음 규칙을 반드시 지키세요:\n"
+            "- 응답을 \"어떤 느낌의 노래를 듣고 싶어?\" 같은 **정보 요청 질문**으로 끝내지 마십시오. "
+            "사용자는 곧바로 추천을 받기를 기대합니다.\n"
+            "- \"추천해 드릴까요?\", \"한 곡 골라 드릴까요?\" 같은 **추천 수반 질문**으로 끝내지 마십시오. "
+            "추천은 이미 결정되어 있습니다.\n"
+            "- http/https URL, 마크다운 링크, 구체적인 곡명·앨범명·아티스트명·플레이리스트 제목·YouTube 영상 제목을 "
+            "직접 쓰거나 나열하지 마십시오. 실제 제목과 카드는 시스템이 붙입니다.\n"
+            "- 대신 1~2문장의 짧은 공감 후, \"마음에 맞는 곡을 한 번 찾아볼게.\" 같이 "
+            "추천이 이어질 것을 자연스럽게 알리는 평서문으로 끝내십시오.\n"
+            "- 페르소나 톤은 그대로 유지하십시오."
+        )
+
+    return base_prompt + session_context + summary_block + routing_block
 
 
 
@@ -320,3 +383,151 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
             )
 
     return state
+
+
+async def counselor_agent_stream(state: CounselingState) -> AsyncGenerator[str, None]:
+    """
+    counselor_agent의 스트리밍 버전.
+
+    툴 호출 라운드: 청크에서 tool_calls 조각을 모아 실행 (텍스트 미출력)
+    텍스트 생성 라운드: 청크에서 content가 도착하는 즉시 yield → 프론트엔드로 전송
+    루프 종료 후 state.response, state.emotion_score 세팅 (기존과 동일)
+    """
+    client = get_openai()
+
+    messages = [{"role": "system", "content": _build_system_message(state)}]
+    for msg in state.messages:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": state.message})
+
+    max_iterations = 5
+    save_emotion_called = False
+
+    for _round in range(max_iterations):
+        _t = time.perf_counter()
+        stream = await client.chat.completions.create(
+            model=_MODEL,
+            temperature=0.7,
+            max_tokens=500,
+            tools=_TOOL_DEFINITIONS,
+            messages=messages,
+            stream=True,
+        )
+
+        content_pieces: list[str] = []
+        # index → {"id": str, "name": str, "arguments": str}
+        tool_calls_acc: dict[int, dict] = {}
+        finish_reason: str | None = None
+
+        async for chunk in stream:
+            choice = chunk.choices[0]
+            if choice.finish_reason:
+                finish_reason = choice.finish_reason
+            delta = choice.delta
+
+            if delta.content:
+                content_pieces.append(delta.content)
+                yield delta.content  # 텍스트 청크를 즉시 내보냄
+
+            if delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index
+                    if idx not in tool_calls_acc:
+                        tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                    if tc_delta.id:
+                        tool_calls_acc[idx]["id"] += tc_delta.id
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            tool_calls_acc[idx]["name"] += tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            tool_calls_acc[idx]["arguments"] += tc_delta.function.arguments
+
+        logger.info("[PERF] counselor_stream.llm[%d]=%.3fs", _round, time.perf_counter() - _t)
+
+        # 텍스트 응답 완료 (툴 호출 없음)
+        if finish_reason == "stop" or not tool_calls_acc:
+            state.response = "".join(content_pieces).strip()
+            if not state.response:
+                state.response = "지금은 답변을 정리하기 어렵네요. 다시 한 번 말씀해 주실 수 있을까요?"
+            break
+
+        # 툴 호출 처리
+        sorted_tcs = [tool_calls_acc[i] for i in sorted(tool_calls_acc)]
+        assembled_tool_calls = [
+            {"id": tc["id"], "type": "function",
+             "function": {"name": tc["name"], "arguments": tc["arguments"]}}
+            for tc in sorted_tcs
+        ]
+
+        messages.append({
+            "role": "assistant",
+            "content": "".join(content_pieces) or None,
+            "tool_calls": assembled_tool_calls,
+        })
+
+        for tc_dict in assembled_tool_calls:
+            tool_call_obj = _ToolCallLike(
+                id=tc_dict["id"],
+                function=_FunctionLike(
+                    name=tc_dict["function"]["name"],
+                    arguments=tc_dict["function"]["arguments"],
+                ),
+            )
+            _t = time.perf_counter()
+            result_str = await _execute_tool_call(tool_call_obj, state)
+            logger.info(
+                "[PERF] counselor_stream.tool[%s]=%.3fs",
+                tc_dict["function"]["name"],
+                time.perf_counter() - _t,
+            )
+
+            if tc_dict["function"]["name"] == "get_user_profile":
+                try:
+                    profile_data = json.loads(result_str)
+                    if "error" not in profile_data:
+                        state.user_profile = profile_data
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            if tc_dict["function"]["name"] == "save_emotion_record":
+                save_emotion_called = True
+                try:
+                    args = json.loads(tc_dict["function"]["arguments"])
+                    state.emotion_score = _build_emotion_score(args)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc_dict["id"],
+                "content": result_str,
+            })
+
+    # 감정 저장이 누락된 경우 강제 호출 (기존 counselor_agent와 동일)
+    if not save_emotion_called:
+        try:
+            _t = time.perf_counter()
+            forced = await get_openai().chat.completions.create(
+                model=_MODEL,
+                temperature=0.0,
+                max_tokens=150,
+                tools=_TOOL_DEFINITIONS,
+                tool_choice={"type": "function", "function": {"name": "save_emotion_record"}},
+                messages=messages,
+            )
+            logger.info("[PERF] counselor_stream.forced_emotion_llm=%.3fs", time.perf_counter() - _t)
+            for tc in (forced.choices[0].message.tool_calls or []):
+                if tc.function.name == "save_emotion_record":
+                    await _execute_tool_call(tc, state)
+                    try:
+                        args = json.loads(tc.function.arguments)
+                        state.emotion_score = _build_emotion_score(args)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+        except Exception as e:
+            logger.warning(
+                "Forced emotion save failed (stream) user_id=%s session_id=%s error_type=%s",
+                _short_id(state.user_id),
+                _short_id(state.session_id),
+                type(e).__name__,
+            )

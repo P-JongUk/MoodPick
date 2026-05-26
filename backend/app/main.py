@@ -4,9 +4,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.config import get_cors_origins, get_settings
 
+settings = get_settings()
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 
@@ -17,7 +19,6 @@ from app.routers.survey import router as survey_router
 from app.routers.content import router as content_router
 from app.routers.user import router as user_router
 from app.routers.rag import router as rag_router
-from app.config import get_cors_origins, get_settings
 from ai.clients import close_clients
 
 
@@ -45,7 +46,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="MoodPick Backend", version="0.1.0", lifespan=lifespan)
 
-settings = get_settings()
 allowed_origins = get_cors_origins()
 
 app.add_middleware(

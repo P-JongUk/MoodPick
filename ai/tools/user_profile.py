@@ -26,17 +26,18 @@ def get_user_profile(user_id: str) -> dict:
     Returns:
         {
             "display_name": "홍길동",
-            "concerns": ["직장", "관계"],        # from onboarding_profile
-            "comfort_style": ["음악"],           # from onboarding_profile
-            "recent_emotions": [                 # from survey_responses (pre-session mood)
+            "concerns": ["work", "relationship"],     # from onboarding_profile
+            "counseling_tone": ["listen"],            # from onboarding_profile (NEW)
+            "content_preference": ["music"],          # from onboarding_profile (NEW)
+            "recent_emotions": [                      # from survey_responses (pre-session mood)
                 {"emoji_value": "low", "score": 0.3, "created_at": "..."},
                 ...
             ]
         }
 
     Notes:
-        - onboarding_profile is a JSONB column added in migration 006.
-        - If the column is not yet populated, concerns and comfort_style will be empty lists.
+        - onboarding_profile is a JSONB column added in migration 006, split in migration 021.
+        - If the column is not yet populated, list fields will be empty.
         - recent_emotions are taken from survey_responses WHERE phase='pre'.
     """
     supabase = _get_supabase()
@@ -86,6 +87,7 @@ def get_user_profile(user_id: str) -> dict:
         "gender": profile_row.get("gender"),
         "birth_year": profile_row.get("birth_year"),
         "concerns": onboarding.get("concerns", []),
-        "comfort_style": onboarding.get("comfort_style", []),
+        "counseling_tone": onboarding.get("counseling_tone", []),
+        "content_preference": onboarding.get("content_preference", []),
         "recent_emotions": recent_emotions,
     }

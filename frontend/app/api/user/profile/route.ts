@@ -16,21 +16,51 @@ function getAdminClient() {
   return createClient(supabaseUrl, supabaseServiceRole)
 }
 
+function getBearerToken(request: Request) {
+  const header = request.headers.get('authorization')
+  if (!header?.toLowerCase().startsWith('bearer ')) return null
+  return header.slice(7).trim()
+}
+
+async function requireAuthenticatedUser(request: Request, requestedUserId?: string) {
+  const token = getBearerToken(request)
+  if (!token) {
+    return { error: NextResponse.json({ error: 'Authentication required' }, { status: 401 }) }
+  }
+
+  const supabase = getAdminClient()
+  const { data, error } = await supabase.auth.getUser(token)
+  const authUserId = data.user?.id
+
+  if (error || !authUserId) {
+    return { error: NextResponse.json({ error: 'Invalid or expired authentication token' }, { status: 401 }) }
+  }
+
+  if (requestedUserId && requestedUserId !== authUserId) {
+    return { error: NextResponse.json({ error: 'You can only access your own profile' }, { status: 403 }) }
+  }
+
+  return { supabase, userId: authUserId }
+}
+
 export async function PUT(request: Request) {
   try {
     const body = await request.json()
-    const { user_id, display_name, gender, birth_year } = body as {
+    const { user_id, display_name, gender, birth_year, onboarding_profile } = body as {
       user_id: string
       display_name?: string
       gender?: string | null
       birth_year?: number | null
+      onboarding_profile?: Record<string, unknown> | null
     }
 
     if (!user_id || !display_name) {
       return NextResponse.json({ error: 'user_id and display_name are required' }, { status: 400 })
     }
 
-    const supabase = getAdminClient()
+    const auth = await requireAuthenticatedUser(request, user_id)
+    if ('error' in auth) return auth.error
+    const { supabase } = auth
 
     const payload: Record<string, unknown> = {
       user_id,
@@ -39,11 +69,12 @@ export async function PUT(request: Request) {
     }
     if (gender !== undefined) payload.gender = gender
     if (birth_year !== undefined) payload.birth_year = birth_year
+    if (onboarding_profile !== undefined) payload.onboarding_profile = onboarding_profile
 
     const { error } = await supabase.from('user_profiles').upsert(payload, { onConflict: 'user_id' })
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return NextResponse.json({ error: 'Profile update failed' }, { status: 500 })
     }
 
     // Optionally update auth metadata display_name
@@ -55,13 +86,13 @@ export async function PUT(request: Request) {
           ...(birth_year !== undefined ? { birth_year } : {}),
         },
       })
-    } catch (e) {
+    } catch {
       // ignore; not fatal
     }
 
     return NextResponse.json({ status: 'ok' })
-  } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Profile update failed' }, { status: 500 })
   }
 }
 
@@ -71,11 +102,13 @@ export async function GET(request: Request) {
     const userId = url.searchParams.get('user_id')
     if (!userId) return NextResponse.json({ error: 'user_id required' }, { status: 400 })
 
-    const supabase = getAdminClient()
+    const auth = await requireAuthenticatedUser(request, userId)
+    if ('error' in auth) return auth.error
+    const { supabase } = auth
     const { data, error } = await supabase.from('user_profiles').select('*').eq('user_id', userId).maybeSingle()
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: 'Profile fetch failed' }, { status: 500 })
     return NextResponse.json(data || null)
-  } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Profile fetch failed' }, { status: 500 })
   }
 }

@@ -3,27 +3,14 @@ import {
   endSession,
   submitSurveyResponse,
   submitContentFeedback,
+  type CounselorPersona,
 } from "./api"
 
 export type SurveyPhase = "pre" | "post"
 export type ContentFeedbackType = "like" | "dislike"
 
-const moodScoreMap: Record<string, number> = {
-  great: 5,
-  good: 4,
-  neutral: 3,
-  low: 2,
-  bad: 1,
-}
-
 // Get userId from Supabase auth
 async function getCurrentUserId() {
-  // 이 함수는 프론트엔드에서 auth context에서 가져올 수 있음
-  // 임시로 localStorage에서 가져오거나, useAuth hook 사용
-  const stored = localStorage.getItem("__moodpick_user_id")
-  if (stored) return stored
-  
-  // fallback: Supabase auth에서 가져오기
   const { getSupabaseClient } = await import("./supabaseClient")
   const supabase = getSupabaseClient()
   const { data, error } = await supabase.auth.getUser()
@@ -38,12 +25,16 @@ async function getCurrentUserId() {
 /**
  * 새 상담 세션 시작
  * @param context 상담 맥락 (선택사항)
+ * @param persona 세션의 상담사 페르소나 (friend | teacher | expert)
  * @returns 세션 ID
  */
-export async function startCounselingSession(context?: string): Promise<string> {
+export async function startCounselingSession(
+  context?: string,
+  persona: CounselorPersona = "expert",
+): Promise<string> {
   const userId = await getCurrentUserId()
-  
-  const response = await createSession(userId, context)
+
+  const response = await createSession(userId, context, persona)
   return response.id
 }
 

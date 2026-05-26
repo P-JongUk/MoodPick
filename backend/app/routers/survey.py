@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
+from app.auth import CurrentUser, get_current_user, get_owned_session, require_same_user
 from app.services.supabase_service import get_supabase_client
 from supabase import Client
 from datetime import datetime, timezone
@@ -37,6 +38,11 @@ MOOD_EMOJI_MAP = {
     "low": 2,
     "bad": 1,
 }
+ALLOWED_SURVEY_PHASES = {"pre", "post"}
+SURVEY_OPTIONS_BY_KEY = {
+    question["key"]: set(question["emoji_options"])
+    for question in SURVEY_QUESTIONS
+}
 
 
 class SurveyQuestion(BaseModel):
@@ -69,12 +75,30 @@ async def get_survey_questions():
 @router.post("/submit")
 async def submit_survey_response(
     payload: SurveyResponseRequest,
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """문진 응답 저장"""
     try:
+        get_owned_session(supabase, payload.session_id, current_user.id)
+        if payload.phase not in ALLOWED_SURVEY_PHASES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="phase must be 'pre' or 'post'",
+            )
+        allowed_options = SURVEY_OPTIONS_BY_KEY.get(payload.question_key)
+        if allowed_options is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="question_key is not valid",
+            )
+        if payload.emoji_value not in allowed_options:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="emoji_value is not valid for question_key",
+            )
         # emoji_value -> score 매핑
-        score = MOOD_EMOJI_MAP.get(payload.emoji_value, 3)
+        score = MOOD_EMOJI_MAP[payload.emoji_value]
         
         result = supabase.table("survey_responses").insert({
             "session_id": payload.session_id,
@@ -96,20 +120,24 @@ async def submit_survey_response(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to save survey response"
             )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Internal server error"
         )
 
 
 @router.get("/delta/{session_id}", response_model=Optional[SurveyDeltaResponse])
 async def get_survey_delta(
     session_id: str,
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """세션의 사전/사후 문진 감정 변화(Delta) 조회"""
     try:
+        get_owned_session(supabase, session_id, current_user.id)
         result = supabase.table("survey_responses").select("*").eq(
             "session_id", session_id
         ).execute()
@@ -146,10 +174,12 @@ async def get_survey_delta(
             delta=delta,
             improved=improved
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Internal server error"
         )
 
 
@@ -157,10 +187,12 @@ async def get_survey_delta(
 async def get_survey_history(
     user_id: str,
     limit: int = 10,
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_supabase_client),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """사용자의 문진 기록 조회 (최근 10개)"""
     try:
+        require_same_user(user_id, current_user)
         sessions_result = supabase.table("counseling_sessions").select(
             "id, started_at"
         ).eq("user_id", user_id).order("started_at", desc=True).execute()
@@ -192,10 +224,12 @@ async def get_survey_history(
             "status": "success",
             "data": enriched_rows
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Internal server error"
         )
 
 

@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 
 _ISO_DURATION_RE = re.compile(r"^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$")
 
+# YouTube Shorts는 최대 3분(180초)까지 가능하지만, 1~3분의 정상 영상도 함께
+# 걸리는 트레이드오프를 피하기 위해 임계값을 120초로 둔다.
+_SHORTS_MAX_SECONDS = 120
+
 
 def _parse_iso8601_duration(value: str) -> int:
     """Return total seconds for an ISO 8601 duration like 'PT1M30S'.
@@ -49,25 +53,17 @@ if _env_path.exists():
 
 mcp = FastMCP("moodpick-content")
 
-_YT_VIDEOS_LIST_CHUNK = 50
+_YOUTUBE_SEARCH_TIMEOUT_SEC = float(os.getenv("YOUTUBE_SEARCH_TIMEOUT_SEC", "60"))
+_YOUTUBE_VIDEOS_TIMEOUT_SEC = float(os.getenv("YOUTUBE_VIDEOS_TIMEOUT_SEC", "60"))
 
 
-async def _youtube_embeddable_ids(youtube, video_ids: list[str]) -> set[str]:
-    """videos.list(status)로 타 사이트 임베드가 허용된 영상 ID만 반환한다."""
-    allowed: set[str] = set()
-    for i in range(0, len(video_ids), _YT_VIDEOS_LIST_CHUNK):
-        chunk = video_ids[i : i + _YT_VIDEOS_LIST_CHUNK]
-        req = youtube.videos().list(part="status", id=",".join(chunk))
-        resp = await asyncio.to_thread(req.execute)
-        for item in resp.get("items", []):
-            vid = item.get("id")
-            if not vid:
-                continue
-            status = item.get("status") or {}
-            if status.get("embeddable") is False:
-                continue
-            allowed.add(vid)
-    return allowed
+def _is_playable(status: dict) -> bool:
+    """Return whether a YouTube video is safe to embed and play in the app."""
+    if status.get("uploadStatus") != "processed":
+        return False
+    if status.get("privacyStatus") not in ("public", "unlisted"):
+        return False
+    return status.get("embeddable") is True
 
 
 # ── YouTube ─────────────────────────────────────────────────────────────────
@@ -97,8 +93,8 @@ async def search_youtube(
 
     api_key = os.getenv("YOUTUBE_API_KEY")
     if not api_key:
-        logger.warning("search_youtube called without YOUTUBE_API_KEY query=%r", query)
-        return [{"error": "YOUTUBE_API_KEY is not set"}]
+        logger.warning("search_youtube unavailable: missing_api_key query_len=%s", len(query or ""))
+        return [{"error": "youtube_search_unavailable"}]
 
     exclude = set(watched_ids or [])
 
@@ -113,27 +109,32 @@ async def search_youtube(
         maxResults=fetch_count,
         relevanceLanguage="ko",
         safeSearch="strict",
+        videoEmbeddable="true",
+        videoSyndicated="true",
     )
     _t = time.perf_counter()
     try:
-        search_response = await asyncio.to_thread(search_request.execute)
+        search_response = await asyncio.wait_for(
+            asyncio.to_thread(search_request.execute),
+            timeout=_YOUTUBE_SEARCH_TIMEOUT_SEC,
+        )
     except HttpError as e:
         status = getattr(getattr(e, "resp", None), "status", None)
         reason = getattr(getattr(e, "resp", None), "reason", None)
         logger.warning(
-            "YouTube search.list failed query=%r status=%s reason=%s",
-            query,
+            "YouTube search.list failed query_len=%s status=%s reason=%s",
+            len(query or ""),
             status,
             reason,
         )
-        return [{"error": f"youtube_search_failed status={status} reason={reason}"}]
+        return [{"error": "youtube_search_failed"}]
     except Exception as e:
         logger.warning(
-            "YouTube search.list failed query=%r error_type=%s",
-            query,
+            "YouTube search.list failed query_len=%s error_type=%s",
+            len(query or ""),
             type(e).__name__,
         )
-        return [{"error": f"youtube_search_failed error_type={type(e).__name__}"}]
+        return [{"error": "youtube_search_failed"}]
     t_search_list = time.perf_counter() - _t
 
     candidates: list[dict] = []
@@ -149,7 +150,7 @@ async def search_youtube(
         })
 
     if not candidates:
-        logger.warning("YouTube search returned no candidates query=%r", query)
+        logger.warning("YouTube search returned no candidates query_len=%s", len(query or ""))
         return [{"_perf": {
             "search_list_s": round(t_search_list, 3),
             "videos_list_s": None,
@@ -159,11 +160,49 @@ async def search_youtube(
         }}]
 
     if allow_shorts:
-        embed_ok = await _youtube_embeddable_ids(youtube, [c["video_id"] for c in candidates])
-        results = [c for c in candidates if c["video_id"] in embed_ok][:max_results]
+        ids = [c["video_id"] for c in candidates]
+        _t = time.perf_counter()
+        try:
+            status_req = youtube.videos().list(
+                part="status",
+                id=",".join(ids),
+                fields="items(id,status/embeddable,status/uploadStatus,status/privacyStatus)",
+                maxResults=50,
+            )
+            status_resp = await asyncio.wait_for(
+                asyncio.to_thread(status_req.execute),
+                timeout=_YOUTUBE_VIDEOS_TIMEOUT_SEC,
+            )
+            t_status = time.perf_counter() - _t
+        except HttpError as e:
+            http_status = getattr(getattr(e, "resp", None), "status", None)
+            reason = getattr(getattr(e, "resp", None), "reason", None)
+            logger.warning(
+                "videos.list(status) failed for allow_shorts path: status=%s reason=%s",
+                http_status,
+                reason,
+            )
+            t_status = None
+            status_resp = {}
+        except Exception as e:
+            logger.warning(
+                "videos.list(status) failed for allow_shorts path: error_type=%s",
+                type(e).__name__,
+            )
+            t_status = None
+            status_resp = {}
+
+        playable_ids: set[str] = set()
+        for item in status_resp.get("items", []):
+            vid = item.get("id")
+            if vid and _is_playable(item.get("status") or {}):
+                playable_ids.add(vid)
+
+        results = [c for c in candidates if c["video_id"] in playable_ids][:max_results]
+        filtered_shorts = len(candidates) - len(playable_ids)
         logger.info(
-            "YouTube search complete query=%r candidates=%s kept=%s allow_shorts=%s",
-            query,
+            "YouTube search complete query_len=%s candidates=%s kept=%s allow_shorts=%s",
+            len(query or ""),
             len(candidates),
             len(results),
             allow_shorts,
@@ -172,35 +211,38 @@ async def search_youtube(
             *results,
             {"_perf": {
                 "search_list_s": round(t_search_list, 3),
-                "videos_list_s": None,  # duration check skipped
+                "videos_list_s": round(t_status, 3) if t_status is not None else None,
                 "post_s": 0.0,
-                "filtered": 0,
+                "filtered": filtered_shorts,
                 "kept": len(results),
             }},
         ]
 
-    # 2단계: videos.list로 duration 조회해 60초 미만 제외
+    # 2단계: videos.list로 duration + status를 한 번에 조회해 필터링
     ids = [c["video_id"] for c in candidates]
     t_videos_list: float | None = None
     try:
         videos_request = youtube.videos().list(
-            part="contentDetails",
+            part="contentDetails,status",
             id=",".join(ids),
-            fields="items(id,contentDetails/duration)",
+            fields="items(id,contentDetails/duration,status/embeddable,status/uploadStatus,status/privacyStatus)",
             maxResults=50,
         )
         _t = time.perf_counter()
-        videos_response = await asyncio.to_thread(videos_request.execute)
+        videos_response = await asyncio.wait_for(
+            asyncio.to_thread(videos_request.execute),
+            timeout=_YOUTUBE_VIDEOS_TIMEOUT_SEC,
+        )
         t_videos_list = time.perf_counter() - _t
     except HttpError as e:
-        status = getattr(getattr(e, "resp", None), "status", None)
+        http_status = getattr(getattr(e, "resp", None), "status", None)
         reason = getattr(getattr(e, "resp", None), "reason", None)
-        logger.warning("videos.list failed, falling back to unfiltered results: status=%s reason=%s", status, reason)
+        logger.warning("videos.list failed, falling back to unfiltered results: status=%s reason=%s", http_status, reason)
         return [
             *candidates[:max_results],
             {"_perf": {
                 "search_list_s": round(t_search_list, 3),
-                "videos_list_s": f"failed status={status}",
+                "videos_list_s": f"failed status={http_status}",
                 "post_s": 0.0,
                 "filtered": 0,
                 "kept": len(candidates[:max_results]),
@@ -220,43 +262,52 @@ async def search_youtube(
         ]
 
     _t = time.perf_counter()
-    durations: dict[str, int] = {
-        item["id"]: _parse_iso8601_duration(item.get("contentDetails", {}).get("duration", ""))
-        for item in videos_response.get("items", [])
-    }
-
+    candidates_by_id = {c["video_id"]: c for c in candidates}
     results: list[dict] = []
     filtered_out = 0
-    for c in candidates:
-        dur = durations.get(c["video_id"], 0)
-        # 0(파싱 실패·라이브 등)이나 60초 미만은 보수적으로 제외
-        if dur < 60:
+
+    for item in videos_response.get("items", []):
+        vid = item.get("id")
+        if not vid:
+            continue
+
+        if not _is_playable(item.get("status") or {}):
             filtered_out += 1
             continue
-        c["duration_seconds"] = dur
-        results.append(c)
-    t_post = time.perf_counter() - _t
 
-    embed_ok = await _youtube_embeddable_ids(youtube, [r["video_id"] for r in results])
-    embeddable_results = [r for r in results if r["video_id"] in embed_ok][:max_results]
+        dur = _parse_iso8601_duration(item.get("contentDetails", {}).get("duration", ""))
+        # 0(파싱 실패·라이브 등)이나 _SHORTS_MAX_SECONDS 이하는 보수적으로 제외
+        if dur <= _SHORTS_MAX_SECONDS:
+            filtered_out += 1
+            continue
+
+        candidate = candidates_by_id.get(vid)
+        if candidate:
+            candidate["duration_seconds"] = dur
+            results.append(candidate)
+
+    t_post = time.perf_counter() - _t
+    final_results = results[:max_results]
+
     logger.info(
-        "YouTube search complete query=%r candidates=%s duration_ok=%s embeddable_kept=%s allow_shorts=%s",
-        query,
+        "YouTube search complete query_len=%s candidates=%s filtered=%s kept=%s allow_shorts=%s",
+        len(query or ""),
         len(candidates),
-        len(results),
-        len(embeddable_results),
+        filtered_out,
+        len(final_results),
         allow_shorts,
     )
 
-    results.append({"_perf": {
-        "search_list_s": round(t_search_list, 3),
-        "videos_list_s": round(t_videos_list, 3) if t_videos_list is not None else None,
-        "post_s": round(t_post, 3),
-        "filtered": filtered_out + (len(results) - len(embeddable_results)),
-        "kept": len(embeddable_results),
-    }})
-
-    return [*embeddable_results, results[-1]]
+    return [
+        *final_results,
+        {"_perf": {
+            "search_list_s": round(t_search_list, 3),
+            "videos_list_s": round(t_videos_list, 3) if t_videos_list is not None else None,
+            "post_s": round(t_post, 3),
+            "filtered": filtered_out,
+            "kept": len(final_results),
+        }},
+    ]
 
 
 # ── Podcast (RSS 큐레이션) ─────────────────────────────────────────────────

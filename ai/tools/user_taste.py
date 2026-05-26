@@ -18,6 +18,7 @@ from supabase import create_client, Client
 from ai.config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 from ai.tools.embedding_service import get_or_compute_content_embedding, embed_text
 from ai.tools.user_profile import get_user_profile
+from ai.tools.preference_map import content_preference_to_korean, COUNSELING_TONE_LABELS
 
 logger = logging.getLogger(__name__)
 
@@ -129,16 +130,32 @@ async def refresh_user_taste_vector(user_id: str) -> None:
         logger.warning("Failed to refresh user_taste_vector for %s: %s", user_id, e)
 
 async def get_onboarding_vector(user_id: str) -> list[float] | None:
-    """콜드스타트 폴백: 온보딩 정보 임베딩."""
+    """콜드스타트 폴백: 온보딩 정보 임베딩.
+
+    분리된 두 필드(content_preference, counseling_tone)와 concerns를 한국어
+    라벨로 변환해 결합한다. 영문 id를 그대로 임베딩하면 한국어 콘텐츠 벡터와의
+    매칭 품질이 떨어지기 때문.
+    """
     profile = await asyncio.to_thread(get_user_profile, user_id)
     if not profile:
         return None
-        
+
     concerns = ", ".join(profile.get("concerns", []))
-    comfort_style = ", ".join(profile.get("comfort_style", []))
-    
-    if not concerns and not comfort_style:
+    content_kr = content_preference_to_korean(profile.get("content_preference", []) or [])
+    tone_kr = ", ".join(
+        COUNSELING_TONE_LABELS[i]
+        for i in (profile.get("counseling_tone", []) or [])
+        if i in COUNSELING_TONE_LABELS
+    )
+
+    if not concerns and not content_kr and not tone_kr:
         return None
-        
-    source_text = f"고민: {concerns}. 위로 방식 선호: {comfort_style}"
-    return await embed_text(source_text)
+
+    parts = []
+    if concerns:
+        parts.append(f"고민: {concerns}")
+    if content_kr:
+        parts.append(f"콘텐츠 선호: {content_kr}")
+    if tone_kr:
+        parts.append(f"상담 톤 선호: {tone_kr}")
+    return await embed_text(". ".join(parts))

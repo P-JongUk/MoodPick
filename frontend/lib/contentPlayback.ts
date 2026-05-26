@@ -66,7 +66,7 @@ export function youtubeEmbedUrl(
   videoId: string,
   opts?: { autoplay?: boolean }
 ): string {
-  let q = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?rel=0`
+  let q = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?rel=0&enablejsapi=1`
   if (opts?.autoplay) {
     // mute=1: 많은 브라우저가 사용자 제스처 없이는 음소거 자동재생만 허용 — 플레이어에서 음소거 해제 가능
     q += "&autoplay=1&mute=1"
