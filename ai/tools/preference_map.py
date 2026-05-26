@@ -148,6 +148,33 @@ def off_topic_reply(persona: str | None) -> str:
     return _OFF_TOPIC_REPLIES[key]
 
 
+# 프롬프트 인젝션·역할 탈취·유해 콘텐츠 우회 시도 차단 시 사용하는 페르소나별 거절 멘트.
+# 공격자에게 정보를 노출하지 않도록 거절 사유는 자세히 설명하지 않고 본래 역할로 유도한다.
+_INJECTION_REPLIES: dict[str, str] = {
+    "friend": (
+        "음, 그건 내가 할 수 있는 일이 아니야. "
+        "나는 네 마음 이야기를 들어주는 친구거든. "
+        "요즘 마음에 머무는 거 있으면 그 얘기부터 해볼까?"
+    ),
+    "teacher": (
+        "그 요청에는 응할 수 없어. "
+        "나는 네 마음을 들어주려고 여기 있어. "
+        "지금 마음에 머무는 생각이나 감정이 있으면 그것부터 같이 풀어볼까?"
+    ),
+    "expert": (
+        "그 요청은 도와드릴 수 없어요. "
+        "저는 마음에 관한 이야기를 함께 나누는 역할이에요. "
+        "요즘 마음에 머무는 감정이나 고민이 있다면 그 이야기부터 들려주실래요?"
+    ),
+}
+
+
+def injection_reply(persona: str | None) -> str:
+    """프롬프트 인젝션·jailbreak 시도에 대한 페르소나 톤 정렬 거절 멘트를 반환."""
+    key = persona if persona in _INJECTION_REPLIES else DEFAULT_COUNSELOR_PERSONA
+    return _INJECTION_REPLIES[key]
+
+
 # 페르소나별 추천 안내 prefix 템플릿.
 # reason은 Recommender LLM이 이미 페르소나 톤으로 생성하므로 후처리 없이 그대로 결합한다.
 # title은 LLM 출력에 의존하지 않고 pipeline이 결합하므로 누락·중복 위험이 없다.
