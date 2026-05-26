@@ -119,3 +119,30 @@ def counselor_persona_guidance(persona: str | None) -> str:
     """
     key = persona if persona in _PERSONA_BLOCKS else DEFAULT_COUNSELOR_PERSONA
     return _PERSONA_BLOCKS[key]
+
+
+# Orchestrator가 is_off_topic=true로 판정했을 때 Counselor를 거치지 않고 즉시 반환할
+# 페르소나별 거절+상담 유도 멘트.
+_OFF_TOPIC_REPLIES: dict[str, str] = {
+    "friend": (
+        "음~ 그건 내가 잘 도와주기 어려운 주제야. "
+        "나는 네 기분이나 고민을 같이 들어주는 친구거든. "
+        "혹시 요즘 마음에 걸리는 거 있으면 그 얘기부터 해볼까?"
+    ),
+    "teacher": (
+        "그 주제는 내가 도와주기 어려운 영역이야. "
+        "나는 네 마음을 들어주려고 여기 있어. "
+        "혹시 지금 마음에 머무는 생각이나 감정이 있으면 그것부터 같이 풀어볼까?"
+    ),
+    "expert": (
+        "그 주제는 제가 도와드리기 어려운 영역이에요. "
+        "저는 마음에 관한 이야기를 함께 나누려고 있어요. "
+        "요즘 마음 한 켠에 머무는 감정이나 고민이 있다면 그 이야기부터 들려주실래요?"
+    ),
+}
+
+
+def off_topic_reply(persona: str | None) -> str:
+    """off-topic 메시지에 대한 페르소나 톤 정렬 거절 멘트를 반환."""
+    key = persona if persona in _OFF_TOPIC_REPLIES else DEFAULT_COUNSELOR_PERSONA
+    return _OFF_TOPIC_REPLIES[key]
