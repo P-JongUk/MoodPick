@@ -8,6 +8,8 @@ import type { Components } from "react-markdown"
 /** LLM 출력 보정: `**…**`가 strong으로 파싱되도록(별표는 DOM에 남지 않음). */
 function normalizeChatMarkdown(source: string): string {
   let s = source.replace(/\uFF0A/g, "*")
+  // AI가 ```markdown```으로 감싼 응답을 일반 markdown으로 변환
+  s = s.replace(/```(?:markdown|md)\s*\n([\s\S]*?)\n```/gi, "$1")
   s = s.replace(/\*\*([ \t\f\v]+)(?=[^\s*`])/g, "**")
   // `**시작하세요.**깊게`, `**"곡명"**이나`처럼 굵게 끝이 구두점·따옴표 등이고 `**` 뒤에 글자/숫자가 붙으면 CommonMark가 강조로 인식하지 않음 → thin space(U+2009).
   s = s.replace(/(\p{P}\*\*)(?=[\p{L}\p{N}])/gu, "$1\u2009")

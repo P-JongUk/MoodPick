@@ -60,6 +60,7 @@ import {
   X,
   Eye,
   EyeOff,
+  Menu,
 } from "lucide-react"
 import { ChatMarkdown } from "@/components/chat-markdown"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -520,6 +521,7 @@ export function MoodPickDashboard() {
   const [showAutoplayNoticeBanner, setShowAutoplayNoticeBanner] = useState(false)
   const [autoplayNoticeVersion, setAutoplayNoticeVersion] = useState(0)
   const [topCandidates, setTopCandidates] = useState<ContentHistoryItem[]>([])
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState("")
@@ -1254,6 +1256,7 @@ export function MoodPickDashboard() {
   }
 
   const handleSelectNavTab = (itemId: TabType) => {
+    setMobileSidebarOpen(false)
     if (itemId === "counseling" && !isSessionActive) {
       // 이미 사전 문진 중이면 무드 선택을 지우지 않음(같은 탭·네비 재클릭 시 상담 시작이 막히던 문제)
       if (showPreSurvey) {
@@ -2016,8 +2019,71 @@ export function MoodPickDashboard() {
 
   return (
     <div className="flex h-screen bg-background">
+      {mobileSidebarOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <button
+            type="button"
+            aria-label="메뉴 닫기"
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setMobileSidebarOpen(false)}
+          />
+          <aside className="relative z-10 flex h-full w-64 max-w-[85vw] flex-col border-r border-sidebar-border bg-sidebar shadow-2xl">
+            <div className="border-b border-sidebar-border p-6">
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileSidebarOpen(false)
+                  setActiveTab("home")
+                }}
+                className="flex w-full items-center gap-3 rounded-xl text-left transition-colors hover:bg-sidebar-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="홈으로 이동"
+              >
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary">
+                  <Heart className="h-5 w-5 text-primary-foreground" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-sidebar-foreground">무드픽</h1>
+                  <p className="text-xs text-muted-foreground">MoodPick</p>
+                </div>
+              </button>
+            </div>
+
+            <nav className="flex-1 p-4">
+              <ul className="space-y-2">
+                {navItems.map((item) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectNavTab(item.id)}
+                      className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left transition-all duration-200 ${
+                        activeTab === item.id
+                          ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      }`}
+                    >
+                      <item.icon className="h-5 w-5" />
+                      <span>{item.label}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+
+            <div className="border-t border-sidebar-border p-4">
+              <Card className="border-0 bg-secondary/50 shadow-none">
+                <CardContent className="p-4">
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    {sidebarEncouragement}
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          </aside>
+        </div>
+      )}
+
       {/* Sidebar */}
-      <aside className="w-64 bg-sidebar border-r border-sidebar-border flex flex-col">
+      <aside className="hidden w-64 flex-col border-r border-sidebar-border bg-sidebar md:flex">
         <div className="p-6 border-b border-sidebar-border">
           <button
             type="button"
@@ -2079,6 +2145,7 @@ export function MoodPickDashboard() {
               setActiveTab("counseling")
             }}
             flowMessage={syncWarningMessage}
+            onOpenMobileMenu={() => setMobileSidebarOpen(true)}
           />
         )}
         <Dialog open={showStartSessionPrompt} onOpenChange={setShowStartSessionPrompt}>
@@ -2187,6 +2254,7 @@ export function MoodPickDashboard() {
             idleWrapUpBanner={showIdleWrapUpBanner}
             onDismissIdleWrapUp={touchCounselingActivity}
             onRequestEndFromIdle={handleEndSession}
+            onOpenMobileMenu={() => setMobileSidebarOpen(true)}
           />
         )}
         {activeTab === "dashboard" && (
@@ -2205,6 +2273,7 @@ export function MoodPickDashboard() {
             userStats={userStats}
             onCalendarDayClick={handleCalendarDayClick}
             onPlayContentHistory={handlePlayContentFromHistory}
+            onOpenMobileMenu={() => setMobileSidebarOpen(true)}
           />
         )}
         {activeTab === "mypage" && (
@@ -2236,6 +2305,7 @@ export function MoodPickDashboard() {
             setHasCompletedOnboarding={setHasCompletedOnboarding}
             setSurveySave={setSurveySave}
             surveyEnter={surveyEnter}
+            onOpenMobileMenu={() => setMobileSidebarOpen(true)}
           />
         )}
       </main>
@@ -2384,6 +2454,21 @@ export function MoodPickDashboard() {
   )
 }
 
+function MobileMenuButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button
+      type="button"
+      variant="secondary"
+      size="icon"
+      className="h-10 w-10 shrink-0 rounded-xl md:hidden"
+      onClick={onClick}
+      aria-label="메뉴 열기"
+    >
+      <Menu className="h-5 w-5" />
+    </Button>
+  )
+}
+
 function HomeView({
   onStartNewSession,
   userStats,
@@ -2391,6 +2476,7 @@ function HomeView({
   currentContent,
   onPlayRecommended,
   flowMessage,
+  onOpenMobileMenu,
 }: {
   onStartNewSession: () => void
   userStats: UserStats | null
@@ -2398,6 +2484,7 @@ function HomeView({
   currentContent: ContentHistoryItem
   onPlayRecommended: () => void
   flowMessage: string | null
+  onOpenMobileMenu: () => void
 }) {
   const weeklyMoodEmoji = scoreToEmoji(emotionSummary?.average_score ?? 3)
   const homePlayback = resolvePlayback({
@@ -2412,19 +2499,22 @@ function HomeView({
       : null)
 
   return (
-    <div className="p-8 max-w-4xl mx-auto">
+    <div className="mx-auto max-w-4xl p-4 pt-6 md:p-8">
       {/* Greeting Section */}
-      <div className="mb-10">
-        <h2 className="text-3xl font-bold text-foreground mb-3 text-balance">
+      <div className="mb-8 md:mb-10">
+        <div className="flex items-start gap-3">
+          <MobileMenuButton onClick={onOpenMobileMenu} />
+        <h2 className="mb-3 text-2xl font-bold leading-tight text-foreground text-balance md:text-3xl">
           오늘 하루, 당신의 마음은 어떤 색인가요?
         </h2>
+        </div>
         {flowMessage && (
           <p className="mt-3 text-sm text-destructive bg-destructive/10 rounded-xl px-4 py-2">{flowMessage}</p>
         )}
       </div>
 
       {/* Start New Session Button */}
-      <div className="mb-10">
+      <div className="mb-6 md:mb-10">
         <Button
           onClick={onStartNewSession}
           size="lg"
@@ -2437,15 +2527,15 @@ function HomeView({
 
       {/* Today's Care */}
       <Card className="overflow-hidden shadow-lg border-0 bg-card py-0 gap-0">
-        <CardHeader className="bg-primary/5 border-b border-border p-6">
+        <CardHeader className="bg-primary/5 border-b border-border p-4 md:p-6">
           <CardTitle className="text-lg flex items-center gap-2 text-foreground">
             <Heart className="w-5 h-5 text-primary" />
             오늘의 맞춤 위로 콘텐츠
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-6">
-          <div className="flex gap-6">
-            <div className="w-48 h-32 rounded-xl bg-muted flex items-center justify-center overflow-hidden shrink-0">
+        <CardContent className="p-4 md:p-6">
+          <div className="flex flex-col gap-4 md:flex-row md:gap-6">
+            <div className="mx-auto flex h-32 w-48 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-muted md:mx-0">
               {homeThumbUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={homeThumbUrl} alt="" className="w-full h-full object-cover" />
@@ -2458,7 +2548,7 @@ function HomeView({
                 </div>
               )}
             </div>
-            <div className="flex-1 flex flex-col justify-between">
+            <div className="flex min-w-0 flex-1 flex-col justify-between">
               <div>
                 <h3 className="font-semibold text-lg mb-2 text-foreground">
                   {currentContent.content_title}
@@ -2478,23 +2568,23 @@ function HomeView({
       </Card>
 
       {/* Quick Stats */}
-      <div className="grid grid-cols-3 gap-4 mt-8">
+      <div className="mt-8 grid grid-cols-3 gap-3 md:gap-4">
         <Card className="border-0 bg-secondary/50">
-          <CardContent className="p-6 text-center">
-            <p className="text-3xl font-bold text-primary mb-1">{userStats?.weekly_record_days ?? 0}</p>
-            <p className="text-sm text-muted-foreground">이번 주 기록일</p>
+          <CardContent className="p-3 text-center sm:p-6">
+            <p className="mb-1 text-2xl font-bold text-primary sm:text-3xl">{userStats?.weekly_record_days ?? 0}</p>
+            <p className="text-xs text-muted-foreground sm:text-sm">이번 주 기록일</p>
           </CardContent>
         </Card>
         <Card className="border-0 bg-secondary/50">
-          <CardContent className="p-6 text-center">
-            <p className="text-3xl font-bold text-primary mb-1">{userStats?.total_sessions ?? 0}</p>
-            <p className="text-sm text-muted-foreground">총 상담 횟수</p>
+          <CardContent className="p-3 text-center sm:p-6">
+            <p className="mb-1 text-2xl font-bold text-primary sm:text-3xl">{userStats?.total_sessions ?? 0}</p>
+            <p className="text-xs text-muted-foreground sm:text-sm">총 상담 횟수</p>
           </CardContent>
         </Card>
         <Card className="border-0 bg-secondary/50">
-          <CardContent className="p-6 text-center">
-            <p className="text-3xl font-bold text-primary mb-1">{weeklyMoodEmoji}</p>
-            <p className="text-sm text-muted-foreground">주간 평균 기분</p>
+          <CardContent className="p-3 text-center sm:p-6">
+            <p className="mb-1 text-2xl font-bold text-primary sm:text-3xl">{weeklyMoodEmoji}</p>
+            <p className="text-xs text-muted-foreground sm:text-sm">주간 평균 기분</p>
           </CardContent>
         </Card>
       </div>
@@ -3153,6 +3243,7 @@ function CounselingView({
   idleWrapUpBanner = false,
   onDismissIdleWrapUp,
   onRequestEndFromIdle,
+  onOpenMobileMenu,
 }: {
   messages: Message[]
   onSendMessage: (messageText: string) => boolean
@@ -3177,6 +3268,7 @@ function CounselingView({
   idleWrapUpBanner?: boolean
   onDismissIdleWrapUp?: () => void
   onRequestEndFromIdle?: () => void
+  onOpenMobileMenu: () => void
 }) {
   const [contentFullscreen, setContentFullscreen] = useState(false)
   const [draft, setDraft] = useState("")
@@ -3250,12 +3342,13 @@ function CounselingView({
       <div
         className={cn(
           "relative flex min-h-0 min-w-0 flex-1 flex-col",
-          showMediaPanel && "border-r border-border"
+          showMediaPanel && "lg:border-r lg:border-border"
         )}
       >
-        <div className="p-4 border-b border-border bg-card">
+        <div className="border-b border-border bg-card px-4 py-4 md:p-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
+              <MobileMenuButton onClick={onOpenMobileMenu} />
               <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
                 <MessageCircle className="w-5 h-5 text-primary-foreground" />
               </div>
@@ -3264,10 +3357,24 @@ function CounselingView({
                 <p className="text-xs text-muted-foreground">AI 심리 상담</p>
               </div>
             </div>
-            <Button onClick={onStartNewSession} variant="outline" size="sm" className="rounded-lg">
-              <Plus className="w-4 h-4 mr-1" />
-              새 채팅
-            </Button>
+            <div className="flex items-center gap-2">
+              {showMediaPanel && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="rounded-lg lg:hidden"
+                  onClick={() => setContentFullscreen(true)}
+                >
+                  <Maximize2 className="h-4 w-4 sm:mr-1" />
+                  <span className="hidden sm:inline">콘텐츠</span>
+                </Button>
+              )}
+              <Button onClick={onStartNewSession} variant="outline" size="sm" className="rounded-lg">
+                <Plus className="w-4 h-4 mr-1" />
+                새 채팅
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -3351,8 +3458,10 @@ function CounselingView({
       {showMediaPanel && (
         <div
           className={cn(
-            contentFullscreen ? "fixed inset-0 z-50 bg-background p-4 sm:p-6" : "w-96 shrink-0 bg-card p-6 min-h-0",
-            "overflow-y-auto flex flex-col"
+            contentFullscreen
+              ? "fixed inset-0 z-50 bg-background p-4 sm:p-6"
+              : "hidden w-96 shrink-0 bg-card p-6 lg:flex",
+            "min-h-0 flex-col overflow-y-auto"
           )}
           role={contentFullscreen ? "dialog" : undefined}
           aria-modal={contentFullscreen ? "true" : undefined}
@@ -3386,6 +3495,7 @@ function DashboardView({
   userStats,
   onCalendarDayClick,
   onPlayContentHistory,
+  onOpenMobileMenu,
 }: {
   calendarYear: number
   currentMonth: number
@@ -3401,17 +3511,21 @@ function DashboardView({
   userStats: UserStats | null
   onCalendarDayClick: (day: number) => void
   onPlayContentHistory: (item: ContentHistoryItem) => void
+  onOpenMobileMenu: () => void
 }) {
   return (
-    <div className="p-8 max-w-6xl mx-auto">
+    <div className="mx-auto max-w-6xl p-4 pt-6 md:p-8">
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-foreground mb-2">나의 감정 기록</h2>
+        <div className="flex items-start gap-3">
+          <MobileMenuButton onClick={onOpenMobileMenu} />
+          <h2 className="mb-2 text-2xl font-bold leading-tight text-foreground">나의 감정 기록</h2>
+        </div>
         <p className="text-muted-foreground">
           당신의 감정 여정을 한눈에 확인하세요
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+      <div className="mb-8 grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
         <Card className="border-0 bg-secondary/40">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">총 상담 세션</p>
@@ -3448,7 +3562,7 @@ function DashboardView({
         </Card>
       </div>
 
-      <div className="grid grid-cols-2 gap-6 mb-8">
+      <div className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Calendar */}
         <Card className="border-0 shadow-lg">
           <CardHeader className="pb-2">
@@ -3638,7 +3752,7 @@ function DashboardView({
           <CardTitle className="text-lg">상담 기록</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {sessionHistory.map((session) => (
               <Card key={session.sessionId} className="border border-border bg-muted/30">
                 <CardContent className="p-4">
@@ -4621,7 +4735,8 @@ function MyPageView({
   exportMyDataMessage,
   setHasCompletedOnboarding,
   setSurveySave,
-  surveyEnter
+  surveyEnter,
+  onOpenMobileMenu,
 }: {
   autoPlayEnabled: boolean
   setAutoPlayEnabled: (value: boolean) => void
@@ -4650,6 +4765,7 @@ function MyPageView({
   setHasCompletedOnboarding: (value: boolean)=>void
   setSurveySave: (value: boolean)=>void
   surveyEnter: boolean
+  onOpenMobileMenu: () => void
 }) {
   const [profileOpen, setProfileOpen] = useState(false)
   const [draftDisplayName, setDraftDisplayName] = useState("")
@@ -4670,9 +4786,12 @@ function MyPageView({
   }
 
   return (
-    <div className="p-8 max-w-3xl mx-auto">
+    <div className="mx-auto max-w-3xl p-4 pt-6 md:p-8">
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-foreground mb-2">마이페이지</h2>
+        <div className="flex items-start gap-3">
+          <MobileMenuButton onClick={onOpenMobileMenu} />
+          <h2 className="mb-2 text-2xl font-bold leading-tight text-foreground">마이페이지</h2>
+        </div>
         <p className="text-muted-foreground">계정 설정 및 환경설정을 관리하세요</p>
       </div>
 
