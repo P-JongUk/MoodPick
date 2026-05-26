@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState, memo, useCallback } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, memo, useCallback } from "react"
 import { createPortal } from "react-dom"
 import { useAuth } from "@/components/auth-provider"
 import { getSupabaseClient } from "@/lib/supabaseClient"
@@ -85,6 +85,7 @@ import {
 } from "recharts"
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -2081,48 +2082,84 @@ export function MoodPickDashboard() {
           />
         )}
         <Dialog open={showStartSessionPrompt} onOpenChange={setShowStartSessionPrompt}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>상담을 시작할까요?</DialogTitle>
-              <DialogDescription>
-                메시지를 보내기 전에 짧은 사전 문진을 먼저 완료해 주세요.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setShowStartSessionPrompt(false)}
-              >
-                닫기
-              </Button>
-              <Button type="button" onClick={handleStartNewSession}>
-                상담 시작하기
-              </Button>
-            </DialogFooter>
+          <DialogContent
+            showCloseButton={false}
+            className="w-auto max-w-none gap-0 overflow-visible border-0 bg-transparent p-0 shadow-none"
+          >
+            <ScaledFrame frameWidth={448}>
+              <Card className="relative w-[28rem] border-0 shadow-2xl">
+                <DialogClose asChild>
+                  <button
+                    type="button"
+                    className="absolute top-4 right-4 rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    aria-label="닫기"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </DialogClose>
+                <CardContent className="p-8">
+                  <DialogHeader>
+                    <DialogTitle>상담을 시작할까요?</DialogTitle>
+                    <DialogDescription>
+                      메시지를 보내기 전에 짧은 사전 문진을 먼저 완료해 주세요.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogFooter className="mt-6">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setShowStartSessionPrompt(false)}
+                    >
+                      닫기
+                    </Button>
+                    <Button type="button" onClick={handleStartNewSession}>
+                      상담 시작하기
+                    </Button>
+                  </DialogFooter>
+                </CardContent>
+              </Card>
+            </ScaledFrame>
           </DialogContent>
         </Dialog>
         <Dialog open={showResumeSessionDialog} onOpenChange={handleResumeDialogOpenChange}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>진행 중인 상담이 있어요</DialogTitle>
-              <DialogDescription>
-                이전에 시작한 상담을 이어서 진행할까요, 아니면 새로 시작할까요?
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter className="flex-col gap-2 sm:flex-col">
-              <Button type="button" className="w-full rounded-xl" onClick={() => void handleResumeSessionConfirm()}>
-                이전 상담 이어하기
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                className="w-full rounded-xl"
-                onClick={() => void handleResumeSessionNewStart()}
-              >
-                새로 시작하기
-              </Button>
-            </DialogFooter>
+          <DialogContent
+            showCloseButton={false}
+            className="w-auto max-w-none gap-0 overflow-visible border-0 bg-transparent p-0 shadow-none"
+          >
+            <ScaledFrame frameWidth={448}>
+              <Card className="relative w-[28rem] border-0 shadow-2xl">
+                <DialogClose asChild>
+                  <button
+                    type="button"
+                    className="absolute top-4 right-4 rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    aria-label="닫기"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </DialogClose>
+                <CardContent className="p-8">
+                  <DialogHeader>
+                    <DialogTitle>진행 중인 상담이 있어요</DialogTitle>
+                    <DialogDescription>
+                      이전에 시작한 상담을 이어서 진행할까요, 아니면 새로 시작할까요?
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogFooter className="mt-6 flex-col gap-2 sm:flex-col">
+                    <Button type="button" className="w-full rounded-xl" onClick={() => void handleResumeSessionConfirm()}>
+                      이전 상담 이어하기
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="w-full rounded-xl"
+                      onClick={() => void handleResumeSessionNewStart()}
+                    >
+                      새로 시작하기
+                    </Button>
+                  </DialogFooter>
+                </CardContent>
+              </Card>
+            </ScaledFrame>
           </DialogContent>
         </Dialog>
         {activeTab === "counseling" && (
@@ -3988,10 +4025,10 @@ function OnboardingScreen({
   }
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+    <div className="min-h-screen bg-background flex items-start justify-center overflow-y-auto p-4 py-6 sm:items-center">
       <div className="w-full max-w-lg">
-        <Card className="border-0 shadow-2xl">
-          <CardContent className="p-8">
+        <Card className="max-h-[calc(100dvh-2rem)] overflow-y-auto border-0 shadow-2xl">
+          <CardContent className="p-4 sm:p-8">
             {/* Logo */}
             <div className="text-center mb-6">
               <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4">
@@ -4283,10 +4320,10 @@ function SurveyScreen({
         : "제출하기"
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+    <div className="min-h-screen bg-background flex items-start justify-center overflow-y-auto p-4 py-6 sm:items-center">
       <div className="w-full max-w-2xl">
-        <Card className="min-h-[680px] border-0 shadow-2xl">
-          <CardContent className="flex min-h-[680px] flex-col p-6 sm:p-8">
+        <Card className="min-h-[560px] max-h-[calc(100dvh-2rem)] overflow-y-auto border-0 shadow-2xl sm:min-h-[680px]">
+          <CardContent className="flex min-h-[560px] flex-col p-4 sm:min-h-[680px] sm:p-8">
             <div className="mb-5 text-center">
               <div className="mx-auto mb-4 flex h-14 w-full max-w-sm items-center justify-evenly overflow-hidden rounded-2xl bg-primary">
                 {surveyOrder.map((type) => {
@@ -4410,10 +4447,114 @@ function SurveyScreen({
   )
 }
 
+function ScaledFrame({
+  children,
+  frameWidth = 512,
+}: {
+  children: React.ReactNode
+  frameWidth?: number
+}) {
+  const frameRef = useRef<HTMLDivElement | null>(null)
+  const [frameHeight, setFrameHeight] = useState(0)
+  const [scale, setScale] = useState(1)
+
+  const updateScale = useCallback(() => {
+    const frame = frameRef.current
+    if (!frame || typeof window === "undefined") return
+
+    const nextHeight = frame.offsetHeight
+    if (nextHeight <= 0) return
+
+    const viewport = window.visualViewport
+    const viewportWidth = viewport?.width ?? window.innerWidth
+    const viewportHeight = viewport?.height ?? window.innerHeight
+    const gutter = 32
+    const nextScale = Math.min(
+      (viewportWidth - gutter) / frameWidth,
+      (viewportHeight - gutter) / nextHeight,
+      1
+    )
+
+    setFrameHeight(nextHeight)
+    setScale(Number.isFinite(nextScale) && nextScale > 0 ? nextScale : 1)
+  }, [frameWidth])
+
+  useLayoutEffect(() => {
+    if (typeof window === "undefined") return
+
+    let rafId = 0
+    const scheduleUpdate = () => {
+      window.cancelAnimationFrame(rafId)
+      rafId = window.requestAnimationFrame(updateScale)
+    }
+
+    scheduleUpdate()
+
+    const frame = frameRef.current
+    const resizeObserver = frame ? new ResizeObserver(scheduleUpdate) : null
+    if (frame && resizeObserver) {
+      resizeObserver.observe(frame)
+    }
+
+    window.addEventListener("resize", scheduleUpdate)
+    window.visualViewport?.addEventListener("resize", scheduleUpdate)
+
+    return () => {
+      window.cancelAnimationFrame(rafId)
+      resizeObserver?.disconnect()
+      window.removeEventListener("resize", scheduleUpdate)
+      window.visualViewport?.removeEventListener("resize", scheduleUpdate)
+    }
+  }, [updateScale])
+
+  const scaledWidth = frameWidth * scale
+  const scaledHeight = frameHeight > 0 ? frameHeight * scale : undefined
+
+  return (
+    <div
+      className="relative shrink-0"
+      style={{
+        width: frameHeight > 0 ? `${scaledWidth}px` : `${frameWidth}px`,
+        height: scaledHeight ? `${scaledHeight}px` : undefined,
+      }}
+    >
+      <div
+        ref={frameRef}
+        className={cn(frameHeight > 0 && "absolute left-0 top-0")}
+        style={{
+          width: `${frameWidth}px`,
+          transform: frameHeight > 0 ? `scale(${scale})` : undefined,
+          transformOrigin: "top left",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function ScaledOverlay({
+  children,
+  className,
+  frameWidth = 512,
+}: {
+  children: React.ReactNode
+  className?: string
+  frameWidth?: number
+}) {
+  return (
+    <div className={cn("fixed inset-0 overflow-auto bg-background/95 backdrop-blur-sm", className)}>
+      <div className="flex min-h-full items-center justify-center p-4">
+        <ScaledFrame frameWidth={frameWidth}>{children}</ScaledFrame>
+      </div>
+    </div>
+  )
+}
+
 function Introduce({introduceCheck}: {introduceCheck: () => void}){
   return (
-    <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex items-center justify-center p-4">
-      <Card className="w-full max-w-lg border-0 shadow-2xl">
+    <ScaledOverlay className="z-50">
+      <Card className="w-[32rem] border-0 shadow-2xl">
         <CardContent className="p-8">
           {/* Logo */}
           <div className="text-center mb-8">
@@ -4449,7 +4590,7 @@ function Introduce({introduceCheck}: {introduceCheck: () => void}){
           </Button>
         </CardContent>
       </Card>
-    </div>
+    </ScaledOverlay>
   )
 }
 
@@ -4785,8 +4926,8 @@ function PreSurveyOverlay({
   showCounselingTabGateHint?: boolean
 }) {
   return (
-    <div className="fixed inset-0 z-[550] bg-background/95 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-      <Card className="relative z-10 w-full max-w-lg border-0 shadow-2xl pointer-events-auto my-8">
+    <ScaledOverlay className="z-[550]">
+      <Card className="relative z-10 w-[32rem] border-0 shadow-2xl pointer-events-auto">
         <CardContent className="p-8">
           {/* Close Button */}
           <button
@@ -4882,7 +5023,7 @@ function PreSurveyOverlay({
           </Button>
         </CardContent>
       </Card>
-    </div>
+    </ScaledOverlay>
   )
 }
 
@@ -4898,8 +5039,8 @@ function PostSurveyOverlay({
   onComplete: () => void | Promise<void>
 }) {
   return (
-    <div className="fixed inset-0 z-[550] bg-background/95 backdrop-blur-sm flex items-center justify-center p-4">
-      <Card className="relative z-10 w-full max-w-lg border-0 shadow-2xl pointer-events-auto">
+    <ScaledOverlay className="z-[550]">
+      <Card className="relative z-10 w-[32rem] border-0 shadow-2xl pointer-events-auto">
         <CardContent className="p-8">
           {/* Logo */}
           <div className="text-center mb-8">
@@ -4952,6 +5093,6 @@ function PostSurveyOverlay({
           </Button>
         </CardContent>
       </Card>
-    </div>
+    </ScaledOverlay>
   )
 }
