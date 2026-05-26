@@ -19,7 +19,7 @@ from ai.agents.orchestrator import orchestrator_agent
 from ai.agents.counselor import counselor_agent, counselor_agent_stream
 from ai.agents.content_recommender import content_recommender_agent
 from ai.tools.content_history import _get_supabase
-from ai.tools.preference_map import off_topic_reply, recommendation_suffix
+from ai.tools.preference_map import injection_reply, off_topic_reply, recommendation_suffix
 from ai.tools.session_meditation_format import (
     get_session_meditation_audio_format,
     set_session_meditation_audio_format,
@@ -71,6 +71,13 @@ async def run_counseling_pipeline(
     if state.is_crisis:
         state.response = load_crisis_response()
         logger.info("[PERF] total(crisis)=%.3fs", time.perf_counter() - _perf_t0)
+        return state
+
+    # Injection/jailbreak 시도: off_topic보다 우선 차단 (모호하면 차단 정책)
+    if state.is_injection:
+        state.response = injection_reply(state.persona)
+        state.needs_recommendation = False
+        logger.info("[PERF] total(injection)=%.3fs", time.perf_counter() - _perf_t0)
         return state
 
     if state.is_off_topic:
@@ -251,6 +258,20 @@ async def run_counseling_pipeline_stream(
                 "fallback": False,
             }
             logger.info("[PERF] stream.total(crisis)=%.3fs", time.perf_counter() - _perf_t0)
+            return
+
+        if state.is_injection:
+            inj_text = injection_reply(state.persona)
+            state.response = inj_text
+            yield {"type": "chunk", "text": inj_text}
+            yield {
+                "type": "done",
+                "is_crisis": False,
+                "emotion": state.emotion_score,
+                "recommended_content": None,
+                "fallback": False,
+            }
+            logger.info("[PERF] stream.total(injection)=%.3fs", time.perf_counter() - _perf_t0)
             return
 
         if state.is_off_topic:

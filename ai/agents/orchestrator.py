@@ -50,7 +50,7 @@ async def orchestrator_agent(state: CounselingState) -> CounselingState:
     response = await client.chat.completions.create(
         model=_MODEL,
         temperature=0,
-        max_tokens=150,
+        max_tokens=200,
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": system_prompt},
@@ -72,6 +72,8 @@ async def orchestrator_agent(state: CounselingState) -> CounselingState:
         )
         result = {
             "is_crisis": False,
+            "is_off_topic": False,
+            "is_injection": False,
             "intent": "상담",
             "needs_recommendation": False,
             "content_format": "unspecified",
@@ -80,6 +82,7 @@ async def orchestrator_agent(state: CounselingState) -> CounselingState:
 
     state.is_crisis = bool(result.get("is_crisis", False))
     state.is_off_topic = bool(result.get("is_off_topic", False))
+    state.is_injection = bool(result.get("is_injection", False))
     state.intent = result.get("intent", "상담")
     state.needs_recommendation = bool(result.get("needs_recommendation", False))
 
@@ -94,13 +97,18 @@ async def orchestrator_agent(state: CounselingState) -> CounselingState:
     else:
         state.content_query_hints = []
 
-    # Safety: crisis overrides recommendation and off-topic
+    # Safety: crisis overrides recommendation, off-topic, and injection
     if state.is_crisis:
         state.needs_recommendation = False
         state.is_off_topic = False
+        state.is_injection = False
 
     # Off-topic 주제에는 추천도 불필요
     if state.is_off_topic:
+        state.needs_recommendation = False
+
+    # Injection/jailbreak 시도에는 추천 차단
+    if state.is_injection:
         state.needs_recommendation = False
 
     return state
