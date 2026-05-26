@@ -28,9 +28,7 @@ import {
   getReminderPreference,
   upsertReminderPreference,
   upsertUserProfile,
-  getContentRecommendations,
   type DailySummary,
-  type ContentMediaPreferenceQuery,
   type SessionResponse,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -103,6 +101,8 @@ import {
 
 const REMINDER_FEATURE_ENABLED = process.env.NEXT_PUBLIC_REMINDER_ENABLED === "true"
 const DEMO_HIDE_ONBOARDING = false
+const YOUTUBE_AUTOPLAY_NOTICE =
+  "추천 영상이 자동재생 중이에요. 소리를 들으려면 플레이어에서 음소거를 해제해 주세요."
 
 type TabType = "home" | "counseling" | "dashboard" | "mypage"
 
@@ -115,6 +115,11 @@ interface RecommendedContent {
   thumbnail?: string
   reason?: string
   search_query?: string
+  alternative_links?: Array<{
+    title?: string
+    url?: string
+    video_id?: string
+  }>
 }
 
 interface Message {
@@ -225,6 +230,39 @@ function mapContentHistoryRow(row: Record<string, unknown>): ContentHistoryItem 
   }
 }
 
+function mapRecommendedAlternativeLinks(
+  links: RecommendedContent["alternative_links"],
+  sessionId: string | null
+): ContentHistoryItem[] {
+  if (!links?.length) return []
+
+  const queue: ContentHistoryItem[] = []
+
+  links.forEach((link, index) => {
+    const rawVideoId = typeof link?.video_id === "string" ? link.video_id.trim() : ""
+    const rawUrl = typeof link?.url === "string" ? link.url.trim() : ""
+    const title = typeof link?.title === "string" ? link.title.trim() : ""
+    const contentId = rawVideoId || rawUrl
+    if (!contentId || !title) return
+
+    const isPodcast = contentId.toLowerCase().startsWith("podcast:")
+    const thumbnail = !isPodcast && rawVideoId ? youtubeThumbnailUrl(rawVideoId) : null
+
+    queue.push({
+      id: `alt-${contentId}-${index}`,
+      content_id: contentId,
+      content_title: title,
+      thumbnail_url: thumbnail,
+      media_provider: isPodcast ? "podcast" : "youtube",
+      media_url: rawUrl || null,
+      watched_at: new Date().toISOString(),
+      session_id: sessionId,
+    })
+  })
+
+  return queue
+}
+
 const sessionContentFeedbackStorageKey = (sessionId: string) =>
   `moodpick:sessionContentFeedbackIds:${sessionId}`
 
@@ -268,12 +306,6 @@ function clearSessionContentFeedbackStorage(sessionId: string): void {
   }
 }
 
-function mediaPreferenceToQueryParam(pref: string): ContentMediaPreferenceQuery {
-  if (pref === "youtube") return "youtube"
-  if (pref === "podcast") return "podcast"
-  return "all"
-}
-
 const scoreToEmoji = (score: number) => {
   if (score >= 4.5) return "😊"
   if (score >= 3.5) return "🙂"
@@ -308,16 +340,6 @@ const SURVEY_MOOD_OPTIONS = [
 /** 상담 탭에서 일정 시간 무응답 시 마무리 권유 배너 */
 const COUNSELING_IDLE_PROMPT_MS = 15 * 60 * 1000
 
-/** API 전송용 접미사 — 백엔드 `counseling.py`와 동일 문자열 */
-const COUNSELING_USER_MARKDOWN_SUFFIX = "\n\n마크다운 형식으로 제공해."
-
-function stripCounselingUserMarkdownSuffix(text: string): string {
-  if (text.endsWith(COUNSELING_USER_MARKDOWN_SUFFIX)) {
-    return text.slice(0, -COUNSELING_USER_MARKDOWN_SUFFIX.length)
-  }
-  return text
-}
-
 function formatHistoryMessageTime(iso: string | undefined): string {
   if (!iso) return ""
   try {
@@ -336,8 +358,7 @@ function mapCounselingHistoryToMessages(
 ): Message[] {
   return rows.map((row, index) => {
     const sender: "user" | "ai" = row.role === "user" ? "user" : "ai"
-    const raw = typeof row.content === "string" ? row.content : ""
-    const text = sender === "user" ? stripCounselingUserMarkdownSuffix(raw) : raw
+    const text = typeof row.content === "string" ? row.content : ""
     return {
       id: index + 1,
       sender,
@@ -483,6 +504,9 @@ export function MoodPickDashboard() {
   const [contentHistory, setContentHistory] = useState<ContentHistoryItem[]>([])
   const [currentContent, setCurrentContent] = useState<ContentHistoryItem>(defaultContentItem)
   const [recommendedQueue, setRecommendedQueue] = useState<ContentHistoryItem[]>([])
+  const [autoplayContentId, setAutoplayContentId] = useState<string | null>(null)
+  const [showAutoplayNoticeBanner, setShowAutoplayNoticeBanner] = useState(false)
+  const [autoplayNoticeVersion, setAutoplayNoticeVersion] = useState(0)
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState("")
@@ -546,10 +570,42 @@ export function MoodPickDashboard() {
     setShowIdleWrapUpBanner(false)
   }, [])
 
-  const resetCounselingState = () => {
+  const clearCounselingContentState = useCallback(() => {
+    setCurrentContent(defaultContentItem)
+    setRecommendedQueue([])
+    setIsPlaying(false)
+    setAutoplayContentId(null)
+  }, [])
+
+  const applyHistoricalPrimaryContentState = useCallback((items: ContentHistoryItem[]) => {
+    const first = items[0] ?? defaultContentItem
+    setCurrentContent(first)
+    setRecommendedQueue([])
+    setIsPlaying(false)
+    setAutoplayContentId(null)
+  }, [])
+
+  const resetCounselingContentState = useCallback(
+    (items?: ContentHistoryItem[]) => {
+      applyHistoricalPrimaryContentState(items ?? contentHistory)
+    },
+    [applyHistoricalPrimaryContentState, contentHistory]
+  )
+
+  const handleSelectRecommendedContent = useCallback((content: ContentHistoryItem) => {
+    setAutoplayContentId(null)
+    setCurrentContent(content)
+  }, [])
+
+  const resetCounselingState = (options?: { clearContent?: boolean }) => {
     setDashboardHistoryFullscreenOpen(false)
     setActiveTab("home")
     setMessages([])
+    if (options?.clearContent) {
+      clearCounselingContentState()
+    } else {
+      resetCounselingContentState()
+    }
     setMediaFeedback(null)
     setContentFeedbackSubmitting(false)
     if (currentSessionId) {
@@ -584,7 +640,7 @@ export function MoodPickDashboard() {
     const currentUserId = user?.id ?? null
 
     if (previousUserId !== currentUserId) {
-      resetCounselingState()
+      resetCounselingState({ clearContent: true })
       previousUserIdRef.current = currentUserId
       lastResumePromptForSessionIdRef.current = null
     }
@@ -625,6 +681,20 @@ export function MoodPickDashboard() {
       window.removeEventListener("keydown", onKey)
     }
   }, [dashboardHistoryFullscreenOpen])
+
+  useEffect(() => {
+    if (activeTab === "counseling" && isSessionActive && !showPreSurvey && !showPostSurvey) return
+    setAutoplayContentId(null)
+  }, [activeTab, isSessionActive, showPreSurvey, showPostSurvey])
+
+  useEffect(() => {
+    if (autoplayNoticeVersion === 0) return
+    setShowAutoplayNoticeBanner(true)
+    const timeoutId = window.setTimeout(() => {
+      setShowAutoplayNoticeBanner(false)
+    }, 6500)
+    return () => window.clearTimeout(timeoutId)
+  }, [autoplayNoticeVersion])
 
   useEffect(() => {
     counselingActiveSessionIdRef.current =
@@ -784,21 +854,18 @@ export function MoodPickDashboard() {
         setCalendarMoods({})
         setSessionHistory([])
         setContentHistory([])
-        setCurrentContent(defaultContentItem)
-        setRecommendedQueue([])
+        clearCounselingContentState()
         setProfileDisplayName(null)
         return
       }
 
       try {
-        const mediaQuery = mediaPreferenceToQueryParam(mediaPreference)
         const [
           statsResult,
           emotionRecordsResult,
           summaryResult,
           sessionsResult,
           contentsResult,
-          recsResult,
           profileResult,
         ] = await Promise.allSettled([
           getUserStats(user.id),
@@ -806,7 +873,6 @@ export function MoodPickDashboard() {
           getEmotionSummary(user.id, 7),
           getUserSessions(user.id, 10),
           getContentHistory(user.id, 20),
-          getContentRecommendations(user.id, { limit: 10, media: mediaQuery }),
           getUserProfile(user.id),
         ])
 
@@ -890,26 +956,14 @@ export function MoodPickDashboard() {
         )
 
         const contentsRaw = contentsResult.status === "fulfilled" ? contentsResult.value : []
-        const recsRaw = recsResult.status === "fulfilled" ? recsResult.value : []
         const sessionsRaw = sessionsResult.status === "fulfilled" ? sessionsResult.value : null
 
         const contentItems = ((contentsRaw as unknown[]) ?? []).map((r) =>
           mapContentHistoryRow(r as Record<string, unknown>)
         )
         setContentHistory(contentItems)
-        const first = contentItems[0] ?? defaultContentItem
-        setCurrentContent(first)
-
-        const recItems = ((recsRaw as unknown[]) ?? []).map((r) =>
-          mapContentHistoryRow(r as Record<string, unknown>)
-        )
-        const fromApi = recItems.filter((c) => c.content_id !== first.content_id).slice(0, 6)
-        if (fromApi.length > 0) {
-          setRecommendedQueue(fromApi)
-        } else {
-          setRecommendedQueue(
-            contentItems.slice(1, 4).filter((c) => c.content_id !== first.content_id)
-          )
+        if (!counselingActiveSessionIdRef.current) {
+          applyHistoricalPrimaryContentState(contentItems)
         }
 
         const contentBySession = new Map<string, string>()
@@ -955,7 +1009,7 @@ export function MoodPickDashboard() {
     }
 
     void loadDashboardData()
-  }, [currentMonth, calendarYear, user?.id, mediaPreference, dashboardRefreshKey])
+  }, [currentMonth, calendarYear, user?.id, mediaPreference, dashboardRefreshKey, applyHistoricalPrimaryContentState, clearCounselingContentState])
 
   useEffect(() => {
     const loadReminderPreference = async () => {
@@ -1149,7 +1203,7 @@ export function MoodPickDashboard() {
     setSignupBirthYear("")
     setLoginPassword("")
     setAuthSuccessMessage(null)
-    resetCounselingState()
+    resetCounselingState({ clearContent: true })
   }
 
   const handleSocialLogin = async (provider: "google" | "kakao") => {
@@ -1167,6 +1221,7 @@ export function MoodPickDashboard() {
     setShowStartSessionPrompt(false)
     setSyncWarningMessage(null)
     setPreSurveyMood(null)
+    resetCounselingContentState()
     setShowPreSurvey(true)
   }
 
@@ -1318,6 +1373,7 @@ export function MoodPickDashboard() {
       setPostSurveyMood(null)
       setPreSurveyMood(null)
       setMediaFeedback(null)
+      resetCounselingContentState()
       if (shouldRefreshDashboard) {
         setDashboardRefreshKey((value) => value + 1)
       }
@@ -1334,6 +1390,7 @@ export function MoodPickDashboard() {
     }
     setShowResumeSessionDialog(false)
     setPendingResumeSession(null)
+    setAutoplayContentId(null)
   }
 
   const handleResumeDialogOpenChange = (open: boolean) => {
@@ -1467,7 +1524,7 @@ export function MoodPickDashboard() {
       try {
         const response = await sendCounselingMessage(
           user.id,
-          trimmedMessage + COUNSELING_USER_MARKDOWN_SUFFIX,
+          trimmedMessage,
           currentSessionId
         )
 
@@ -1478,21 +1535,20 @@ export function MoodPickDashboard() {
         }
 
         const recommended = response?.recommended_content ?? null
+        const responseTimestamp = new Date().toLocaleTimeString("ko-KR", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        })
         const aiResponse: Message = {
           id: Date.now() + 1,
           sender: "ai",
           text:
             response?.message ??
             "메시지를 받았어요. 현재는 AI 연동 전 단계라 기본 상담 응답으로 안내해드리고 있어요.",
-          timestamp: new Date().toLocaleTimeString("ko-KR", {
-            hour: "numeric",
-            minute: "2-digit",
-            hour12: true,
-          }),
+          timestamp: responseTimestamp,
           recommendedContent: recommended,
         }
-
-        setMessages((prev) => [...prev, aiResponse])
 
         touchCounselingActivity()
 
@@ -1507,6 +1563,10 @@ export function MoodPickDashboard() {
         if (recommended?.video_id) {
           const contentId = recommended.video_id.toString()
           const isPodcast = contentId.toLowerCase().startsWith("podcast:")
+          const nextQueue = mapRecommendedAlternativeLinks(
+            recommended.alternative_links,
+            currentSessionId
+          ).filter((item) => item.content_id !== contentId)
 
           setCurrentContent({
             id: contentId,
@@ -1518,7 +1578,18 @@ export function MoodPickDashboard() {
             watched_at: new Date().toISOString(),
             session_id: currentSessionId,
           })
+          setRecommendedQueue(nextQueue)
+          setAutoplayContentId(contentId)
           setIsPlaying(true)
+          setMessages((prev) => [...prev, aiResponse])
+          if (autoPlayEnabled && !isPodcast) {
+            setAutoplayNoticeVersion((prev) => prev + 1)
+          }
+        } else if (recommended) {
+          setRecommendedQueue([])
+          setMessages((prev) => [...prev, aiResponse])
+        } else {
+          setMessages((prev) => [...prev, aiResponse])
         }
       } catch (error) {
         const errorMessage =
@@ -1657,6 +1728,7 @@ export function MoodPickDashboard() {
       media_provider: item.media_provider,
       media_url: item.media_url,
     })
+    setAutoplayContentId(null)
     if (playback.kind === "none") {
       const url = item.media_url?.trim()
       if (url && /^https?:\/\//i.test(url)) {
@@ -1940,6 +2012,7 @@ export function MoodPickDashboard() {
             isPlaying={isPlaying}
             setIsPlaying={setIsPlaying}
             autoPlayEnabled={autoPlayEnabled}
+            autoplayContentId={autoplayContentId}
             contentFeedbackSubmitting={contentFeedbackSubmitting}
             contentFeedbackComplete={contentFeedbackComplete}
             mediaFeedback={mediaFeedback}
@@ -1947,12 +2020,14 @@ export function MoodPickDashboard() {
             onEndSession={handleEndSession}
             onStartNewSession={handleStartNewSession}
             isSessionActive={isSessionActive}
+            showMediaPanel={isSessionActive && !showPreSurvey && !showPostSurvey}
             syncWarningMessage={syncWarningMessage}
+            showAutoplayNoticeBanner={showAutoplayNoticeBanner}
             currentContent={currentContent}
             recommendedQueue={recommendedQueue}
-            onSelectRecommendedContent={setCurrentContent}
+            onSelectRecommendedContent={handleSelectRecommendedContent}
             idleWrapUpBanner={showIdleWrapUpBanner}
-            onDismissIdleWrapUp={() => setShowIdleWrapUpBanner(false)}
+            onDismissIdleWrapUp={touchCounselingActivity}
             onRequestEndFromIdle={handleEndSession}
           />
         )}
@@ -2053,12 +2128,13 @@ export function MoodPickDashboard() {
             isPlaying={isPlaying}
             setIsPlaying={setIsPlaying}
             autoPlayEnabled={autoPlayEnabled}
+            autoplayContentId={null}
             contentFeedbackSubmitting={contentFeedbackSubmitting}
             contentFeedbackComplete={contentFeedbackComplete}
             mediaFeedback={mediaFeedback}
             onMediaFeedbackChange={handleMediaFeedbackChange}
             syncWarningMessage={syncWarningMessage}
-            onSelectRecommendedContent={setCurrentContent}
+            onSelectRecommendedContent={handleSelectRecommendedContent}
             onExitFullscreen={() => setDashboardHistoryFullscreenOpen(false)}
           />
         </div>
@@ -2274,6 +2350,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
   isPlaying,
   setIsPlaying,
   autoPlayEnabled,
+  autoplayContentId,
   contentFeedbackSubmitting = false,
   contentFeedbackComplete = false,
   mediaFeedback,
@@ -2289,6 +2366,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
   isPlaying: boolean
   setIsPlaying: (value: boolean) => void
   autoPlayEnabled: boolean
+  autoplayContentId: string | null
   contentFeedbackSubmitting?: boolean
   contentFeedbackComplete?: boolean
   mediaFeedback: "like" | "dislike" | null
@@ -2304,7 +2382,9 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
     media_provider: currentContent.media_provider,
     media_url: currentContent.media_url,
   })
-  const hasPlayableContent = Boolean(currentContent.content_id.trim())
+  const currentContentId = currentContent.content_id.trim()
+  const hasPlayableContent = Boolean(currentContentId)
+  const shouldAutoplay = autoPlayEnabled && currentContentId.length > 0 && autoplayContentId === currentContentId
   const isEmbed = playback.kind === "youtube"
   const feedbackDisabled =
     !hasPlayableContent || contentFeedbackSubmitting || contentFeedbackComplete
@@ -2338,7 +2418,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
   }, [podcastRate, playback.kind])
 
   useEffect(() => {
-    if (playback.kind !== "podcast" || !autoPlayEnabled) return
+    if (playback.kind !== "podcast" || !shouldAutoplay) return
     const el = audioRef.current
     if (!el) return
     const tryPlay = () => {
@@ -2350,7 +2430,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
     }
     el.addEventListener("canplay", tryPlay, { once: true })
     return () => el.removeEventListener("canplay", tryPlay)
-  }, [currentContent.content_id, playback.kind, autoPlayEnabled])
+  }, [currentContent.content_id, playback.kind, shouldAutoplay])
 
   const formatPodcastTime = (sec: number) => {
     const s = Number.isFinite(sec) ? sec : 0
@@ -2433,7 +2513,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
       {hasPlayableContent &&
         playback.kind === "youtube" &&
         playback.youtubeVideoId &&
-        autoPlayEnabled && (
+        shouldAutoplay && (
           <div
             className="mb-3 flex shrink-0 gap-2 rounded-xl border border-border bg-muted/60 px-3 py-2.5 text-sm text-foreground/90"
             role="note"
@@ -2476,10 +2556,10 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
           )}
           {hasPlayableContent && playback.kind === "youtube" && playback.youtubeVideoId && (
             <iframe
-              key={`yt-${playback.youtubeVideoId}-${autoPlayEnabled ? "ap" : "noap"}`}
+              key={`yt-${playback.youtubeVideoId}-${shouldAutoplay ? "ap" : "noap"}`}
               title={currentContent.content_title}
               className="absolute inset-0 h-full w-full border-0"
-              src={youtubeEmbedUrl(playback.youtubeVideoId, { autoplay: autoPlayEnabled })}
+              src={youtubeEmbedUrl(playback.youtubeVideoId, { autoplay: shouldAutoplay })}
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
               allowFullScreen
             />
@@ -2802,7 +2882,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
             </div>
           ))}
           {recommendedQueue.length === 0 && (
-            <p className="text-sm text-muted-foreground">추천 대기열이 아직 없습니다.</p>
+            <p className="text-sm text-muted-foreground">대화를 더 나누면 다음 추천이 여기에 표시돼요.</p>
           )}
         </div>
       </div>
@@ -2824,7 +2904,7 @@ const CounselChatBubble = memo(function CounselChatBubble({ message }: { message
       >
         {message.sender === "user" ? (
           <p className="break-words text-sm leading-relaxed">
-            {stripCounselingUserMarkdownSuffix(message.text)}
+            {message.text}
           </p>
         ) : (
           <ChatMarkdown source={message.text} />
@@ -2868,6 +2948,7 @@ function CounselingView({
   isPlaying,
   setIsPlaying,
   autoPlayEnabled,
+  autoplayContentId,
   contentFeedbackSubmitting,
   contentFeedbackComplete,
   mediaFeedback,
@@ -2875,7 +2956,9 @@ function CounselingView({
   onEndSession,
   onStartNewSession,
   isSessionActive,
+  showMediaPanel = true,
   syncWarningMessage,
+  showAutoplayNoticeBanner = false,
   currentContent,
   recommendedQueue,
   onSelectRecommendedContent,
@@ -2889,6 +2972,7 @@ function CounselingView({
   isPlaying: boolean
   setIsPlaying: (value: boolean) => void
   autoPlayEnabled: boolean
+  autoplayContentId: string | null
   contentFeedbackSubmitting: boolean
   contentFeedbackComplete: boolean
   mediaFeedback: "like" | "dislike" | null
@@ -2896,7 +2980,9 @@ function CounselingView({
   onEndSession: () => void
   onStartNewSession: () => void
   isSessionActive: boolean
+  showMediaPanel?: boolean
   syncWarningMessage: string | null
+  showAutoplayNoticeBanner?: boolean
   currentContent: ContentHistoryItem
   recommendedQueue: ContentHistoryItem[]
   onSelectRecommendedContent: (value: ContentHistoryItem) => void
@@ -2928,6 +3014,11 @@ function CounselingView({
     })
   }, [messages])
 
+  useEffect(() => {
+    if (showMediaPanel) return
+    setContentFullscreen(false)
+  }, [showMediaPanel])
+
   const mediaProps = useMemo(
     () => ({
       currentContent,
@@ -2935,6 +3026,7 @@ function CounselingView({
       isPlaying,
       setIsPlaying,
       autoPlayEnabled,
+      autoplayContentId,
       contentFeedbackSubmitting,
       contentFeedbackComplete,
       mediaFeedback,
@@ -2948,6 +3040,7 @@ function CounselingView({
       isPlaying,
       setIsPlaying,
       autoPlayEnabled,
+      autoplayContentId,
       contentFeedbackSubmitting,
       contentFeedbackComplete,
       mediaFeedback,
@@ -2966,7 +3059,12 @@ function CounselingView({
   return (
     <div className="flex h-full min-h-0 min-w-0">
       {/* Chat Section */}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col border-r border-border">
+      <div
+        className={cn(
+          "relative flex min-h-0 min-w-0 flex-1 flex-col",
+          showMediaPanel && "border-r border-border"
+        )}
+      >
         <div className="p-4 border-b border-border bg-card">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -2984,6 +3082,17 @@ function CounselingView({
             </Button>
           </div>
         </div>
+
+        {showAutoplayNoticeBanner && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center px-6">
+            <div className="w-full max-w-lg rounded-2xl border border-primary/25 bg-background/96 px-5 py-4 shadow-2xl ring-1 ring-primary/10 backdrop-blur-sm">
+              <div className="flex items-start gap-3 text-sm text-foreground">
+                <Volume2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
+                <p className="leading-relaxed">{YOUTUBE_AUTOPLAY_NOTICE}</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {idleWrapUpBanner && isSessionActive && (
           <div className="shrink-0 border-b border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
@@ -3051,19 +3160,24 @@ function CounselingView({
         </div>
       </div>
 
-      <div className={cn(
-        contentFullscreen ? "fixed inset-0 z-50 bg-background p-4 sm:p-6" : "w-96 shrink-0 bg-card p-6 min-h-0", "overflow-y-auto flex flex-col")}
-        role={contentFullscreen ? "dialog" : undefined}
-        aria-modal={contentFullscreen? "true" : undefined}
-        aria-label={contentFullscreen? "추천 콘텐츠 전체 화면" : undefined}
-      >
-        <ContentMediaPanel
-          variant={contentFullscreen ? "fullscreen" : "sidebar"}
-          {...mediaProps}
-          onRequestFullscreen={contentFullscreen ? undefined : () => setContentFullscreen(true)}
-          onExitFullscreen={contentFullscreen ? () => setContentFullscreen(false) : undefined}
-        />
-      </div>
+      {showMediaPanel && (
+        <div
+          className={cn(
+            contentFullscreen ? "fixed inset-0 z-50 bg-background p-4 sm:p-6" : "w-96 shrink-0 bg-card p-6 min-h-0",
+            "overflow-y-auto flex flex-col"
+          )}
+          role={contentFullscreen ? "dialog" : undefined}
+          aria-modal={contentFullscreen ? "true" : undefined}
+          aria-label={contentFullscreen ? "추천 콘텐츠 전체 화면" : undefined}
+        >
+          <ContentMediaPanel
+            variant={contentFullscreen ? "fullscreen" : "sidebar"}
+            {...mediaProps}
+            onRequestFullscreen={contentFullscreen ? undefined : () => setContentFullscreen(true)}
+            onExitFullscreen={contentFullscreen ? () => setContentFullscreen(false) : undefined}
+          />
+        </div>
+      )}
 
     </div>
   )

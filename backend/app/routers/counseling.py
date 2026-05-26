@@ -13,15 +13,6 @@ from app.services.session_summary import prepare_session_context
 router = APIRouter(prefix="/counseling", tags=["counseling"])
 logger = logging.getLogger(__name__)
 
-# 프론트 `sendCounselingMessage`와 동일 — DB에는 본문만 저장·히스토리 응답에서 제거
-COUNSELING_USER_MARKDOWN_SUFFIX = "\n\n마크다운 형식으로 제공해."
-
-
-def _strip_user_markdown_suffix(text: str) -> str:
-    if text.endswith(COUNSELING_USER_MARKDOWN_SUFFIX):
-        return text[: -len(COUNSELING_USER_MARKDOWN_SUFFIX)]
-    return text
-
 
 class CounselingMessageRequest(BaseModel):
     user_id: str
@@ -75,6 +66,8 @@ async def get_initial_counseling_message(
             "message": _build_initial_message(mood_value),
             "status": "ok",
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning(
             "Initial counseling message failed session_id=%s error_type=%s",
@@ -122,14 +115,7 @@ async def get_counseling_history(
             .order("created_at")
             .execute()
         )
-        rows = list(hist.data or [])
-        out_rows: list[dict] = []
-        for row in rows:
-            r = dict(row)
-            if r.get("role") == "user" and isinstance(r.get("content"), str):
-                r["content"] = _strip_user_markdown_suffix(r["content"])
-            out_rows.append(r)
-        return {"session_id": session_id, "messages": out_rows}
+        return {"session_id": session_id, "messages": list(hist.data or [])}
     except HTTPException:
         raise
     except Exception as e:
@@ -146,9 +132,8 @@ async def get_counseling_history(
 
 def _save_message(supabase: Client, session_id: str, user_msg: str, ai_msg: str) -> None:
     """Persist the user message and AI response to DB."""
-    user_stored = _strip_user_markdown_suffix(user_msg)
     supabase.table("counseling_history").insert([
-        {"session_id": session_id, "role": "user", "content": user_stored},
+        {"session_id": session_id, "role": "user", "content": user_msg},
         {"session_id": session_id, "role": "assistant", "content": ai_msg},
     ]).execute()
 
@@ -174,12 +159,10 @@ async def send_counseling_message(
                 detail="이미 종료된 상담이에요. 새 상담을 시작해 주세요.",
             )
 
-        user_plain = _strip_user_markdown_suffix(payload.message)
-
         # 1. Build conversation context (recent N turns + summary if threshold exceeded)
         summary, history = await prepare_session_context(supabase, payload.session_id)
 
-        # 2. Run AI pipeline (원문+접미사로 마크다운 지시, DB에는 본문만 저장)
+        # 2. Run AI pipeline
         result = await get_ai_response(
             user_id=payload.user_id,
             session_id=payload.session_id,
@@ -189,7 +172,7 @@ async def send_counseling_message(
         )
 
         # 3. Save this turn to DB
-        _save_message(supabase, payload.session_id, user_plain, result["message"])
+        _save_message(supabase, payload.session_id, payload.message, result["message"])
 
         return {**result, "status": "ok"}
     except HTTPException:
