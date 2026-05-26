@@ -69,6 +69,7 @@ def append_verified_recommendation_block(
     reason: str,
     alternative_links: list[dict] | None,
     has_primary_video: bool,
+    primary_text: str | None = None,
 ) -> str:
     """상담 본문 뒤에 API 검증 링크·메인 추천 안내를 붙인다."""
     body = strip_unverified_markdown_links(response)
@@ -79,7 +80,9 @@ def append_verified_recommendation_block(
         parts.append(alt_block)
 
     if title:
-        if has_primary_video:
+        if primary_text:
+            parts.append(primary_text.strip())
+        elif has_primary_video:
             parts.append(f"**이번 추천**은 아래 카드에서 '{title}'을(를) 들어보세요. {reason}")
         else:
             parts.append(f"'{title}'을(를) 추천해드릴게요. {reason}")

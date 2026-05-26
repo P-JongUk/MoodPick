@@ -54,7 +54,7 @@ def _short_id(value: str | None) -> str:
 _DEFAULT_MCP_SERVER_PATH = str(Path(__file__).parent.parent.parent / "mcp_servers" / "server.py")
 _MCP_SERVER_PATH = os.getenv("MCP_SERVER_PATH", _DEFAULT_MCP_SERVER_PATH)
 _MODEL = "gpt-4o-mini"
-_MCP_YOUTUBE_TIMEOUT_SEC = float(os.getenv("MCP_YOUTUBE_TIMEOUT_SEC", "12"))
+_MCP_YOUTUBE_TIMEOUT_SEC = float(os.getenv("MCP_YOUTUBE_TIMEOUT_SEC", "60"))
 
 _FALLBACK_YOUTUBE_RECOMMENDATIONS: list[dict] = [
     {
@@ -299,6 +299,7 @@ async def content_recommender_agent(state: CounselingState) -> CounselingState:
                     f"고민: {concerns}\n"
                     f"선호 콘텐츠: {comfort_style}\n"
                     f"좋아한 콘텐츠 제목들: {liked_hints}\n"
+                    f"페르소나(persona): {state.persona}\n"
                     f"{music_only_note}"
                 ),
             },

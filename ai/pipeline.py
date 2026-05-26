@@ -19,7 +19,7 @@ from ai.agents.orchestrator import orchestrator_agent
 from ai.agents.counselor import counselor_agent, counselor_agent_stream
 from ai.agents.content_recommender import content_recommender_agent
 from ai.tools.content_history import _get_supabase
-from ai.tools.preference_map import off_topic_reply
+from ai.tools.preference_map import off_topic_reply, recommendation_suffix
 from ai.tools.session_meditation_format import (
     get_session_meditation_audio_format,
     set_session_meditation_audio_format,
@@ -126,12 +126,14 @@ async def run_counseling_pipeline(
             title = state.recommended_content.get("title", "")
             reason = state.recommended_content.get("reason", "")
             video_id = state.recommended_content.get("video_id")
+            primary_text = recommendation_suffix(state.persona, title, reason) if title else ""
             state.response = append_verified_recommendation_block(
                 state.response,
                 title=title,
                 reason=reason,
                 alternative_links=state.recommended_content.get("alternative_links"),
                 has_primary_video=bool(video_id),
+                primary_text=primary_text,
             )
 
             # ⑤ Save recommended content to watched_content_records
@@ -308,7 +310,7 @@ async def run_counseling_pipeline_stream(
                     title = state.recommended_content.get("title", "")
                     reason = state.recommended_content.get("reason", "")
                     if title:
-                        suffix = f"\n\n'{title}'을(를) 추천해드릴게요. {reason}"
+                        suffix = recommendation_suffix(state.persona, title, reason)
                         state.response += suffix
                         yield {"type": "chunk", "text": suffix}
 

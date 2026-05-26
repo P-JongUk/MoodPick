@@ -52,24 +52,6 @@ def _short_id(value: str | None) -> str:
     return value[:8] if value else "-"
 
 
-def _parse_tool_arguments(tool_call, state: CounselingState) -> dict:
-    raw_args = tool_call.function.arguments or "{}"
-    try:
-        args = json.loads(raw_args)
-        if isinstance(args, dict):
-            return args
-    except json.JSONDecodeError:
-        pass
-
-    logger.warning(
-        "AI tool arguments parse failed fn=%s user_id=%s session_id=%s",
-        tool_call.function.name,
-        _short_id(state.user_id),
-        _short_id(state.session_id),
-    )
-    return {}
-
-
 def _build_emotion_score(args: dict) -> dict:
     """save_emotion_record 인자에서 후속 에이전트들이 쓰는 통합 emotion_score를 만든다."""
     valence = float(args.get("valence", 0.0))
@@ -171,7 +153,7 @@ async def _execute_tool_call(tool_call: "_ToolCallLike | object", state: Counsel
     동기 도구(Supabase/OpenAI sync SDK)는 asyncio.to_thread로 감싸 이벤트 루프를 막지 않는다.
     """
     fn_name = tool_call.function.name
-    fn_args = _parse_tool_arguments(tool_call, state)
+    fn_args = json.loads(tool_call.function.arguments)
 
     logger.info(
         "AI tool call fn=%s user_id=%s session_id=%s arg_keys=%s",
@@ -182,22 +164,21 @@ async def _execute_tool_call(tool_call: "_ToolCallLike | object", state: Counsel
     )
 
     if fn_name == "search_rag_context":
-        query_text = str(fn_args.get("query_text") or state.message or "").strip()
         result = await asyncio.to_thread(
             search_rag_context,
-            query_text=query_text,
+            query_text=fn_args["query_text"],
             top_k=fn_args.get("top_k", 3),
         )
     elif fn_name == "get_user_profile":
         result = await asyncio.to_thread(
             get_user_profile,
-            user_id=state.user_id,
+            user_id=fn_args["user_id"],
         )
     elif fn_name == "save_emotion_record":
         result = await asyncio.to_thread(
             save_emotion_record,
-            user_id=state.user_id,
-            session_id=state.session_id,
+            user_id=fn_args["user_id"],
+            session_id=fn_args["session_id"],
             valence=fn_args.get("valence", 0.0),
             arousal=fn_args.get("arousal", 0.0),
             emotion_description=fn_args.get("emotion_description", ""),
@@ -208,8 +189,8 @@ async def _execute_tool_call(tool_call: "_ToolCallLike | object", state: Counsel
 
     try:
         return json.dumps(result, ensure_ascii=False, default=str)
-    except Exception:
-        return json.dumps({"error": "tool_result_serialization_failed"})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 def _build_system_message(state: CounselingState) -> str:
@@ -260,16 +241,28 @@ def _build_system_message(state: CounselingState) -> str:
             f"{state.session_summary}\n"
         )
 
-    recommendation_block = ""
+    # orchestrator가 이 턴을 추천으로 라우팅했다면 counselor에게 "정보 요청 질문/추천 수반 질문 없이"
+    # 평서문으로 마무리하라고 알려준다. 시스템이 직후에 추천 카드를 자동으로 덧붙이므로
+    # 사용자에게 답을 요구하는 질문으로 끝내면 흐름이 어색해진다.
+    routing_block = ""
     if state.needs_recommendation:
-        recommendation_block = (
-            "\n\n### [Module 0.25: Content Recommendation Turn]\n"
-            "이 턴은 곧 시스템이 YouTube/팟캐스트 추천을 이어서 붙입니다.\n"
-            "- http/https URL, 마크다운 링크, 아티스트·곡명·플레이리스트 목록을 넣지 마십시오.\n"
-            "- 2~3문장 공감과 짧은 안내만 작성하십시오.\n"
+        routing_block = (
+            "\n\n### [Module 0.7: Routing Context]\n"
+            "이번 턴은 사용자가 이미 콘텐츠 추천을 명시적으로 요청했거나 "
+            "Orchestrator가 추천이 필요하다고 판단한 턴입니다. 응답 직후 시스템이 "
+            "자동으로 추천 콘텐츠를 덧붙입니다. 따라서 다음 규칙을 반드시 지키세요:\n"
+            "- 응답을 \"어떤 느낌의 노래를 듣고 싶어?\" 같은 **정보 요청 질문**으로 끝내지 마십시오. "
+            "사용자는 곧바로 추천을 받기를 기대합니다.\n"
+            "- \"추천해 드릴까요?\", \"한 곡 골라 드릴까요?\" 같은 **추천 수반 질문**으로 끝내지 마십시오. "
+            "추천은 이미 결정되어 있습니다.\n"
+            "- http/https URL, 마크다운 링크, 구체적인 곡명·앨범명·아티스트명·플레이리스트 제목·YouTube 영상 제목을 "
+            "직접 쓰거나 나열하지 마십시오. 실제 제목과 카드는 시스템이 붙입니다.\n"
+            "- 대신 1~2문장의 짧은 공감 후, \"마음에 맞는 곡을 한 번 찾아볼게.\" 같이 "
+            "추천이 이어질 것을 자연스럽게 알리는 평서문으로 끝내십시오.\n"
+            "- 페르소나 톤은 그대로 유지하십시오."
         )
 
-    return base_prompt + session_context + summary_block + recommendation_block
+    return base_prompt + session_context + summary_block + routing_block
 
 
 
@@ -339,7 +332,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
             if tool_call.function.name == "save_emotion_record":
                 save_emotion_called = True
                 try:
-                    args = _parse_tool_arguments(tool_call, state)
+                    args = json.loads(tool_call.function.arguments)
                     state.emotion_score = _build_emotion_score(args)
                 except (json.JSONDecodeError, TypeError):
                     pass
@@ -355,7 +348,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
     # 빈 메시지가 전달될 수 있어 안전장치를 둔다.
     final_content = (response.choices[0].message.content or "").strip()
     if not final_content:
-        final_content = "지금은 답변을 정리하기가 잠시 어려워요. 괜찮다면 방금 내용을 한 번만 다시 말해 주세요."
+        final_content = "지금은 답변을 정리하기 어렵네요. 다시 한 번 말씀해 주실 수 있을까요?"
     state.response = final_content
 
     # ── Guarantee: save emotion even if GPT skipped the tool ────────────
@@ -377,7 +370,7 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
                 if tc.function.name == "save_emotion_record":
                     await _execute_tool_call(tc, state)
                     try:
-                        args = _parse_tool_arguments(tc, state)
+                        args = json.loads(tc.function.arguments)
                         state.emotion_score = _build_emotion_score(args)
                     except (json.JSONDecodeError, TypeError):
                         pass
