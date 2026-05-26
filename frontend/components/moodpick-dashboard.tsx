@@ -53,6 +53,8 @@ import {
   Flame,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
   User,
   LogOut,
   Trash2,
@@ -61,6 +63,7 @@ import {
   X,
   Eye,
   EyeOff,
+  PanelLeftIcon
 } from "lucide-react"
 import { ChatMarkdown } from "@/components/chat-markdown"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -2148,13 +2151,13 @@ function HomeView({
     <div className="pt-8 p-4 md:p-8 max-w-4xl mx-auto">
       {/* Greeting Section */}
       <div className="flex items-start gap-3">
-        <button className="md:hidden" onClick={()=>setShowMenu(true)}>
+        <button className="md:hidden mb-4" onClick={()=>setShowMenu(true)}>
           <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
-            <Home className="w-5 h-5 text-primary-foreground" />
+            <PanelLeftIcon className="w-5 h-5 text-primary-foreground" />
           </div>
         </button>
-        <div className="mb-10">
-          <h2 className="text-3xl font-bold text-foreground mb-3 text-balance">
+        <div className="mb-4 md:mb-10">
+          <h2 className="text-2xl md:text-3xl leading-tight font-bold text-foreground mb-0 md:mb-3 md:text-balance">
             오늘 하루, 당신의 마음은 어떤 색인가요?
           </h2>
           {flowMessage && (
@@ -2165,7 +2168,7 @@ function HomeView({
       
 
       {/* Start New Session Button */}
-      <div className="mb-10">
+      <div className="mb-4 md:mb-10">
         <Button
           onClick={onStartNewSession}
           size="lg"
@@ -2178,18 +2181,19 @@ function HomeView({
 
       {/* Today's Care */}
       <Card className="overflow-hidden shadow-lg border-0 bg-card py-0 gap-0">
-        <CardHeader className="bg-primary/5 border-b border-border p-6">
+        <CardHeader className="bg-primary/5 border-b border-border gap-0 md:gap-2 !py-2 md:p-6">
           <CardTitle className="text-lg flex items-center gap-2 text-foreground">
             <Heart className="w-5 h-5 text-primary" />
             오늘의 맞춤 위로 콘텐츠
           </CardTitle>
         </CardHeader>
         <CardContent className="p-6">
-          <div className="flex flex-col md:flex-row gap-6">
-            <div className="w-48 h-32 mx-auto md:mx-0 rounded-xl bg-muted flex items-center justify-center overflow-hidden shrink-0">
-              {homeThumbUrl ? (
+          <div className="flex flex-col md:flex-row gap-4 md:gap-6">
+            <div className="relative w-48 h-32 mx-auto md:mx-0 shrink-0">
+              <div className="w-full h-full rounded-xl bg-muted flex items-center justify-center overflow-hidden">
+                {homeThumbUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={homeThumbUrl} alt="" className="w-full h-full object-cover" />
+                    <img src={homeThumbUrl} alt="" className="w-full h-full object-cover" />
               ) : (
                 <div className="text-center">
                   <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-2">
@@ -2197,19 +2201,24 @@ function HomeView({
                   </div>
                   <p className="text-xs text-muted-foreground">썸네일</p>
                 </div>
-              )}
+              )}   
             </div>
+            <Button className="absolute -bottom-2 -right-4 w-fit h-12 w-12 rounded-xl md:hidden" type="button" onClick={onPlayRecommended}>
+              <Play className="w-4 h-4" />
+            </Button>
+              </div>
+              
             <div className="flex-1 flex flex-col justify-between">
               <div>
-                <h3 className="font-semibold text-lg mb-2 text-foreground">
+                <h3 className="font-semibold text-lg mb-0 md:mb-2 text-foreground">
                   {currentContent.content_title}
                 </h3>
-                <p className="text-muted-foreground text-sm leading-relaxed">
+                <p className="text-muted-foreground text-sm leading-relaxed hidden md:block">
                   최근 시청한 콘텐츠를 기준으로 위로 콘텐츠를 우선 노출하고 있어요.
                   상담 중 반응 데이터를 바탕으로 추천 정밀도를 점진적으로 높입니다.
                 </p>
               </div>
-              <Button className="w-fit mt-4 rounded-xl" type="button" onClick={onPlayRecommended}>
+              <Button className="w-fit mt-4 rounded-xl hidden md:flex" type="button" onClick={onPlayRecommended}>
                 <Play className="w-4 h-4 mr-2" />
                 바로 재생하기
               </Button>
@@ -2221,19 +2230,19 @@ function HomeView({
       {/* Quick Stats */}
       <div className="grid grid-cols-3 gap-4 mt-8">
         <Card className="border-0 bg-secondary/50">
-          <CardContent className="p-3 md:p-6 text-center">
+          <CardContent className="p-2 md:p-6 text-center">
             <p className="text-3xl font-bold text-primary mb-1">{userStats?.weekly_record_days ?? 0}</p>
             <p className="text-sm text-muted-foreground">이번 주 기록일</p>
           </CardContent>
         </Card>
         <Card className="border-0 bg-secondary/50">
-          <CardContent className="p-3 md:p-6 text-center">
+          <CardContent className="p-2 md:p-6 text-center">
             <p className="text-3xl font-bold text-primary mb-1">{userStats?.total_sessions ?? 0}</p>
             <p className="text-sm text-muted-foreground">총 상담 횟수</p>
           </CardContent>
         </Card>
         <Card className="border-0 bg-secondary/50">
-          <CardContent className="p-3 md:p-6 text-center">
+          <CardContent className="p-2 md:p-6 text-center">
             <p className="text-3xl font-bold text-primary mb-1">{weeklyMoodEmoji}</p>
             <p className="text-sm text-muted-foreground">주간 평균 기분</p>
           </CardContent>
@@ -2425,7 +2434,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
 
       <Card
         className={cn(
-          "overflow-hidden border-0 shadow-lg shrink-0",
+          "overflow-hidden border-0 shadow-lg shrink-0 gap-3 md:gap-6",
           isFullscreen && "max-w-5xl w-full mx-auto"
         )}
       >
@@ -2669,7 +2678,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
               팟캐스트 오디오 컨트롤은 위 플레이어에서 조작할 수 있어요.
             </p>
           ) : isEmbed ? (
-            <p className="text-xs text-muted-foreground mb-4">
+            <p className="text-xs text-muted-foreground mb-0 md:mb-4">
               재생·일시정지·볼륨은 위 플레이어에서 조작할 수 있어요.
             </p>
           ) : (
@@ -2895,6 +2904,7 @@ function CounselingView({
   const [contentFullscreen, setContentFullscreen] = useState(false)
   const [draft, setDraft] = useState("")
   const bottomRef = useRef<HTMLDivElement>(null)
+  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false)
 
   useEffect(() => {
     if (!contentFullscreen) return
@@ -2976,12 +2986,13 @@ function CounselingView({
     <div className="flex h-full min-h-0 min-w-0">
       {/* Chat Section */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col border-r border-border">
-        <div className="p-4 border-b border-border bg-card">
+        <div className="px-4 py-5 md:p-4 border-b border-border bg-card">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <button onClick={()=>setShowMenu(true)}>
                 <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
-                  <MessageCircle className="w-5 h-5 text-primary-foreground" />
+                  <MessageCircle className="hidden lg:block w-5 h-5 text-primary-foreground" />
+                  <PanelLeftIcon className="block lg:hidden w-5 h-5 text-primary-foreground" />
                 </div>
               </button>
               <div>
@@ -2989,25 +3000,24 @@ function CounselingView({
                 <p className="text-xs text-muted-foreground">AI 심리 상담</p>
               </div>
             </div>
-
-            <Button 
-              variant="outline" size="sm" className="flex flex-col md:flex-row py-2.5 md:py-0 justify-center h-auto md:h-8 rounded-lg"
+            <div className="flex gap-3">
+              <Button 
+              variant="outline" size="sm" className="flex flex-col lg:flex-row py-2.5 lg:py-0 justify-center h-auto lg:h-8 rounded-lg"
               onClick={onStartNewSession} 
             >
               <Plus className="w-4 h-4 mr-1" />
               <p>새 채팅</p>
             </Button>
-
           {!contentFullscreen && (
             <Button
-              variant="outline" size="sm" className="flex flex-col md:flex-row py-2.5 md:py-0 justify-center h-auto rounded-lg md:hidden"
+              variant="outline" size="sm" className="flex flex-col lg:flex-row py-2.5 lg:py-0 justify-center h-auto rounded-lg lg:hidden"
               onClick={()=>setContentFullscreen(true)}
             >
               <Maximize2 className="w-4 h-4" />
               <p>콘텐츠 보기</p>
             </Button>
           )}
-
+            </div>
           </div>
         </div>
 
@@ -3063,6 +3073,8 @@ function CounselingView({
               placeholder="메시지를 입력하세요..."
               className="flex-1 rounded-xl bg-muted border-0"
               onKeyDown={(e) => e.key === "Enter" && submitDraft()}
+              onFocus={() => setIsKeyboardOpen(true)}
+              onBlur={() => setIsKeyboardOpen(false)}
             />
             <Button onClick={submitDraft} size="icon" className="rounded-xl" disabled={isSendingMessage}>
               <Send className={`w-4 h-4 ${isSendingMessage ? "opacity-50" : ""}`} />
@@ -3072,7 +3084,7 @@ function CounselingView({
             <Button
               onClick={onEndSession}
               variant="outline"
-              className="w-full cursor-pointer rounded-xl border-destructive text-destructive hover:border-destructive/70 hover:bg-destructive/10 hover:text-destructive"
+              className={`${isKeyboardOpen ? "hidden" : "block"} w-full cursor-pointer rounded-xl border-destructive text-destructive hover:border-destructive/70 hover:bg-destructive/10 hover:text-destructive`}
             >
               오늘의 상담 종료하기
             </Button>
@@ -3081,7 +3093,7 @@ function CounselingView({
       </div>
       {!showPreSurvey && !showPostSurvey && (
       <div className={cn(
-        contentFullscreen ? "fixed inset-0 z-[100] bg-background p-4 sm:p-6" : "hidden md:flex w-96 shrink-0 bg-card p-6 min-h-0", "overflow-y-auto flex-col")}
+        contentFullscreen ? "fixed inset-0 z-[100] bg-background p-4 sm:p-6" : "hidden lg:flex w-96 shrink-0 bg-card p-6 min-h-0", "overflow-y-auto flex-col")}
         role={contentFullscreen ? "dialog" : undefined}
         aria-modal={contentFullscreen? "true" : undefined}
         aria-label={contentFullscreen? "추천 콘텐츠 전체 화면" : undefined}
@@ -3132,15 +3144,22 @@ function DashboardView({
   onPlayContentHistory: (item: ContentHistoryItem) => void
   setShowMenu: React.Dispatch<React.SetStateAction<boolean>>
 }) {
+  const [openSections, setOpenSections]=useState({Calender: false, Graph: false, Media: false, Session: false})
+  const handleToggle = (id: keyof typeof openSections) => {
+    setOpenSections((prev) => ({
+      ...prev, [id]: !prev[id]
+    }));
+  };
+
   return (
     <div className="pt-8 p-4 md:p-8 max-w-6xl mx-auto">
       <div className="flex items-start gap-3">
-        <button className="md:hidden" onClick={()=>setShowMenu(true)}>
+        <button className="md:hidden mb-4" onClick={()=>setShowMenu(true)}>
           <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
-            <BarChart3 className="w-5 h-5 text-primary-foreground" />
+            <PanelLeftIcon className="w-5 h-5 text-primary-foreground" />
           </div>
         </button>
-        <div className="mb-8">
+        <div className="mb-4 md:mb-8">
           <h2 className="text-2xl font-bold text-foreground mb-2">나의 감정 기록</h2>
           <p className="text-muted-foreground">
             당신의 감정 여정을 한눈에 확인하세요
@@ -3184,26 +3203,50 @@ function DashboardView({
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         {/* Calendar */}
         <Card className="border-0 shadow-lg">
-          <CardHeader className="pb-2 px-4 md:px-6">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg">감정 캘린더</CardTitle>
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={goCalendarPrev}>
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
-                <span className="text-sm font-medium min-w-[100px] text-center">
-                  {calendarYear}년 {currentMonth}월
-                </span>
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={goCalendarNext}>
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
-              </div>
+          <CardHeader className="pb-2">
+            <div className="w-full">
+              <CardTitle className="text-lg flex justify-between items-center w-full">
+                <button 
+                  onClick={() => handleToggle('Calender')}
+                  className="flex items-center justify-between w-full md:hidden text-left"
+                >
+                  <span>감정 캘린더</span>
+                  {openSections.Calender ? (
+                    <ChevronUp className="w-4 h-4" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4" />
+                  )}
+                </button>
+                <span className="hidden md:block">감정 캘린더</span>
+                <div className="hidden md:flex items-center gap-2">
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={goCalendarPrev}>
+                    <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                  <span className="text-sm font-medium min-w-[100px] text-center flex items-center justify-center">
+                    {calendarYear}년 {currentMonth}월
+                  </span>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={goCalendarNext}>
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </div>
+              </CardTitle>
             </div>
           </CardHeader>
-          <CardContent className="px-4 md:px-6">
+          <CardContent className={`px-4 md:px-6 ${openSections.Calender ? 'block' : 'hidden'} md:block`}>
+            <div className="flex items-center justify-center w-full gap-2 md:hidden mb-2">
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={goCalendarPrev}>
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <span className="text-sm font-medium min-w-[100px] text-center">
+                {calendarYear}년 {currentMonth}월
+              </span>
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={goCalendarNext}>
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
             <div className="grid grid-cols-7 gap-1 mb-2">
               {["일", "월", "화", "수", "목", "금", "토"].map((day) => (
                 <div key={day} className="text-center text-xs font-medium text-muted-foreground py-2">
@@ -3250,9 +3293,14 @@ function DashboardView({
         {/* Emotion Trend Graph */}
         <Card className="border-0 shadow-lg">
           <CardHeader className="pb-2">
-            <CardTitle className="text-lg">최근 30일 감정 변화 추이</CardTitle>
+            <button onClick={() => handleToggle('Graph')} className="md:pointer-events-none">
+              <CardTitle className="text-lg flex justify-between items-center">
+                <span>최근 30일 감정 변화 추이</span>
+                {openSections.Graph ? (<ChevronUp className="w-4 h-4 md:hidden" />): (<ChevronDown className="w-4 h-4 md:hidden" />)}
+              </CardTitle>
+            </button>
           </CardHeader>
-          <CardContent className="px-4 md:px-6">
+          <CardContent className={`px-4 md:px-6 ${openSections.Graph ? 'block' : 'hidden'} md:block`}>
             <div className="h-64">
               {emotionData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
@@ -3323,10 +3371,15 @@ function DashboardView({
 
       {/* Comforting Media History */}
       <Card className="border-0 shadow-lg mb-8">
-        <CardHeader>
-          <CardTitle className="text-lg">내가 위로받은 콘텐츠</CardTitle>
+        <CardHeader className="pb-2">
+          <button onClick={() => handleToggle('Media')} className="md:pointer-events-none">
+            <CardTitle className="text-lg flex justify-between items-center">
+              <span>내가 위로받은 콘텐츠</span>
+              {openSections.Media ? (<ChevronUp className="w-4 h-4 md:hidden" />): (<ChevronDown className="w-4 h-4 md:hidden" />)}
+            </CardTitle>
+          </button>
         </CardHeader>
-        <CardContent>
+        <CardContent className={`${openSections.Media ? 'block' : 'hidden'} md:block`}>
           <div className="flex gap-4 overflow-x-auto pb-4 -mx-2 px-2">
             {contentHistory.map((media) => (
               <div
@@ -3369,12 +3422,17 @@ function DashboardView({
       </Card>
 
       {/* Session History */}
-      <Card className="border-0 shadow-lg">
-        <CardHeader>
-          <CardTitle className="text-lg">상담 기록</CardTitle>
+      <Card className="border-0 shadow-lg gap-3 md:gap-6 py-3 md:py-6">
+        <CardHeader className="pb-2">
+          <button onClick={() => handleToggle('Session')} className="md:pointer-events-none">
+            <CardTitle className="text-lg flex justify-between items-center">
+              <span>상담 기록</span>
+              {openSections.Session ? (<ChevronUp className="w-4 h-4 md:hidden" />): (<ChevronDown className="w-4 h-4 md:hidden" />)}
+            </CardTitle>
+          </button>
         </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-h-[400px] md:max-h-none overflow-y-auto md:overflow-visible">
+        <CardContent className={`${openSections.Session ? 'block' : 'hidden'} md:block`}>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-h-[200px] md:max-h-[400px] md:max-h-none overflow-y-auto md:overflow-visible">
             {sessionHistory.map((session) => (
               <Card key={session.sessionId} className="border border-border bg-muted/30">
                 <CardContent className="p-4">
@@ -4259,12 +4317,12 @@ function MyPageView({
   return (
     <div className="pt-8 p-4 md:p-8 max-w-3xl mx-auto">
       <div className="flex items-start gap-3">
-        <button className="md:hidden" onClick={()=>setShowMenu(true)}>
+        <button className="md:hidden mb-4" onClick={()=>setShowMenu(true)}>
           <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
-            <User className="w-5 h-5 text-primary-foreground" />
+            <PanelLeftIcon className="w-5 h-5 text-primary-foreground" />
           </div>
         </button>
-        <div className="mb-8">
+        <div className="mb-4 md:mb-8">
           <h2 className="text-2xl font-bold text-foreground mb-2">마이페이지</h2>
           <p className="text-muted-foreground">계정 설정 및 환경설정을 관리하세요</p>
         </div>
@@ -4315,7 +4373,17 @@ function MyPageView({
       {/* Profile Section */}
       <Card className="py-3 md:py-6 gap-3 md:gap-6 border-0 shadow-lg mb-6">
         <CardHeader>
-          <CardTitle className="text-lg">프로필</CardTitle>
+          <CardTitle className="flex text-lg justify-between items-center">
+            <span>프로필</span>
+            <div className="flex gap-2">
+              <Button variant="outline" className="rounded-xl shrink-0 lg:hidden" type="button" onClick={openProfileEdit}>
+                프로필 수정
+              </Button>
+              <Button variant="outline" className="rounded-xl shrink-0 lg:hidden" type="button" disabled={!surveyEnter} onClick={()=>setSurveySave(false)}>
+                문진
+              </Button>
+            </div>
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
@@ -4336,7 +4404,7 @@ function MyPageView({
                 </div>
               </div>
             </div>
-            <div className="flex items-center justify-center md:justify-start gap-6 w-full md:w-auto">
+            <div className="items-center justify-center hidden lg:flex lg:justify-start gap-6 w-full lg:w-auto">
               <Button variant="outline" className="rounded-xl shrink-0" type="button" onClick={openProfileEdit}>
                 프로필 수정
               </Button>
@@ -4358,55 +4426,55 @@ function MyPageView({
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Auto-play Toggle */}
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex flex-col w-full mb-3 md:mb-6">
+            <div className="flex items-center justify-between w-full h-8">
               <Label htmlFor="autoplay" className="text-base font-medium text-foreground">
                 콘텐츠 자동 재생 허용
               </Label>
-              <p className="text-sm text-muted-foreground mt-1">
-                AI 상담 중 추천 콘텐츠를 자동으로 재생합니다. 유튜브는 브라우저 정책상 처음에 음소거로
-                시작할 수 있어요(플레이어에서 음소거 해제).
-              </p>
-            </div>
-            <Switch
+              <Switch
               id="autoplay"
               checked={autoPlayEnabled}
               onCheckedChange={setAutoPlayEnabled}
-            />
+              />
+            </div>
+            <p className="text-sm text-muted-foreground mt-1">
+              AI 상담 중 추천 콘텐츠를 자동으로 재생합니다. 유튜브는 브라우저 정책상 처음에 음소거로
+              시작할 수 있어요(플레이어에서 음소거 해제).
+            </p>
           </div>
 
           {/* Media Preference */}
-          <div>
-            <Label className="text-base font-medium text-foreground">
+          <div className="mb-3 md:mb-6">
+            <Label className="text-base font-medium text-foreground h-8">
               선호 미디어 유형
             </Label>
             <p className="text-sm text-muted-foreground mt-1 mb-3">
               추천받고 싶은 콘텐츠 유형을 선택하세요
             </p>
-            <Select value={mediaPreference} onValueChange={setMediaPreference}>
-              <SelectTrigger className="w-full rounded-xl bg-muted border-0 h-12">
-                <SelectValue placeholder="미디어 유형 선택" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="youtube">YouTube 영상 위주</SelectItem>
-                <SelectItem value="podcast">팟캐스트 위주</SelectItem>
-                <SelectItem value="mixed">혼합 추천</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-            <Button
+            <div className="flex gap-2 w-full">
+              <Select value={mediaPreference} onValueChange={setMediaPreference}>
+                <SelectTrigger className="w-full rounded-xl bg-muted border-0 h-12">
+                  <SelectValue placeholder="미디어 유형 선택" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="youtube">YouTube 영상 위주</SelectItem>
+                  <SelectItem value="podcast">팟캐스트 위주</SelectItem>
+                  <SelectItem value="mixed">혼합 추천</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
               type="button"
               variant="secondary"
               className="rounded-xl w-fit"
               disabled={isSavingMypagePrefs}
               onClick={() => void onSaveMypagePreferences()}
-            >
-              {isSavingMypagePrefs ? "저장 중…" : "맞춤 설정 계정에 저장"}
-            </Button>
+              >
+                {isSavingMypagePrefs ? "저장 중…" : "저장"}
+              </Button>
+
+            </div>
             {mypagePrefsMessage && (
-              <p className="text-xs text-muted-foreground">{mypagePrefsMessage}</p>
+              <p className="text-xs text-muted-foreground mt-4">{mypagePrefsMessage}</p>
             )}
           </div>
 
@@ -4460,7 +4528,7 @@ function MyPageView({
 
       {/* Data Management Section */}
       <Card className="py-3 md:py-6 gap-3 md:gap-6 border-0 shadow-lg mb-6">
-        <CardHeader>
+        <CardHeader className="gap-0 md:gap-2">
           <CardTitle className="text-lg">데이터 관리</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -4684,7 +4752,7 @@ function SideMenu({activeTab, navItems, handleSelectNavTab, sidebarEncouragement
 }){
   return(
     <aside className="z-[200] md:z-[60] w-64 bg-sidebar border-r border-sidebar-border flex h-full flex-col">
-        <div className="p-6 border-b border-sidebar-border">
+        <div className="px-4 py-8 md:p-6 border-b border-sidebar-border">
           <button
             type="button"
             onClick={() => handleSelectNavTab("home")}
