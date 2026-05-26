@@ -3,6 +3,7 @@ import {
   endSession,
   submitSurveyResponse,
   submitContentFeedback,
+  type CounselorPersona,
 } from "./api"
 
 export type SurveyPhase = "pre" | "post"
@@ -24,12 +25,16 @@ async function getCurrentUserId() {
 /**
  * 새 상담 세션 시작
  * @param context 상담 맥락 (선택사항)
+ * @param persona 세션의 상담사 페르소나 (friend | teacher | expert)
  * @returns 세션 ID
  */
-export async function startCounselingSession(context?: string): Promise<string> {
+export async function startCounselingSession(
+  context?: string,
+  persona: CounselorPersona = "expert",
+): Promise<string> {
   const userId = await getCurrentUserId()
-  
-  const response = await createSession(userId, context)
+
+  const response = await createSession(userId, context, persona)
   return response.id
 }
 

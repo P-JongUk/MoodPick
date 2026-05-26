@@ -20,8 +20,12 @@ class CounselingState(BaseModel):
     # 임계치 초과 세션의 오래된 부분을 압축한 누적 요약 (없으면 None)
     session_summary: Optional[str] = None
 
+    # 세션 단위 페르소나 (counseling_sessions.persona 동기): friend | teacher | expert
+    persona: str = "expert"
+
     # --- Orchestrator fills these ---
     is_crisis: bool = False
+    is_off_topic: bool = False                          # 상담 영역 밖 지식/기술/학술 질문
     intent: str = "상담"                                # "상담" | "추천" | "잡담"
     needs_recommendation: bool = False
     content_format: str = "unspecified"                 # "video" | "music" | "audio" | "unspecified"

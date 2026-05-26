@@ -46,11 +46,12 @@ async function requireAuthenticatedUser(request: Request, requestedUserId?: stri
 export async function PUT(request: Request) {
   try {
     const body = await request.json()
-    const { user_id, display_name, gender, birth_year } = body as {
+    const { user_id, display_name, gender, birth_year, onboarding_profile } = body as {
       user_id: string
       display_name?: string
       gender?: string | null
       birth_year?: number | null
+      onboarding_profile?: Record<string, unknown> | null
     }
 
     if (!user_id || !display_name) {
@@ -68,6 +69,7 @@ export async function PUT(request: Request) {
     }
     if (gender !== undefined) payload.gender = gender
     if (birth_year !== undefined) payload.birth_year = birth_year
+    if (onboarding_profile !== undefined) payload.onboarding_profile = onboarding_profile
 
     const { error } = await supabase.from('user_profiles').upsert(payload, { onConflict: 'user_id' })
 

@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import logging
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.auth import CurrentUser, get_current_user, get_owned_session, require_same_user
@@ -14,10 +14,13 @@ router = APIRouter(prefix="/session", tags=["session"])
 # 마지막 메시지(또는 세션 시작) 이후 이 시간이 지나면 자동 종료 대상
 STALE_SESSION_HOURS = 36
 
+CounselorPersona = Literal["friend", "teacher", "expert"]
+
 
 class SessionStartRequest(BaseModel):
     user_id: str
     context: Optional[str] = None
+    persona: CounselorPersona = "expert"
 
 
 class SessionEndRequest(BaseModel):
@@ -34,6 +37,7 @@ class SessionResponse(BaseModel):
     status: str
     started_at: str
     ended_at: Optional[str] = None
+    persona: CounselorPersona = "expert"
 
 
 @router.post("/start", response_model=SessionResponse)
@@ -59,6 +63,7 @@ async def start_session(
             "user_id": payload.user_id,
             "status": "active",
             "started_at": now,
+            "persona": payload.persona,
         }).execute()
 
         if result.data and len(result.data) > 0:

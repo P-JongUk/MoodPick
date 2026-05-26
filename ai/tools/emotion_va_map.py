@@ -49,50 +49,50 @@ EMOTION_VA_MAP: dict[str, tuple[float, float, float]] = {
 }
 
 
-def compute_va_score(emotions: list[dict]) -> dict:
-    """
-    복합 감정의 VA 좌표를 intensity 가중 평균으로 계산.
+# def compute_va_score(emotions: list[dict]) -> dict:
+#     """
+#     복합 감정의 VA 좌표를 intensity 가중 평균으로 계산.
 
-    논문 근거 (P2): 복합 감정은 각 감정의 분포를 intensity 비율로 합산.
-    논문 근거 (P3): Arousal 축은 Active/Inactive가 상호 배타적이므로
-                    복합 감정 수가 많을수록 불확실성(radius) 증가.
+#     논문 근거 (P2): 복합 감정은 각 감정의 분포를 intensity 비율로 합산.
+#     논문 근거 (P3): Arousal 축은 Active/Inactive가 상호 배타적이므로
+#                     복합 감정 수가 많을수록 불확실성(radius) 증가.
 
-    Args:
-        emotions: [{"label": "불안", "intensity": 4}, {"label": "슬픔", "intensity": 2}]
-                  intensity는 1~5 척도 (P4 논문 기준)
+#     Args:
+#         emotions: [{"label": "불안", "intensity": 4}, {"label": "슬픔", "intensity": 2}]
+#                   intensity는 1~5 척도 (P4 논문 기준)
 
-    Returns:
-        {"valence": float, "arousal": float, "radius": float}
-    """
-    valid = [e for e in emotions if e.get("label") in EMOTION_VA_MAP]
-    if not valid:
-        return {"valence": 0.0, "arousal": 0.0, "radius": 0.25}
+#     Returns:
+#         {"valence": float, "arousal": float, "radius": float}
+#     """
+#     valid = [e for e in emotions if e.get("label") in EMOTION_VA_MAP]
+#     if not valid:
+#         return {"valence": 0.0, "arousal": 0.0, "radius": 0.25}
 
-    total_intensity = sum(e["intensity"] for e in valid)
-    if total_intensity == 0:
-        return {"valence": 0.0, "arousal": 0.0, "radius": 0.25}
+#     total_intensity = sum(e["intensity"] for e in valid)
+#     if total_intensity == 0:
+#         return {"valence": 0.0, "arousal": 0.0, "radius": 0.25}
 
-    valence = sum(
-        EMOTION_VA_MAP[e["label"]][0] * e["intensity"] for e in valid
-    ) / total_intensity
+#     valence = sum(
+#         EMOTION_VA_MAP[e["label"]][0] * e["intensity"] for e in valid
+#     ) / total_intensity
 
-    arousal = sum(
-        EMOTION_VA_MAP[e["label"]][1] * e["intensity"] for e in valid
-    ) / total_intensity
+#     arousal = sum(
+#         EMOTION_VA_MAP[e["label"]][1] * e["intensity"] for e in valid
+#     ) / total_intensity
 
-    base_radius = sum(
-        EMOTION_VA_MAP[e["label"]][2] * e["intensity"] for e in valid
-    ) / total_intensity
+#     base_radius = sum(
+#         EMOTION_VA_MAP[e["label"]][2] * e["intensity"] for e in valid
+#     ) / total_intensity
 
-    # 복합 감정일수록 Arousal 불확실성 증가 (P3 근거)
-    radius = base_radius * (1 + 0.15 * (len(valid) - 1))
-    radius = min(radius, 0.5)
+#     # 복합 감정일수록 Arousal 불확실성 증가 (P3 근거)
+#     radius = base_radius * (1 + 0.15 * (len(valid) - 1))
+#     radius = min(radius, 0.5)
 
-    return {
-        "valence": round(valence, 3),
-        "arousal": round(arousal, 3),
-        "radius": round(radius, 3),
-    }
+#     return {
+#         "valence": round(valence, 3),
+#         "arousal": round(arousal, 3),
+#         "radius": round(radius, 3),
+#     }
 
 
 def get_nearest_emotion(valence: float, arousal: float) -> tuple[str, float]:
