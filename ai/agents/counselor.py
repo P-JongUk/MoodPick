@@ -217,7 +217,11 @@ def _build_system_message(state: CounselingState) -> str:
             )
             profile = {}
 
+    # tone_block은 Module 1 바로 뒤(Module 1.5)에 placeholder로 주입되어
+    # 페르소나 어조와 행동 가이드가 시각·구조적으로 인접하도록 한다.
+    # counseling_tone_guidance는 빈 배열에서도 fallback 블록을 반환하므로 placeholder가 빈 줄로 남지 않는다.
     tone_block = counseling_tone_guidance(profile.get("counseling_tone", []) or [])
+    base_prompt = base_prompt.replace("{{tone_block}}", tone_block)
 
     # Inject user_id and session_id so GPT can pass them to tools
     session_context = (
@@ -237,7 +241,7 @@ def _build_system_message(state: CounselingState) -> str:
             f"{state.session_summary}\n"
         )
 
-    return base_prompt + session_context + tone_block + summary_block
+    return base_prompt + session_context + summary_block
 
 
 
