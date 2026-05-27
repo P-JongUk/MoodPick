@@ -131,7 +131,12 @@ interface Message {
   timestamp?: string
   recommendedContent?: RecommendedContent | null
   isStreaming?: boolean
+  /** 텍스트 스트리밍은 끝났지만 done 이벤트(추천 메타)가 아직 안 온 상태 */
+  isAwaitingMeta?: boolean
 }
+
+/** 텍스트 스트림 종료 후 done 도착까지의 짧은 지연 동안에는 인디케이터를 띄우지 않도록 디바운스 */
+const AWAITING_META_INDICATOR_DELAY_MS = 200
 
 interface SessionHistory {
   sessionId: string
@@ -1514,6 +1519,14 @@ export function MoodPickDashboard() {
     // onChunk에서 누적한 텍스트를 onDone(위기 모달)에서 참조하기 위한 클로저 변수
     let streamedText = ""
     let isFirstChunk = true
+    /** 스트림 종료 → done 사이 짧은 지연 동안에는 인디케이터를 띄우지 않기 위한 디바운스 타이머 */
+    let awaitingMetaTimer: ReturnType<typeof setTimeout> | null = null
+    const clearAwaitingMetaTimer = () => {
+      if (awaitingMetaTimer) {
+        clearTimeout(awaitingMetaTimer)
+        awaitingMetaTimer = null
+      }
+    }
 
     void sendCounselingMessageStream(
       user.id,
@@ -1533,8 +1546,18 @@ export function MoodPickDashboard() {
             prev.map((m) => m.id === aiMsgId ? { ...m, text: m.text + chunk } : m)
           )
         }
+        // 청크가 도착할 때마다 타이머를 재시작 — 마지막 청크 이후 디바운스 시간만큼
+        // done이 안 오면 추천 검색 중이라고 판단해 인디케이터를 띄움.
+        clearAwaitingMetaTimer()
+        awaitingMetaTimer = setTimeout(() => {
+          awaitingMetaTimer = null
+          setMessages((prev) =>
+            prev.map((m) => (m.id === aiMsgId ? { ...m, isAwaitingMeta: true } : m))
+          )
+        }, AWAITING_META_INDICATOR_DELAY_MS)
       },
       (meta) => {
+        clearAwaitingMetaTimer()
         const completionTime = new Date().toLocaleTimeString("ko-KR", {
           hour: "numeric",
           minute: "2-digit",
@@ -1554,7 +1577,13 @@ export function MoodPickDashboard() {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === aiMsgId
-              ? { ...m, isStreaming: false, timestamp: completionTime, recommendedContent: recommended }
+              ? {
+                  ...m,
+                  isStreaming: false,
+                  isAwaitingMeta: false,
+                  timestamp: completionTime,
+                  recommendedContent: recommended,
+                }
               : m
           )
         )
@@ -1570,6 +1599,7 @@ export function MoodPickDashboard() {
         setIsSendingMessage(false)
       },
       (error) => {
+        clearAwaitingMetaTimer()
         const completionTime = new Date().toLocaleTimeString("ko-KR", {
           hour: "numeric",
           minute: "2-digit",
@@ -1581,7 +1611,13 @@ export function MoodPickDashboard() {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === aiMsgId
-              ? { ...m, text: errorMessage, isStreaming: false, timestamp: completionTime }
+              ? {
+                  ...m,
+                  text: errorMessage,
+                  isStreaming: false,
+                  isAwaitingMeta: false,
+                  timestamp: completionTime,
+                }
               : m
           )
         )
@@ -2912,6 +2948,18 @@ const CounselChatBubble = memo(function CounselChatBubble({ message }: { message
         ) : (
           <ChatMarkdown source={message.text} />
         )}
+        {message.sender === "ai" &&
+          message.isAwaitingMeta &&
+          !message.recommendedContent?.video_id && (
+            <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="inline-flex gap-1">
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:-0.3s]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:-0.15s]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/60" />
+              </span>
+              <span>추천할 콘텐츠 찾는 중...</span>
+            </div>
+          )}
         {message.sender === "ai" && message.recommendedContent?.video_id && (
           <div className="mt-3 p-3 rounded-xl bg-background/80 border">
             <div className="flex items-center gap-3">
