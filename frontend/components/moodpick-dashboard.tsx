@@ -40,6 +40,7 @@ import {
   youtubeEmbedUrl,
   youtubeThumbnailUrl,
 } from "@/lib/contentPlayback"
+import { postYoutubeEmbedCommand } from "@/lib/youtubeEmbedControl"
 import {
   Home,
   MessageCircle,
@@ -50,6 +51,7 @@ import {
   Play,
   Pause,
   Volume2,
+  VolumeX,
   SkipForward,
   Flame,
   ChevronLeft,
@@ -68,6 +70,7 @@ import {
 } from "lucide-react"
 import { ChatMarkdown } from "@/components/chat-markdown"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Slider } from "@/components/ui/slider"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -2731,10 +2734,50 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
 
   // Podcast 전용 오디오 상태/컨트롤
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const youtubeIframeRef = useRef<HTMLIFrameElement | null>(null)
+  const [embedOrigin, setEmbedOrigin] = useState<string | undefined>()
+  const [youtubeVolume, setYoutubeVolume] = useState(70)
+  const [youtubeMuted, setYoutubeMuted] = useState(true)
   const [podcastPlaying, setPodcastPlaying] = useState(false)
   const [podcastCurrentTime, setPodcastCurrentTime] = useState(0)
   const [podcastDuration, setPodcastDuration] = useState(0)
   const [podcastRate, setPodcastRate] = useState(1)
+
+  useEffect(() => {
+    setEmbedOrigin(window.location.origin)
+  }, [])
+
+  useEffect(() => {
+    if (playback.kind !== "youtube" || !playback.youtubeVideoId) return
+    setYoutubeVolume(70)
+    setYoutubeMuted(shouldAutoplay)
+  }, [playback.kind, playback.youtubeVideoId, shouldAutoplay])
+
+  const applyYoutubeVolume = useCallback((volume: number) => {
+    const clamped = Math.max(0, Math.min(100, Math.round(volume)))
+    setYoutubeVolume(clamped)
+    if (clamped === 0) {
+      setYoutubeMuted(true)
+      postYoutubeEmbedCommand(youtubeIframeRef.current, "mute")
+      return
+    }
+    setYoutubeMuted(false)
+    postYoutubeEmbedCommand(youtubeIframeRef.current, "unMute")
+    postYoutubeEmbedCommand(youtubeIframeRef.current, "setVolume", [clamped])
+  }, [])
+
+  const toggleYoutubeMute = useCallback(() => {
+    if (youtubeMuted) {
+      const restore = youtubeVolume > 0 ? youtubeVolume : 70
+      setYoutubeVolume(restore)
+      setYoutubeMuted(false)
+      postYoutubeEmbedCommand(youtubeIframeRef.current, "unMute")
+      postYoutubeEmbedCommand(youtubeIframeRef.current, "setVolume", [restore])
+      return
+    }
+    setYoutubeMuted(true)
+    postYoutubeEmbedCommand(youtubeIframeRef.current, "mute")
+  }, [youtubeMuted, youtubeVolume])
 
   useEffect(() => {
     if (playback.kind !== "podcast") return
@@ -2887,7 +2930,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
           >
             <Volume2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
             <p className="leading-snug">
-              유튜브는 브라우저 정책상 자동 재생 시 처음에 음소거됩니다. 플레이어 안의 음소거를 해제하면 소리가 납니다.
+              자동 재생 시 처음엔 음소거됩니다. 플레이어 아래 볼륨 슬라이더로 소리를 조절해 주세요.
             </p>
           </div>
         )}
@@ -2923,10 +2966,14 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
           )}
           {hasPlayableContent && playback.kind === "youtube" && playback.youtubeVideoId && (
             <iframe
-              key={`yt-${playback.youtubeVideoId}-${shouldAutoplay ? "ap" : "noap"}`}
+              ref={youtubeIframeRef}
+              key={`yt-${playback.youtubeVideoId}-${embedOrigin ?? "pending"}`}
               title={currentContent.content_title}
               className="absolute inset-0 h-full w-full border-0"
-              src={youtubeEmbedUrl(playback.youtubeVideoId, { autoplay: shouldAutoplay })}
+              src={youtubeEmbedUrl(playback.youtubeVideoId, {
+                autoplay: shouldAutoplay,
+                origin: embedOrigin,
+              })}
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
               allowFullScreen
             />
@@ -3138,9 +3185,39 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
               팟캐스트 오디오 컨트롤은 위 플레이어에서 조작할 수 있어요.
             </p>
           ) : isEmbed ? (
-            <p className="text-xs text-muted-foreground mb-4">
-              재생·일시정지·볼륨은 위 플레이어에서 조작할 수 있어요.
-            </p>
+            <div className="mb-4 space-y-2">
+              <p className="text-xs text-muted-foreground">
+                재생·일시정지는 위 플레이어에서, 소리는 아래 슬라이더로 조절하세요.
+              </p>
+              <div className="flex items-center gap-3 rounded-xl border border-border bg-muted/40 px-3 py-2.5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9 shrink-0 rounded-lg"
+                  onClick={toggleYoutubeMute}
+                  aria-label={youtubeMuted ? "음소거 해제" : "음소거"}
+                >
+                  {youtubeMuted ? (
+                    <VolumeX className="h-4 w-4" />
+                  ) : (
+                    <Volume2 className="h-4 w-4" />
+                  )}
+                </Button>
+                <Slider
+                  value={[youtubeMuted ? 0 : youtubeVolume]}
+                  min={0}
+                  max={100}
+                  step={1}
+                  className="flex-1"
+                  aria-label="볼륨"
+                  onValueChange={(values) => applyYoutubeVolume(values[0] ?? 0)}
+                />
+                <span className="w-8 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                  {youtubeMuted ? 0 : youtubeVolume}
+                </span>
+              </div>
+            </div>
           ) : (
             <>
               <div className="mb-4">
@@ -3871,7 +3948,20 @@ function DashboardView({
         </CardHeader>
         <CardContent className={cn(openSections.media ? "block" : "hidden", "md:block")}>
           <div className="flex gap-4 overflow-x-auto pb-4 -mx-2 px-2">
-            {contentHistory.map((media) => (
+            {contentHistory.map((media) => {
+              const playback = resolvePlayback({
+                content_id: media.content_id,
+                media_provider: media.media_provider,
+                media_url: media.media_url,
+              })
+
+              const thumbnailUrl =
+                media.thumbnail_url ??
+                (playback.kind === "youtube" && playback.youtubeVideoId
+                  ? youtubeThumbnailUrl(playback.youtubeVideoId, "mqdefault")
+                  : null)
+
+              return (
               <div
                 key={media.id}
                 role="button"
@@ -3887,6 +3977,16 @@ function DashboardView({
                 className="flex-shrink-0 w-48 group cursor-pointer rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
                 <div className="aspect-video rounded-xl bg-muted mb-2 relative overflow-hidden">
+                  {thumbnailUrl ? (
+                    <img
+                      src={thumbnailUrl}
+                      alt=""
+                      loading="lazy"
+                      className="absolute inset-0 h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="absolute inset-0 bg-gradient-to-br from-muted to-muted/40" />
+                  )}
                   <div className="absolute inset-0 flex items-center justify-center">
                     <Play className="w-10 h-10 text-primary" />
                   </div>
@@ -3903,7 +4003,8 @@ function DashboardView({
                   {media.content_title}
                 </p>
               </div>
-            ))}
+              )
+            })}
             {contentHistory.length === 0 && (
               <p className="text-sm text-muted-foreground">아직 저장된 콘텐츠 기록이 없습니다.</p>
             )}
@@ -4415,14 +4516,6 @@ function OnboardingScreen({
               {isSaving ? "저장 중..." : activeTab==="mypage"? "저장" : "시작하기"}
             </Button>
 
-            {/* Skip Option */}
-            <button
-              onClick={onComplete}
-              disabled={isSaving}
-              className="w-full mt-4 text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              나중에 설정할게요
-            </button>
             {errorMessage && <p className="mt-3 text-center text-xs text-destructive">{errorMessage}</p>}
           </CardContent>
         </Card>
