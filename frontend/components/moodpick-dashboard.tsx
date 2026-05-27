@@ -3461,7 +3461,6 @@ function CounselingView({
 }) {
   const [contentFullscreen, setContentFullscreen] = useState(false)
   const [draft, setDraft] = useState("")
-  const [isInputFocused, setIsInputFocused] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -3633,8 +3632,6 @@ function CounselingView({
               placeholder="메시지를 입력하세요..."
               className="flex-1 rounded-xl bg-muted border-0"
               onKeyDown={(e) => e.key === "Enter" && submitDraft()}
-              onFocus={() => setIsInputFocused(true)}
-              onBlur={() => setIsInputFocused(false)}
             />
             <Button onClick={submitDraft} size="icon" className="rounded-xl" disabled={isSendingMessage}>
               <Send className={`w-4 h-4 ${isSendingMessage ? "opacity-50" : ""}`} />
@@ -3644,10 +3641,7 @@ function CounselingView({
             <Button
               onClick={onEndSession}
               variant="outline"
-              className={cn(
-                "w-full cursor-pointer rounded-xl border-destructive text-destructive hover:border-destructive/70 hover:bg-destructive/10 hover:text-destructive",
-                isInputFocused && "hidden"
-              )}
+              className="w-full cursor-pointer rounded-xl border-destructive text-destructive hover:border-destructive/70 hover:bg-destructive/10 hover:text-destructive"
             >
               오늘의 상담 종료하기
             </Button>
@@ -3854,13 +3848,6 @@ function DashboardView({
                 <span className="text-xs text-muted-foreground">😊 높음</span>
               </div>
             </div>
-            <div className="mt-5 rounded-lg bg-muted/30 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
-              <p className="mb-1 font-medium text-foreground">감정 점수는 이렇게 계산돼요</p>
-              <p>
-                상담 전·후 문진(기분·에너지·스트레스) 응답을 1~5점으로 환산해 평균낸 뒤, 0~100점으로 보여드려요.
-                점수가 높을수록 그날 기분 상태가 더 긍정적이에요.
-              </p>
-            </div>
           </CardContent>
         </Card>
 
@@ -3918,6 +3905,13 @@ function DashboardView({
                   아직 표시할 감정 기록이 없습니다.
                 </div>
               )}
+            </div>
+            <div className="mt-5 rounded-lg bg-muted/30 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
+              <p className="mb-1 font-medium text-foreground">감정 점수는 이렇게 계산돼요</p>
+              <p>
+                상담 전·후 문진(기분·에너지·스트레스) 응답을 1~5점으로 환산해 평균낸 뒤, 0~100점으로 보여드려요.
+                점수가 높을수록 그날 기분 상태가 더 긍정적이에요.
+              </p>
             </div>
             {recentEmotionRecords.length > 0 && (
               <div className="mt-4 space-y-2">
