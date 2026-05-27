@@ -38,6 +38,7 @@ import {
   youtubeEmbedUrl,
   youtubeThumbnailUrl,
 } from "@/lib/contentPlayback"
+import { postYoutubeEmbedCommand } from "@/lib/youtubeEmbedControl"
 import {
   Home,
   MessageCircle,
@@ -48,6 +49,7 @@ import {
   Play,
   Pause,
   Volume2,
+  VolumeX,
   SkipForward,
   Flame,
   ChevronLeft,
@@ -66,6 +68,7 @@ import {
 } from "lucide-react"
 import { ChatMarkdown } from "@/components/chat-markdown"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Slider } from "@/components/ui/slider"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -107,7 +110,7 @@ import {
 const REMINDER_FEATURE_ENABLED = process.env.NEXT_PUBLIC_REMINDER_ENABLED === "true"
 const DEMO_HIDE_ONBOARDING = false
 const YOUTUBE_AUTOPLAY_NOTICE =
-  "추천 영상이 자동재생 중이에요. 소리를 들으려면 플레이어에서 음소거를 해제해 주세요."
+  "추천 영상이 자동재생 중이에요. 소리는 플레이어 아래 볼륨 슬라이더로 조절할 수 있어요."
 
 type TabType = "home" | "counseling" | "dashboard" | "mypage"
 
@@ -2651,10 +2654,50 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
 
   // Podcast 전용 오디오 상태/컨트롤
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const youtubeIframeRef = useRef<HTMLIFrameElement | null>(null)
+  const [embedOrigin, setEmbedOrigin] = useState<string | undefined>()
+  const [youtubeVolume, setYoutubeVolume] = useState(70)
+  const [youtubeMuted, setYoutubeMuted] = useState(true)
   const [podcastPlaying, setPodcastPlaying] = useState(false)
   const [podcastCurrentTime, setPodcastCurrentTime] = useState(0)
   const [podcastDuration, setPodcastDuration] = useState(0)
   const [podcastRate, setPodcastRate] = useState(1)
+
+  useEffect(() => {
+    setEmbedOrigin(window.location.origin)
+  }, [])
+
+  useEffect(() => {
+    if (playback.kind !== "youtube" || !playback.youtubeVideoId) return
+    setYoutubeVolume(70)
+    setYoutubeMuted(shouldAutoplay)
+  }, [playback.kind, playback.youtubeVideoId, shouldAutoplay])
+
+  const applyYoutubeVolume = useCallback((volume: number) => {
+    const clamped = Math.max(0, Math.min(100, Math.round(volume)))
+    setYoutubeVolume(clamped)
+    if (clamped === 0) {
+      setYoutubeMuted(true)
+      postYoutubeEmbedCommand(youtubeIframeRef.current, "mute")
+      return
+    }
+    setYoutubeMuted(false)
+    postYoutubeEmbedCommand(youtubeIframeRef.current, "unMute")
+    postYoutubeEmbedCommand(youtubeIframeRef.current, "setVolume", [clamped])
+  }, [])
+
+  const toggleYoutubeMute = useCallback(() => {
+    if (youtubeMuted) {
+      const restore = youtubeVolume > 0 ? youtubeVolume : 70
+      setYoutubeVolume(restore)
+      setYoutubeMuted(false)
+      postYoutubeEmbedCommand(youtubeIframeRef.current, "unMute")
+      postYoutubeEmbedCommand(youtubeIframeRef.current, "setVolume", [restore])
+      return
+    }
+    setYoutubeMuted(true)
+    postYoutubeEmbedCommand(youtubeIframeRef.current, "mute")
+  }, [youtubeMuted, youtubeVolume])
 
   useEffect(() => {
     if (playback.kind !== "podcast") return
@@ -2791,9 +2834,23 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
       )}
 
       {!isFullscreen && (
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold text-foreground mb-1">자동 추천 콘텐츠</h3>
-          <p className="text-sm text-muted-foreground">대화 내용을 바탕으로 AI가 추천해 드려요</p>
+        <div className="mb-6 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-lg font-semibold text-foreground mb-1">자동 추천 콘텐츠</h3>
+            <p className="text-sm text-muted-foreground">대화 내용을 바탕으로 AI가 추천해 드려요</p>
+          </div>
+          {onRequestFullscreen && (
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="shrink-0 rounded-xl"
+              onClick={onRequestFullscreen}
+              aria-label="콘텐츠 전체 화면"
+            >
+              <Maximize2 className="w-4 h-4" />
+            </Button>
+          )}
         </div>
       )}
 
@@ -2807,7 +2864,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
           >
             <Volume2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
             <p className="leading-snug">
-              유튜브는 브라우저 정책상 자동 재생 시 처음에 음소거됩니다. 플레이어 안의 음소거를 해제하면 소리가 납니다.
+              자동 재생 시 처음엔 음소거됩니다. 플레이어 아래 볼륨 슬라이더로 소리를 조절해 주세요.
             </p>
           </div>
         )}
@@ -2831,22 +2888,16 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
             isFullscreen && playback.kind === "podcast" && "max-h-[min(70vh,520px)] flex-1 min-h-0"
           )}
         >
-          {onRequestFullscreen && (
-            <button
-              type="button"
-              className="absolute top-2 right-2 z-10 p-2 rounded-lg bg-foreground/30 hover:bg-foreground/50 transition-colors"
-              onClick={onRequestFullscreen}
-              aria-label="콘텐츠 전체 화면"
-            >
-              <Maximize2 className="w-4 h-4 text-primary-foreground" />
-            </button>
-          )}
           {hasPlayableContent && playback.kind === "youtube" && playback.youtubeVideoId && (
             <iframe
-              key={`yt-${playback.youtubeVideoId}`}
+              ref={youtubeIframeRef}
+              key={`yt-${playback.youtubeVideoId}-${embedOrigin ?? "pending"}`}
               title={currentContent.content_title}
               className="absolute inset-0 h-full w-full border-0"
-              src={youtubeEmbedUrl(playback.youtubeVideoId, { autoplay: shouldAutoplay })}
+              src={youtubeEmbedUrl(playback.youtubeVideoId, {
+                autoplay: shouldAutoplay,
+                origin: embedOrigin,
+              })}
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
               allowFullScreen
             />
@@ -3058,9 +3109,39 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
               팟캐스트 오디오 컨트롤은 위 플레이어에서 조작할 수 있어요.
             </p>
           ) : isEmbed ? (
-            <p className="text-xs text-muted-foreground mb-4">
-              재생·일시정지·볼륨은 위 플레이어에서 조작할 수 있어요.
-            </p>
+            <div className="mb-4 space-y-2">
+              <p className="text-xs text-muted-foreground">
+                재생·일시정지는 위 플레이어에서, 소리는 아래 슬라이더로 조절하세요.
+              </p>
+              <div className="flex items-center gap-3 rounded-xl border border-border bg-muted/40 px-3 py-2.5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9 shrink-0 rounded-lg"
+                  onClick={toggleYoutubeMute}
+                  aria-label={youtubeMuted ? "음소거 해제" : "음소거"}
+                >
+                  {youtubeMuted ? (
+                    <VolumeX className="h-4 w-4" />
+                  ) : (
+                    <Volume2 className="h-4 w-4" />
+                  )}
+                </Button>
+                <Slider
+                  value={[youtubeMuted ? 0 : youtubeVolume]}
+                  min={0}
+                  max={100}
+                  step={1}
+                  className="flex-1"
+                  aria-label="볼륨"
+                  onValueChange={(values) => applyYoutubeVolume(values[0] ?? 0)}
+                />
+                <span className="w-8 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                  {youtubeMuted ? 0 : youtubeVolume}
+                </span>
+              </div>
+            </div>
           ) : (
             <>
               <div className="mb-4">

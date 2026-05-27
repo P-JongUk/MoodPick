@@ -64,11 +64,14 @@ export function youtubeThumbnailUrl(
 
 export function youtubeEmbedUrl(
   videoId: string,
-  opts?: { autoplay?: boolean }
+  opts?: { autoplay?: boolean; origin?: string }
 ): string {
   let q = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?rel=0&enablejsapi=1`
+  if (opts?.origin) {
+    q += `&origin=${encodeURIComponent(opts.origin)}`
+  }
   if (opts?.autoplay) {
-    // mute=1: 많은 브라우저가 사용자 제스처 없이는 음소거 자동재생만 허용 — 플레이어에서 음소거 해제 가능
+    // mute=1: 많은 브라우저가 사용자 제스처 없이는 음소거 자동재생만 허용 — 앱 볼륨 슬라이더로 해제
     q += "&autoplay=1&mute=1"
   }
   return q
