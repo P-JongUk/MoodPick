@@ -25,8 +25,6 @@ class CounselingState(BaseModel):
 
     # --- Orchestrator fills these ---
     is_crisis: bool = False
-    is_off_topic: bool = False                          # 상담 영역 밖 지식/기술/학술 질문
-    is_injection: bool = False                          # 프롬프트 인젝션·역할 탈취·유해 콘텐츠 유도 시도
     intent: str = "상담"                                # "상담" | "추천" | "잡담"
     needs_recommendation: bool = False
     content_format: str = "unspecified"                 # "video" | "music" | "audio" | "unspecified"

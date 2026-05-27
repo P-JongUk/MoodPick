@@ -13,6 +13,7 @@ import {
 import {
   endSession,
   getContentHistory,
+  getContentRecommendations,
   getCounselingHistory,
   cleanupStaleSessionsForUser,
   getCurrentSession,
@@ -29,6 +30,7 @@ import {
   upsertReminderPreference,
   upsertUserProfile,
   type CounselorPersona,
+  type ContentMediaPreferenceQuery,
   type DailySummary,
   type SessionResponse,
 } from "@/lib/api"
@@ -38,6 +40,7 @@ import {
   youtubeEmbedUrl,
   youtubeThumbnailUrl,
 } from "@/lib/contentPlayback"
+import { postYoutubeEmbedCommand } from "@/lib/youtubeEmbedControl"
 import {
   Home,
   MessageCircle,
@@ -48,6 +51,7 @@ import {
   Play,
   Pause,
   Volume2,
+  VolumeX,
   SkipForward,
   Flame,
   ChevronLeft,
@@ -56,7 +60,6 @@ import {
   ChevronDown,
   User,
   LogOut,
-  Trash2,
   Maximize2,
   Minimize2,
   X,
@@ -66,6 +69,7 @@ import {
 } from "lucide-react"
 import { ChatMarkdown } from "@/components/chat-markdown"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Slider } from "@/components/ui/slider"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -142,7 +146,11 @@ interface Message {
   timestamp?: string
   recommendedContent?: RecommendedContent | null
   isStreaming?: boolean
+  /** 텍스트 스트리밍은 끝났지만 추천 메타가 아직 도착하지 않은 상태 */
+  isAwaitingMeta?: boolean
 }
+
+const AWAITING_META_INDICATOR_DELAY_MS = 200
 
 interface SessionHistory {
   sessionId: string
@@ -242,6 +250,12 @@ function mapContentHistoryRow(row: Record<string, unknown>): ContentHistoryItem 
     watched_at: String(row.watched_at ?? new Date().toISOString()),
     session_id: row.session_id != null ? String(row.session_id) : null,
   }
+}
+
+function normalizeMediaPreference(value: unknown): ContentMediaPreferenceQuery {
+  if (value === "youtube" || value === "podcast" || value === "all") return value
+  if (value === "mixed") return "all"
+  return "youtube"
 }
 
 function mapRecommendedAlternativeLinks(
@@ -540,6 +554,7 @@ export function MoodPickDashboard() {
 
   // My page settings state
   const [autoPlayEnabled, setAutoPlayEnabled] = useState(true)
+  const [mediaPreference, setMediaPreference] = useState<ContentMediaPreferenceQuery>("youtube")
   const [dailyReminderEnabled, setDailyReminderEnabled] = useState(true)
   const [dailyReminderTime, setDailyReminderTime] = useState("22:00")
   const [dailyReminderTimezone, setDailyReminderTimezone] = useState("Asia/Seoul")
@@ -556,10 +571,6 @@ export function MoodPickDashboard() {
   const [profileSaveMessage, setProfileSaveMessage] = useState<string | null>(null)
   const [isSavingProfile, setIsSavingProfile] = useState(false)
   const [profileDisplayName, setProfileDisplayName] = useState<string | null>(null)
-  const [mypagePrefsMessage, setMypagePrefsMessage] = useState<string | null>(null)
-  const [isSavingMypagePrefs, setIsSavingMypagePrefs] = useState(false)
-  const [isExportingMyData, setIsExportingMyData] = useState(false)
-  const [exportMyDataMessage, setExportMyDataMessage] = useState<string | null>(null)
   const previousUserIdRef = useRef<string | null>(null)
   const lastCounselingActivityRef = useRef<number>(0)
   const counselingActiveSessionIdRef = useRef<string | null>(null)
@@ -886,6 +897,7 @@ export function MoodPickDashboard() {
           summaryResult,
           sessionsResult,
           contentsResult,
+          recommendationsResult,
           profileResult,
         ] = await Promise.allSettled([
           getUserStats(user.id),
@@ -893,6 +905,10 @@ export function MoodPickDashboard() {
           getEmotionSummary(user.id, 7),
           getUserSessions(user.id, 10),
           getContentHistory(user.id, 20),
+          getContentRecommendations(user.id, {
+            limit: 10,
+            media: mediaPreference,
+          }),
           getUserProfile(user.id),
         ])
 
@@ -976,14 +992,28 @@ export function MoodPickDashboard() {
         )
 
         const contentsRaw = contentsResult.status === "fulfilled" ? contentsResult.value : []
+        const recommendationsRaw =
+          recommendationsResult.status === "fulfilled" ? recommendationsResult.value : []
         const sessionsRaw = sessionsResult.status === "fulfilled" ? sessionsResult.value : null
 
         const contentItems = ((contentsRaw as unknown[]) ?? []).map((r) =>
           mapContentHistoryRow(r as Record<string, unknown>)
         )
+        const recommendationItems = ((recommendationsRaw as unknown[]) ?? []).map((r) =>
+          mapContentHistoryRow(r as Record<string, unknown>)
+        )
         setContentHistory(contentItems)
         if (!counselingActiveSessionIdRef.current) {
-          applyHistoricalPrimaryContentState(contentItems)
+          const primaryItems = contentItems.length > 0 ? contentItems : recommendationItems
+          applyHistoricalPrimaryContentState(primaryItems)
+          const activeContentId = primaryItems[0]?.content_id
+          const nextQueueSource =
+            recommendationItems.length > 0 ? recommendationItems : contentItems.slice(1)
+          const nextQueue = nextQueueSource
+            .filter((item) => item.content_id && item.content_id !== activeContentId)
+            .slice(0, 3)
+          setRecommendedQueue(nextQueue)
+          setTopCandidates(primaryItems[0] ? [primaryItems[0], ...nextQueue].slice(0, 4) : [])
         }
 
         const contentBySession = new Map<string, string>()
@@ -1029,7 +1059,7 @@ export function MoodPickDashboard() {
     }
 
     void loadDashboardData()
-  }, [currentMonth, calendarYear, user?.id, dashboardRefreshKey, applyHistoricalPrimaryContentState, clearCounselingContentState])
+  }, [currentMonth, calendarYear, user?.id, dashboardRefreshKey, mediaPreference, applyHistoricalPrimaryContentState, clearCounselingContentState])
 
   useEffect(() => {
     const loadReminderPreference = async () => {
@@ -1105,12 +1135,13 @@ export function MoodPickDashboard() {
   useEffect(() => {
     if (!user) return
     const meta = user.user_metadata as {
-      moodpick_preferences?: { autoplay_enabled?: boolean }
+      moodpick_preferences?: { autoplay_enabled?: boolean; media_preference?: unknown }
     }
     const prefs = meta.moodpick_preferences
     if (prefs && typeof prefs.autoplay_enabled === "boolean") {
       setAutoPlayEnabled(prefs.autoplay_enabled)
     }
+    setMediaPreference(normalizeMediaPreference(prefs?.media_preference))
   }, [user])
 
   const handleLogin = async () => {
@@ -1287,7 +1318,7 @@ export function MoodPickDashboard() {
       return
     }
 
-    let initialCounselingMessage = "안녕하세요, 저는 무드픽 상담사입니다. 오늘 하루 어떠셨나요? 편하게 이야기해 주세요."
+    let initialCounselingMessage = "안녕하세요, 저는 무드픽입니다. 오늘 하루 어떠셨나요? 편하게 이야기해 주세요."
     if (preSurveySubmittingRef.current) return
     preSurveySubmittingRef.current = true
 
@@ -1456,7 +1487,7 @@ export function MoodPickDashboard() {
         const initialResponse = await getInitialCounselingMessage(sid)
         const text =
           initialResponse?.message ??
-          "안녕하세요, 저는 무드픽 상담사입니다. 오늘 하루 어떠셨나요? 편하게 이야기해 주세요."
+          "안녕하세요, 저는 무드픽입니다. 오늘 하루 어떠셨나요? 편하게 이야기해 주세요."
         restored = [
           {
             id: 1,
@@ -1624,6 +1655,13 @@ export function MoodPickDashboard() {
 
     let streamedText = ""
     let hasAiBubble = false
+    let awaitingMetaTimer: ReturnType<typeof setTimeout> | null = null
+    const clearAwaitingMetaTimer = () => {
+      if (awaitingMetaTimer) {
+        clearTimeout(awaitingMetaTimer)
+        awaitingMetaTimer = null
+      }
+    }
 
     void sendCounselingMessageStream(
       user.id,
@@ -1631,22 +1669,32 @@ export function MoodPickDashboard() {
       sessionId,
       (chunk) => {
         streamedText += chunk
+        clearAwaitingMetaTimer()
         if (!hasAiBubble) {
           hasAiBubble = true
           setMessages((prev) => [
             ...prev,
             { id: aiMsgId, sender: "ai", text: chunk, isStreaming: true },
           ])
-          return
+        } else {
+          setMessages((prev) =>
+            prev.map((message) =>
+              message.id === aiMsgId ? { ...message, text: message.text + chunk } : message
+            )
+          )
         }
 
-        setMessages((prev) =>
-          prev.map((message) =>
-            message.id === aiMsgId ? { ...message, text: message.text + chunk } : message
+        awaitingMetaTimer = setTimeout(() => {
+          awaitingMetaTimer = null
+          setMessages((prev) =>
+            prev.map((message) =>
+              message.id === aiMsgId ? { ...message, isAwaitingMeta: true } : message
+            )
           )
-        )
+        }, AWAITING_META_INDICATOR_DELAY_MS)
       },
       (meta) => {
+        clearAwaitingMetaTimer()
         const completionTime = new Date().toLocaleTimeString("ko-KR", {
           hour: "numeric",
           minute: "2-digit",
@@ -1672,6 +1720,7 @@ export function MoodPickDashboard() {
                 sender: "ai",
                 text: streamedText || "메시지를 받았어요. 잠시 마음을 정리해 볼게요.",
                 isStreaming: false,
+                isAwaitingMeta: false,
                 timestamp: completionTime,
                 recommendedContent: recommended,
               },
@@ -1682,6 +1731,7 @@ export function MoodPickDashboard() {
               ? {
                   ...message,
                   isStreaming: false,
+                  isAwaitingMeta: false,
                   timestamp: completionTime,
                   recommendedContent: recommended,
                 }
@@ -1701,6 +1751,7 @@ export function MoodPickDashboard() {
         setIsSendingMessage(false)
       },
       (error) => {
+        clearAwaitingMetaTimer()
         const completionTime = new Date().toLocaleTimeString("ko-KR", {
           hour: "numeric",
           minute: "2-digit",
@@ -1724,7 +1775,13 @@ export function MoodPickDashboard() {
           }
           return prev.map((message) =>
             message.id === aiMsgId
-              ? { ...message, text: errorMessage, isStreaming: false, timestamp: completionTime }
+              ? {
+                  ...message,
+                  text: errorMessage,
+                  isStreaming: false,
+                  isAwaitingMeta: false,
+                  timestamp: completionTime,
+                }
               : message
           )
         })
@@ -1761,62 +1818,6 @@ export function MoodPickDashboard() {
       return false
     } finally {
       setIsSavingProfile(false)
-    }
-  }
-
-  const handleSaveMypagePreferences = async () => {
-    if (!user?.id) return
-    setIsSavingMypagePrefs(true)
-    setMypagePrefsMessage(null)
-    try {
-      const supabase = getSupabaseClient()
-      const { error } = await supabase.auth.updateUser({
-        data: {
-          moodpick_preferences: {
-            autoplay_enabled: autoPlayEnabled,
-          },
-        },
-      })
-      if (error) throw error
-      setMypagePrefsMessage("맞춤 설정이 계정에 저장되었습니다.")
-    } catch (e) {
-      setMypagePrefsMessage(e instanceof Error ? e.message : "저장에 실패했습니다.")
-    } finally {
-      setIsSavingMypagePrefs(false)
-    }
-  }
-
-  const handleExportMyData = async () => {
-    if (!user?.id) return
-    setIsExportingMyData(true)
-    setExportMyDataMessage(null)
-    try {
-      const [stats, contents, emotions] = await Promise.all([
-        getUserStats(user.id),
-        getContentHistory(user.id, 100),
-        getEmotionRecords(user.id, 365),
-      ])
-      const payload = {
-        exported_at: new Date().toISOString(),
-        user_id: user.id,
-        stats,
-        content_history: contents,
-        emotion_records: emotions,
-      }
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = `moodpick-export-${user.id.slice(0, 8)}.json`
-      a.click()
-      URL.revokeObjectURL(url)
-      setExportMyDataMessage("JSON 파일로 내보냈습니다.")
-    } catch (e) {
-      setExportMyDataMessage(
-        e instanceof Error ? e.message : "내보내기에 실패했습니다. 잠시 후 다시 시도해 주세요."
-      )
-    } finally {
-      setIsExportingMyData(false)
     }
   }
 
@@ -2020,16 +2021,28 @@ export function MoodPickDashboard() {
   }  
 
   return (
-    <div className="flex h-screen bg-background">
-      {mobileSidebarOpen && (
-        <div className="fixed inset-0 z-50 md:hidden">
+    <div className="flex h-[100dvh] bg-background">
+      <div
+        className={cn(
+          "fixed inset-0 z-50 md:hidden",
+          mobileSidebarOpen ? "pointer-events-auto" : "pointer-events-none"
+        )}
+      >
           <button
             type="button"
             aria-label="메뉴 닫기"
-            className="absolute inset-0 bg-black/40"
+            className={cn(
+              "absolute inset-0 bg-black/40 transition-opacity duration-300 ease-out",
+              mobileSidebarOpen ? "opacity-100" : "opacity-0"
+            )}
             onClick={() => setMobileSidebarOpen(false)}
           />
-          <aside className="relative z-10 flex h-full w-64 max-w-[85vw] flex-col border-r border-sidebar-border bg-sidebar shadow-2xl">
+          <aside
+            className={cn(
+              "relative z-10 flex h-full w-64 max-w-[85vw] flex-col border-r border-sidebar-border bg-sidebar shadow-2xl transition-transform duration-300 ease-out",
+              mobileSidebarOpen ? "translate-x-0" : "-translate-x-full"
+            )}
+          >
             <div className="border-b border-sidebar-border p-6">
               <button
                 type="button"
@@ -2082,7 +2095,6 @@ export function MoodPickDashboard() {
             </div>
           </aside>
         </div>
-      )}
 
       {/* Sidebar */}
       <aside className="hidden w-64 flex-col border-r border-sidebar-border bg-sidebar md:flex">
@@ -2135,7 +2147,7 @@ export function MoodPickDashboard() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 min-w-0 overflow-auto">
+      <main className={cn("min-h-0 flex-1 min-w-0", activeTab === "counseling" ? "overflow-hidden" : "overflow-auto")}>
         {activeTab === "home" && (
           <HomeView
             onStartNewSession={handleStartNewSession}
@@ -2143,8 +2155,9 @@ export function MoodPickDashboard() {
             emotionSummary={emotionSummary}
             currentContent={currentContent}
             onPlayRecommended={() => {
+              setAutoplayContentId(null)
               setIsPlaying(true)
-              setActiveTab("counseling")
+              setDashboardHistoryFullscreenOpen(true)
             }}
             flowMessage={syncWarningMessage}
             onOpenMobileMenu={() => setMobileSidebarOpen(true)}
@@ -2288,11 +2301,7 @@ export function MoodPickDashboard() {
             onSaveDisplayName={handleSaveDisplayName}
             profileSaveMessage={profileSaveMessage}
             isSavingProfile={isSavingProfile}
-            onSaveMypagePreferences={handleSaveMypagePreferences}
-            mypagePrefsMessage={mypagePrefsMessage}
-            isSavingMypagePrefs={isSavingMypagePrefs}
             userCreatedAt={user?.created_at ?? null}
-            totalSessions={userStats?.total_sessions ?? 0}
             dailyReminderEnabled={dailyReminderEnabled}
             setDailyReminderEnabled={setDailyReminderEnabled}
             dailyReminderTime={dailyReminderTime}
@@ -2301,9 +2310,6 @@ export function MoodPickDashboard() {
             setDailyReminderTimezone={setDailyReminderTimezone}
             onSaveReminderPreference={handleSaveReminderPreference}
             reminderSaveMessage={reminderSaveMessage}
-            onExportMyData={handleExportMyData}
-            isExportingMyData={isExportingMyData}
-            exportMyDataMessage={exportMyDataMessage}
             setHasCompletedOnboarding={setHasCompletedOnboarding}
             setSurveySave={setSurveySave}
             surveyEnter={surveyEnter}
@@ -2367,6 +2373,7 @@ export function MoodPickDashboard() {
             syncWarningMessage={syncWarningMessage}
             onSelectRecommendedContent={handleSelectRecommendedContent}
             onExitFullscreen={() => setDashboardHistoryFullscreenOpen(false)}
+            allowFeedback={false}
           />
         </div>
       )}
@@ -2506,9 +2513,10 @@ function HomeView({
       <div className="mb-8 md:mb-10">
         <div className="flex items-start gap-3">
           <MobileMenuButton onClick={onOpenMobileMenu} />
-        <h2 className="mb-3 text-2xl font-bold leading-tight text-foreground text-balance md:text-3xl">
-          오늘 하루, 당신의 마음은 어떤 색인가요?
-        </h2>
+          <h2 className="mb-3 text-2xl font-bold leading-tight text-foreground text-balance md:text-3xl">
+            <span className="block sm:inline">오늘 하루,</span>{" "}
+            <span className="block sm:inline">당신의 마음은 어떤 색인가요?</span>
+          </h2>
         </div>
         {flowMessage && (
           <p className="mt-3 text-sm text-destructive bg-destructive/10 rounded-xl px-4 py-2">{flowMessage}</p>
@@ -2621,6 +2629,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
   onSelectRecommendedContent,
   onRequestFullscreen,
   onExitFullscreen,
+  allowFeedback = true,
 }: {
   variant: "sidebar" | "fullscreen"
   currentContent: ContentHistoryItem
@@ -2637,6 +2646,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
   onSelectRecommendedContent: (value: ContentHistoryItem) => void
   onRequestFullscreen?: () => void
   onExitFullscreen?: () => void
+  allowFeedback?: boolean
 }) {
   const isFullscreen = variant === "fullscreen"
   const playback = resolvePlayback({
@@ -2653,10 +2663,50 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
 
   // Podcast 전용 오디오 상태/컨트롤
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const youtubeIframeRef = useRef<HTMLIFrameElement | null>(null)
+  const [embedOrigin, setEmbedOrigin] = useState<string | undefined>()
+  const [youtubeVolume, setYoutubeVolume] = useState(70)
+  const [youtubeMuted, setYoutubeMuted] = useState(true)
   const [podcastPlaying, setPodcastPlaying] = useState(false)
   const [podcastCurrentTime, setPodcastCurrentTime] = useState(0)
   const [podcastDuration, setPodcastDuration] = useState(0)
   const [podcastRate, setPodcastRate] = useState(1)
+
+  useEffect(() => {
+    setEmbedOrigin(window.location.origin)
+  }, [])
+
+  useEffect(() => {
+    if (playback.kind !== "youtube" || !playback.youtubeVideoId) return
+    setYoutubeVolume(70)
+    setYoutubeMuted(shouldAutoplay)
+  }, [playback.kind, playback.youtubeVideoId, shouldAutoplay])
+
+  const applyYoutubeVolume = useCallback((volume: number) => {
+    const clamped = Math.max(0, Math.min(100, Math.round(volume)))
+    setYoutubeVolume(clamped)
+    if (clamped === 0) {
+      setYoutubeMuted(true)
+      postYoutubeEmbedCommand(youtubeIframeRef.current, "mute")
+      return
+    }
+    setYoutubeMuted(false)
+    postYoutubeEmbedCommand(youtubeIframeRef.current, "unMute")
+    postYoutubeEmbedCommand(youtubeIframeRef.current, "setVolume", [clamped])
+  }, [])
+
+  const toggleYoutubeMute = useCallback(() => {
+    if (youtubeMuted) {
+      const restore = youtubeVolume > 0 ? youtubeVolume : 70
+      setYoutubeVolume(restore)
+      setYoutubeMuted(false)
+      postYoutubeEmbedCommand(youtubeIframeRef.current, "unMute")
+      postYoutubeEmbedCommand(youtubeIframeRef.current, "setVolume", [restore])
+      return
+    }
+    setYoutubeMuted(true)
+    postYoutubeEmbedCommand(youtubeIframeRef.current, "mute")
+  }, [youtubeMuted, youtubeVolume])
 
   useEffect(() => {
     if (playback.kind !== "podcast") return
@@ -2809,7 +2859,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
           >
             <Volume2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
             <p className="leading-snug">
-              유튜브는 브라우저 정책상 자동 재생 시 처음에 음소거됩니다. 플레이어 안의 음소거를 해제하면 소리가 납니다.
+              자동 재생 시 처음엔 음소거됩니다. 플레이어 아래 볼륨 슬라이더로 소리를 조절해 주세요.
             </p>
           </div>
         )}
@@ -2845,10 +2895,14 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
           )}
           {hasPlayableContent && playback.kind === "youtube" && playback.youtubeVideoId && (
             <iframe
-              key={`yt-${playback.youtubeVideoId}-${shouldAutoplay ? "ap" : "noap"}`}
+              ref={youtubeIframeRef}
+              key={`yt-${playback.youtubeVideoId}-${embedOrigin ?? "pending"}`}
               title={currentContent.content_title}
               className="absolute inset-0 h-full w-full border-0"
-              src={youtubeEmbedUrl(playback.youtubeVideoId, { autoplay: shouldAutoplay })}
+              src={youtubeEmbedUrl(playback.youtubeVideoId, {
+                autoplay: shouldAutoplay,
+                origin: embedOrigin,
+              })}
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
               allowFullScreen
             />
@@ -3060,9 +3114,39 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
               팟캐스트 오디오 컨트롤은 위 플레이어에서 조작할 수 있어요.
             </p>
           ) : isEmbed ? (
-            <p className="text-xs text-muted-foreground mb-4">
-              재생·일시정지·볼륨은 위 플레이어에서 조작할 수 있어요.
-            </p>
+            <div className="mb-4 space-y-2">
+              <p className="text-xs text-muted-foreground">
+                재생·일시정지는 위 플레이어에서, 소리는 아래 슬라이더로 조절하세요.
+              </p>
+              <div className="flex items-center gap-3 rounded-xl border border-border bg-muted/40 px-3 py-2.5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9 shrink-0 rounded-lg"
+                  onClick={toggleYoutubeMute}
+                  aria-label={youtubeMuted ? "음소거 해제" : "음소거"}
+                >
+                  {youtubeMuted ? (
+                    <VolumeX className="h-4 w-4" />
+                  ) : (
+                    <Volume2 className="h-4 w-4" />
+                  )}
+                </Button>
+                <Slider
+                  value={[youtubeMuted ? 0 : youtubeVolume]}
+                  min={0}
+                  max={100}
+                  step={1}
+                  className="flex-1"
+                  aria-label="볼륨"
+                  onValueChange={(values) => applyYoutubeVolume(values[0] ?? 0)}
+                />
+                <span className="w-8 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                  {youtubeMuted ? 0 : youtubeVolume}
+                </span>
+              </div>
+            </div>
           ) : (
             <>
               <div className="mb-4">
@@ -3091,7 +3175,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
         </CardContent>
       </Card>
 
-      {hasPlayableContent && (
+      {hasPlayableContent && allowFeedback && (
         <div className={cn("mt-4 p-4 rounded-xl bg-secondary/30 shrink-0", isFullscreen && "max-w-5xl w-full mx-auto")}>
           <p className="text-sm text-center text-muted-foreground mb-3">
             {contentFeedbackComplete
@@ -3218,6 +3302,14 @@ const CounselChatBubble = memo(function CounselChatBubble({ message }: { message
             </div>
           </div>
         )}
+        {message.sender === "ai" &&
+          message.isAwaitingMeta &&
+          !message.recommendedContent?.video_id && (
+            <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
+              <span>추천 콘텐츠 찾는 중...</span>
+            </div>
+          )}
         {message.timestamp && (
           <p
             className={`text-xs mt-1 ${
@@ -3285,6 +3377,8 @@ function CounselingView({
 }) {
   const [contentFullscreen, setContentFullscreen] = useState(false)
   const [draft, setDraft] = useState("")
+  const [isInputFocused, setIsInputFocused] = useState(false)
+  const [isInputHovered, setIsInputHovered] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -3366,7 +3460,7 @@ function CounselingView({
                 <MessageCircle className="w-5 h-5 text-primary-foreground" />
               </div>
               <div>
-                <h3 className="font-semibold text-foreground">무드픽 상담사</h3>
+                <h3 className="font-semibold text-foreground">무드픽</h3>
                 <p className="text-xs text-muted-foreground">AI 심리 상담</p>
               </div>
             </div>
@@ -3376,16 +3470,21 @@ function CounselingView({
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="rounded-lg lg:hidden"
+                  className="flex h-auto flex-col justify-center rounded-lg py-2.5 lg:hidden"
                   onClick={() => setContentFullscreen(true)}
                 >
-                  <Maximize2 className="h-4 w-4 sm:mr-1" />
-                  <span className="hidden sm:inline">콘텐츠</span>
+                  <Maximize2 className="h-4 w-4" />
+                  <span className="text-xs leading-none">콘텐츠 보기</span>
                 </Button>
               )}
-              <Button onClick={onStartNewSession} variant="outline" size="sm" className="rounded-lg">
-                <Plus className="w-4 h-4 mr-1" />
-                새 채팅
+              <Button
+                onClick={onStartNewSession}
+                variant="outline"
+                size="sm"
+                className="flex h-auto flex-col justify-center rounded-lg py-2.5 lg:h-8 lg:flex-row lg:py-0"
+              >
+                <Plus className="w-4 h-4 lg:mr-1" />
+                <span className="text-xs leading-none lg:text-sm">새 채팅</span>
               </Button>
             </div>
           </div>
@@ -3451,6 +3550,10 @@ function CounselingView({
               placeholder="메시지를 입력하세요..."
               className="flex-1 rounded-xl bg-muted border-0"
               onKeyDown={(e) => e.key === "Enter" && submitDraft()}
+              onFocus={() => setIsInputFocused(true)}
+              onBlur={() => setIsInputFocused(false)}
+              onMouseEnter={() => setIsInputHovered(true)}
+              onMouseLeave={() => setIsInputHovered(false)}
             />
             <Button onClick={submitDraft} size="icon" className="rounded-xl" disabled={isSendingMessage}>
               <Send className={`w-4 h-4 ${isSendingMessage ? "opacity-50" : ""}`} />
@@ -3460,7 +3563,10 @@ function CounselingView({
             <Button
               onClick={onEndSession}
               variant="outline"
-              className="w-full cursor-pointer rounded-xl border-destructive text-destructive hover:border-destructive/70 hover:bg-destructive/10 hover:text-destructive"
+              className={cn(
+                "w-full cursor-pointer rounded-xl border-destructive text-destructive hover:border-destructive/70 hover:bg-destructive/10 hover:text-destructive",
+                (isInputFocused || isInputHovered) && "hidden"
+              )}
             >
               오늘의 상담 종료하기
             </Button>
@@ -3591,7 +3697,17 @@ function DashboardView({
         <Card className="border-0 shadow-lg">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg">감정 캘린더</CardTitle>
+              <button
+                type="button"
+                className="flex items-center gap-2 text-left md:pointer-events-none"
+                onClick={() => toggleSection("calendar")}
+                aria-expanded={openSections.calendar}
+              >
+                <span className="text-lg font-semibold leading-none tracking-tight">감정 캘린더</span>
+                <span className="md:hidden">
+                  {openSections.calendar ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </span>
+              </button>
               <div className="hidden items-center gap-2 md:flex">
                 <Button variant="ghost" size="icon" className="h-8 w-8" onClick={goCalendarPrev}>
                   <ChevronLeft className="w-4 h-4" />
@@ -3603,16 +3719,6 @@ function DashboardView({
                   <ChevronRight className="w-4 h-4" />
                 </Button>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 md:hidden"
-                onClick={() => toggleSection("calendar")}
-                aria-label="감정 캘린더 열기"
-              >
-                {openSections.calendar ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </Button>
             </div>
           </CardHeader>
           <CardContent className={cn(openSections.calendar ? "block" : "hidden", "md:block")}>
@@ -3662,9 +3768,9 @@ function DashboardView({
             </div>
             <div className="mt-4 flex justify-center gap-4">
               <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">낮음</span>
+                <span className="text-xs text-muted-foreground">😔 낮음</span>
                 <div className="w-16 h-2 bg-gradient-to-r from-blue-300 via-sky-300 to-amber-300 rounded-full" />
-                <span className="text-xs text-muted-foreground">높음</span>
+                <span className="text-xs text-muted-foreground">😊 높음</span>
               </div>
             </div>
           </CardContent>
@@ -3673,19 +3779,17 @@ function DashboardView({
         {/* Emotion Trend Graph */}
         <Card className="border-0 shadow-lg">
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg">최근 30일 감정 변화 추이</CardTitle>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 md:hidden"
-                onClick={() => toggleSection("graph")}
-                aria-label="감정 그래프 열기"
-              >
+            <button
+              type="button"
+              className="flex w-full items-center justify-between text-left md:pointer-events-none"
+              onClick={() => toggleSection("graph")}
+              aria-expanded={openSections.graph}
+            >
+              <span className="text-lg font-semibold leading-none tracking-tight">최근 30일 감정 변화 추이</span>
+              <span className="md:hidden">
                 {openSections.graph ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </Button>
-            </div>
+              </span>
+            </button>
           </CardHeader>
           <CardContent className={cn(openSections.graph ? "block" : "hidden", "md:block")}>
             <div className="h-64">
@@ -3759,23 +3863,34 @@ function DashboardView({
       {/* Comforting Media History */}
       <Card className="border-0 shadow-lg mb-8">
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-lg">내가 위로받은 콘텐츠</CardTitle>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 md:hidden"
-              onClick={() => toggleSection("media")}
-              aria-label="콘텐츠 기록 열기"
-            >
+          <button
+            type="button"
+            className="flex w-full items-center justify-between text-left md:pointer-events-none"
+            onClick={() => toggleSection("media")}
+            aria-expanded={openSections.media}
+          >
+            <span className="text-lg font-semibold leading-none tracking-tight">내가 위로받은 콘텐츠</span>
+            <span className="md:hidden">
               {openSections.media ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            </Button>
-          </div>
+            </span>
+          </button>
         </CardHeader>
         <CardContent className={cn(openSections.media ? "block" : "hidden", "md:block")}>
           <div className="flex gap-4 overflow-x-auto pb-4 -mx-2 px-2">
-            {contentHistory.map((media) => (
+            {contentHistory.map((media) => {
+              const playback = resolvePlayback({
+                content_id: media.content_id,
+                media_provider: media.media_provider,
+                media_url: media.media_url,
+              })
+
+              const thumbnailUrl =
+                media.thumbnail_url ??
+                (playback.kind === "youtube" && playback.youtubeVideoId
+                  ? youtubeThumbnailUrl(playback.youtubeVideoId, "mqdefault")
+                  : null)
+
+              return (
               <div
                 key={media.id}
                 role="button"
@@ -3791,6 +3906,16 @@ function DashboardView({
                 className="flex-shrink-0 w-48 group cursor-pointer rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
                 <div className="aspect-video rounded-xl bg-muted mb-2 relative overflow-hidden">
+                  {thumbnailUrl ? (
+                    <img
+                      src={thumbnailUrl}
+                      alt=""
+                      loading="lazy"
+                      className="absolute inset-0 h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="absolute inset-0 bg-gradient-to-br from-muted to-muted/40" />
+                  )}
                   <div className="absolute inset-0 flex items-center justify-center">
                     <Play className="w-10 h-10 text-primary" />
                   </div>
@@ -3807,7 +3932,8 @@ function DashboardView({
                   {media.content_title}
                 </p>
               </div>
-            ))}
+              )
+            })}
             {contentHistory.length === 0 && (
               <p className="text-sm text-muted-foreground">아직 저장된 콘텐츠 기록이 없습니다.</p>
             )}
@@ -3818,19 +3944,17 @@ function DashboardView({
       {/* Session History */}
       <Card className="border-0 shadow-lg">
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-lg">상담 기록</CardTitle>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 md:hidden"
-              onClick={() => toggleSection("session")}
-              aria-label="상담 기록 열기"
-            >
+          <button
+            type="button"
+            className="flex w-full items-center justify-between text-left md:pointer-events-none"
+            onClick={() => toggleSection("session")}
+            aria-expanded={openSections.session}
+          >
+            <span className="text-lg font-semibold leading-none tracking-tight">상담 기록</span>
+            <span className="md:hidden">
               {openSections.session ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            </Button>
-          </div>
+            </span>
+          </button>
         </CardHeader>
         <CardContent className={cn(openSections.session ? "block" : "hidden", "md:block")}>
           <div className="grid max-h-[220px] grid-cols-1 gap-4 overflow-y-auto pr-1 md:max-h-none md:grid-cols-2 md:overflow-visible md:pr-0 xl:grid-cols-3">
@@ -4321,14 +4445,6 @@ function OnboardingScreen({
               {isSaving ? "저장 중..." : activeTab==="mypage"? "저장" : "시작하기"}
             </Button>
 
-            {/* Skip Option */}
-            <button
-              onClick={onComplete}
-              disabled={isSaving}
-              className="w-full mt-4 text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              나중에 설정할게요
-            </button>
             {errorMessage && <p className="mt-3 text-center text-xs text-destructive">{errorMessage}</p>}
           </CardContent>
         </Card>
@@ -4798,11 +4914,7 @@ function MyPageView({
   onSaveDisplayName,
   profileSaveMessage,
   isSavingProfile,
-  onSaveMypagePreferences,
-  mypagePrefsMessage,
-  isSavingMypagePrefs,
   userCreatedAt,
-  totalSessions,
   dailyReminderEnabled,
   setDailyReminderEnabled,
   dailyReminderTime,
@@ -4811,9 +4923,6 @@ function MyPageView({
   setDailyReminderTimezone,
   onSaveReminderPreference,
   reminderSaveMessage,
-  onExportMyData,
-  isExportingMyData,
-  exportMyDataMessage,
   setHasCompletedOnboarding,
   setSurveySave,
   surveyEnter,
@@ -4827,11 +4936,7 @@ function MyPageView({
   onSaveDisplayName: (name: string) => Promise<boolean>
   profileSaveMessage: string | null
   isSavingProfile: boolean
-  onSaveMypagePreferences: () => Promise<void>
-  mypagePrefsMessage: string | null
-  isSavingMypagePrefs: boolean
   userCreatedAt: string | null
-  totalSessions: number
   dailyReminderEnabled: boolean
   setDailyReminderEnabled: (value: boolean) => void
   dailyReminderTime: string
@@ -4840,9 +4945,6 @@ function MyPageView({
   setDailyReminderTimezone: (value: string) => void
   onSaveReminderPreference: () => Promise<void>
   reminderSaveMessage: string | null
-  onExportMyData: () => Promise<void>
-  isExportingMyData: boolean
-  exportMyDataMessage: string | null
   setHasCompletedOnboarding: (value: boolean)=>void
   setSurveySave: (value: boolean)=>void
   surveyEnter: boolean
@@ -4988,21 +5090,6 @@ function MyPageView({
             />
           </div>
 
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              className="rounded-xl w-fit"
-              disabled={isSavingMypagePrefs}
-              onClick={() => void onSaveMypagePreferences()}
-            >
-              {isSavingMypagePrefs ? "저장 중…" : "맞춤 설정 계정에 저장"}
-            </Button>
-            {mypagePrefsMessage && (
-              <p className="text-xs text-muted-foreground">{mypagePrefsMessage}</p>
-            )}
-          </div>
-
           <div className="hidden rounded-xl border border-border p-4 space-y-3">
             <div className="flex items-center justify-between">
               <div>
@@ -5051,54 +5138,6 @@ function MyPageView({
         </CardContent>
       </Card>
 
-      {/* Data Management Section */}
-      <Card className="mb-6 gap-3 border-0 py-3 shadow-lg md:gap-6 md:py-6">
-        <CardHeader>
-          <CardTitle className="text-lg">데이터 관리</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 bg-muted/50 rounded-xl">
-            <div>
-              <p className="font-medium text-foreground">내 상담 기록</p>
-              <p className="text-sm text-muted-foreground">
-                총 {totalSessions}회의 상담 기록이 저장되어 있습니다
-              </p>
-              {exportMyDataMessage && (
-                <p className="text-xs text-muted-foreground mt-1">{exportMyDataMessage}</p>
-              )}
-            </div>
-            <Button
-              variant="outline"
-              className="rounded-xl shrink-0"
-              type="button"
-              disabled={isExportingMyData}
-              onClick={() => void onExportMyData()}
-            >
-              {isExportingMyData ? "내보내는 중…" : "기록 내보내기 (JSON)"}
-            </Button>
-          </div>
-
-          <div className="hidden items-center justify-between p-4 bg-destructive/5 rounded-xl border border-destructive/20">
-            <div>
-              <p className="font-medium text-foreground">내 상담 기록 초기화</p>
-              <p className="text-sm text-muted-foreground">
-                모든 상담 기록과 감정 데이터가 영구적으로 삭제됩니다
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              type="button"
-              disabled
-              title="준비 중입니다"
-              className="rounded-xl border-destructive text-destructive opacity-60"
-            >
-              <Trash2 className="w-4 h-4 mr-2" />
-              초기화
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
       {/* Logout Button */}
       <Button
         variant="outline"
@@ -5136,9 +5175,9 @@ function PreSurveyOverlay({
   showCounselingTabGateHint?: boolean
 }) {
   return (
-    <ScaledOverlay className="z-[550]">
-      <Card className="relative z-10 w-[32rem] border-0 py-3 shadow-2xl pointer-events-auto md:py-6">
-        <CardContent className="p-4 md:p-8">
+    <ScaledOverlay className="z-[550]" frameWidth={560}>
+      <Card className="relative z-10 w-[35rem] border-0 py-4 shadow-2xl pointer-events-auto md:py-6">
+        <CardContent className="p-5 md:p-8">
           {/* Close Button */}
           <button
             type="button"
@@ -5149,38 +5188,38 @@ function PreSurveyOverlay({
           </button>
 
           {/* Logo */}
-          <div className="text-center mb-8">
-            <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4">
-              <Heart className="w-7 h-7 text-primary-foreground" />
+          <div className="text-center mb-6 md:mb-8">
+            <div className="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4">
+              <Heart className="w-8 h-8 text-primary-foreground" />
             </div>
-            <h2 className="text-2xl font-bold text-foreground mb-2">사전 문진</h2>
+            <h2 className="text-3xl font-bold text-foreground mb-2">사전 문진</h2>
             {showCounselingTabGateHint && (
-              <p className="text-sm text-foreground/90 mb-3 text-balance leading-relaxed">
+              <p className="text-base text-foreground/90 mb-3 text-balance leading-relaxed">
                 상담을 시작하려면 아래 사전 문진을 먼저 완료해 주세요.
               </p>
             )}
-            <p className="text-muted-foreground">상담 시작 전, 지금의 마음 상태를 알려주세요</p>
+            <p className="text-base text-muted-foreground">상담 시작 전, 지금의 마음 상태를 알려주세요</p>
           </div>
 
           {/* Mood */}
-          <div className="mb-8">
-            <h3 className="text-lg font-semibold text-center text-foreground mb-6">
+          <div className="mb-7">
+            <h3 className="text-xl font-semibold text-center text-foreground mb-5">
               지금 마음의 온도는 어떤가요?
             </h3>
-            <div className="flex flex-wrap justify-center gap-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {SURVEY_MOOD_OPTIONS.map((option) => (
                 <button
                   key={option.value}
                   type="button"
                   onClick={() => setSelectedMood(option.value)}
-                  className={`flex flex-col items-center p-4 rounded-2xl transition-all duration-200 min-w-[90px] ${
+                  className={`flex min-h-[104px] flex-col items-center justify-center rounded-2xl p-4 transition-all duration-200 ${
                     selectedMood === option.value
                       ? "bg-primary/10 ring-2 ring-primary scale-105"
                       : "bg-muted hover:bg-muted/80"
                   }`}
                 >
-                  <span className="text-3xl mb-2">{option.emoji}</span>
-                  <span className="text-xs text-foreground font-medium whitespace-nowrap">
+                  <span className="text-4xl mb-2">{option.emoji}</span>
+                  <span className="text-sm text-foreground font-semibold whitespace-nowrap">
                     {option.label}
                   </span>
                 </button>
@@ -5190,28 +5229,28 @@ function PreSurveyOverlay({
 
           {/* Persona */}
           <div className="mb-8">
-            <h3 className="text-lg font-semibold text-center text-foreground mb-2">
+            <h3 className="text-xl font-semibold text-center text-foreground mb-2">
               어떤 상담사와 이야기하고 싶나요?
             </h3>
-            <p className="text-xs text-muted-foreground text-center mb-6">
+            <p className="text-sm text-muted-foreground text-center mb-5">
               이 세션 동안만 적용돼요. 다음 상담에서 다시 고를 수 있어요.
             </p>
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-3">
               {PERSONA_OPTIONS.map((option) => (
                 <button
                   key={option.value}
                   type="button"
                   onClick={() => setSelectedPersona(option.value)}
-                  className={`flex items-center gap-3 p-3 rounded-xl text-left transition-all duration-200 ${
+                  className={`flex items-center gap-4 rounded-2xl p-4 text-left transition-all duration-200 ${
                     selectedPersona === option.value
                       ? "bg-primary/10 ring-2 ring-primary"
                       : "bg-muted hover:bg-muted/80"
                   }`}
                 >
-                  <span className="text-2xl">{option.emoji}</span>
+                  <span className="text-3xl">{option.emoji}</span>
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-foreground">{option.label}</div>
-                    <div className="text-xs text-muted-foreground whitespace-normal">
+                    <div className="text-base font-semibold text-foreground">{option.label}</div>
+                    <div className="text-sm text-muted-foreground whitespace-normal">
                       {option.description}
                     </div>
                   </div>
@@ -5225,7 +5264,7 @@ function PreSurveyOverlay({
             type="button"
             onClick={() => void onStart()}
             className={cn(
-              "w-full h-12 rounded-xl text-base font-medium",
+              "w-full h-14 rounded-xl text-base font-semibold",
               (!selectedMood || !selectedPersona) && "opacity-80"
             )}
           >
