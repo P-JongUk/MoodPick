@@ -359,12 +359,21 @@ const scoreToCalendarColor = (score: number) => {
 
 /** 사전/사후 문진 mood_general 값 — DB·API와 동일한 value 키 */
 const SURVEY_MOOD_OPTIONS = [
-  { emoji: "😊", label: "아주 좋아요", value: "great" },
-  { emoji: "🙂", label: "괜찮아요", value: "good" },
-  { emoji: "😐", label: "그저 그래요", value: "neutral" },
-  { emoji: "😔", label: "조금 힘들어요", value: "low" },
-  { emoji: "😢", label: "많이 힘들어요", value: "bad" },
+  { emoji: "😊", label: "아주 좋아요", value: "great", score: 5 },
+  { emoji: "🙂", label: "괜찮아요", value: "good", score: 4 },
+  { emoji: "😐", label: "그저 그래요", value: "neutral", score: 3 },
+  { emoji: "😔", label: "조금 힘들어요", value: "low", score: 2 },
+  { emoji: "😢", label: "많이 힘들어요", value: "bad", score: 1 },
 ] as const
+
+const getMoodOptionGridClass = (index: number) =>
+  cn(
+    "col-span-1",
+    index === 4 && "col-span-2 mx-auto w-[calc(50%-0.375rem)]",
+    "sm:col-span-2 sm:mx-0 sm:w-full",
+    index === 3 && "sm:col-start-2",
+    index === 4 && "sm:col-start-4"
+  )
 
 /** 상담 탭에서 일정 시간 무응답 시 마무리 권유 배너 */
 const COUNSELING_IDLE_PROMPT_MS = 15 * 60 * 1000
@@ -2661,6 +2670,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
   const currentContentId = currentContent.content_id.trim()
   const hasPlayableContent = Boolean(currentContentId)
   const shouldAutoplay = autoPlayEnabled && currentContentId.length > 0 && autoplayContentId === currentContentId
+  const showFeedbackPriorityNote = currentContent.id === defaultContentItem.id
   const isEmbed = playback.kind === "youtube"
   const feedbackDisabled =
     !hasPlayableContent || contentFeedbackSubmitting || contentFeedbackComplete
@@ -3147,9 +3157,11 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
             </span>
           </div>
           <h4 className="font-medium text-foreground mb-2 text-balance">{currentContent.content_title}</h4>
-          <p className="text-sm text-muted-foreground mb-4">
-            최근 사용자 반응 기반으로 우선 노출된 콘텐츠입니다.
-          </p>
+          {showFeedbackPriorityNote && (
+            <p className="text-sm text-muted-foreground mb-4">
+              최근 사용자 반응 기반으로 우선 노출된 콘텐츠입니다.
+            </p>
+          )}
 
           {playback.kind === "podcast" ? (
             <div className="mb-4 space-y-2">
@@ -3450,7 +3462,6 @@ function CounselingView({
   const [contentFullscreen, setContentFullscreen] = useState(false)
   const [draft, setDraft] = useState("")
   const [isInputFocused, setIsInputFocused] = useState(false)
-  const [isInputHovered, setIsInputHovered] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -3624,8 +3635,6 @@ function CounselingView({
               onKeyDown={(e) => e.key === "Enter" && submitDraft()}
               onFocus={() => setIsInputFocused(true)}
               onBlur={() => setIsInputFocused(false)}
-              onMouseEnter={() => setIsInputHovered(true)}
-              onMouseLeave={() => setIsInputHovered(false)}
             />
             <Button onClick={submitDraft} size="icon" className="rounded-xl" disabled={isSendingMessage}>
               <Send className={`w-4 h-4 ${isSendingMessage ? "opacity-50" : ""}`} />
@@ -3637,7 +3646,7 @@ function CounselingView({
               variant="outline"
               className={cn(
                 "w-full cursor-pointer rounded-xl border-destructive text-destructive hover:border-destructive/70 hover:bg-destructive/10 hover:text-destructive",
-                (isInputFocused || isInputHovered) && "hidden"
+                isInputFocused && "hidden"
               )}
             >
               오늘의 상담 종료하기
@@ -5233,7 +5242,7 @@ function MyPageView({
 const PERSONA_OPTIONS: { value: CounselorPersona; label: string; description: string; emoji: string }[] = [
   { value: "friend", label: "친구", description: "편하게 수다 떠는 친한 친구", emoji: "🧃" },
   { value: "teacher", label: "선생님", description: "차분히 다 받아주는 따뜻한 선생님", emoji: "🌿" },
-  { value: "expert", label: "상담사", description: "차분하고 정중하게 들어주는 방식", emoji: "🩺" },
+  { value: "expert", label: "상담사", description: "조금 더 전문적으로 정중하게 들어주는 방식", emoji: "🩺" },
 ]
 
 function PreSurveyOverlay({
@@ -5285,21 +5294,23 @@ function PreSurveyOverlay({
             <h3 className="text-xl font-semibold text-center text-foreground mb-5">
               지금 마음의 온도는 어떤가요?
             </h3>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {SURVEY_MOOD_OPTIONS.map((option) => (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
+              {SURVEY_MOOD_OPTIONS.map((option, index) => (
                 <button
                   key={option.value}
                   type="button"
                   onClick={() => setSelectedMood(option.value)}
-                  className={`flex min-h-[104px] flex-col items-center justify-center rounded-2xl p-4 transition-all duration-200 ${
+                  className={cn(
+                    getMoodOptionGridClass(index),
+                    "flex min-h-[104px] flex-col items-center justify-center rounded-2xl p-4 transition-all duration-200",
                     selectedMood === option.value
                       ? "bg-primary/10 ring-2 ring-primary scale-105"
                       : "bg-muted hover:bg-muted/80"
-                  }`}
+                  )}
                 >
                   <span className="text-4xl mb-2">{option.emoji}</span>
                   <span className="text-sm text-foreground font-semibold whitespace-nowrap">
-                    {option.label}
+                    {option.label}({option.score}점)
                   </span>
                 </button>
               ))}
@@ -5386,21 +5397,23 @@ function PostSurveyOverlay({
             <h3 className="text-lg font-semibold text-center text-foreground mb-6">
               지금 마음의 온도는 어떤가요?
             </h3>
-            <div className="flex flex-wrap justify-center gap-3">
-              {SURVEY_MOOD_OPTIONS.map((option) => (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
+              {SURVEY_MOOD_OPTIONS.map((option, index) => (
                 <button
                   key={option.value}
                   type="button"
                   onClick={() => setSelectedMood(option.value)}
-                  className={`flex flex-col items-center p-4 rounded-2xl transition-all duration-200 min-w-[90px] ${
+                  className={cn(
+                    getMoodOptionGridClass(index),
+                    "flex min-h-[96px] flex-col items-center justify-center rounded-2xl p-4 transition-all duration-200",
                     selectedMood === option.value
                       ? "bg-primary/10 ring-2 ring-primary scale-105"
                       : "bg-muted hover:bg-muted/80"
-                  }`}
+                  )}
                 >
                   <span className="text-3xl mb-2">{option.emoji}</span>
                   <span className="text-xs text-foreground font-medium whitespace-nowrap">
-                    {option.label}
+                    {option.label}({option.score}점)
                   </span>
                 </button>
               ))}
