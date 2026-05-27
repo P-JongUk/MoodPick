@@ -144,7 +144,11 @@ interface Message {
   timestamp?: string
   recommendedContent?: RecommendedContent | null
   isStreaming?: boolean
+  /** 텍스트 스트리밍은 끝났지만 추천 메타가 아직 도착하지 않은 상태 */
+  isAwaitingMeta?: boolean
 }
+
+const AWAITING_META_INDICATOR_DELAY_MS = 200
 
 interface SessionHistory {
   sessionId: string
@@ -1653,6 +1657,13 @@ export function MoodPickDashboard() {
 
     let streamedText = ""
     let hasAiBubble = false
+    let awaitingMetaTimer: ReturnType<typeof setTimeout> | null = null
+    const clearAwaitingMetaTimer = () => {
+      if (awaitingMetaTimer) {
+        clearTimeout(awaitingMetaTimer)
+        awaitingMetaTimer = null
+      }
+    }
 
     void sendCounselingMessageStream(
       user.id,
@@ -1660,22 +1671,32 @@ export function MoodPickDashboard() {
       sessionId,
       (chunk) => {
         streamedText += chunk
+        clearAwaitingMetaTimer()
         if (!hasAiBubble) {
           hasAiBubble = true
           setMessages((prev) => [
             ...prev,
             { id: aiMsgId, sender: "ai", text: chunk, isStreaming: true },
           ])
-          return
+        } else {
+          setMessages((prev) =>
+            prev.map((message) =>
+              message.id === aiMsgId ? { ...message, text: message.text + chunk } : message
+            )
+          )
         }
 
-        setMessages((prev) =>
-          prev.map((message) =>
-            message.id === aiMsgId ? { ...message, text: message.text + chunk } : message
+        awaitingMetaTimer = setTimeout(() => {
+          awaitingMetaTimer = null
+          setMessages((prev) =>
+            prev.map((message) =>
+              message.id === aiMsgId ? { ...message, isAwaitingMeta: true } : message
+            )
           )
-        )
+        }, AWAITING_META_INDICATOR_DELAY_MS)
       },
       (meta) => {
+        clearAwaitingMetaTimer()
         const completionTime = new Date().toLocaleTimeString("ko-KR", {
           hour: "numeric",
           minute: "2-digit",
@@ -1701,6 +1722,7 @@ export function MoodPickDashboard() {
                 sender: "ai",
                 text: streamedText || "메시지를 받았어요. 잠시 마음을 정리해 볼게요.",
                 isStreaming: false,
+                isAwaitingMeta: false,
                 timestamp: completionTime,
                 recommendedContent: recommended,
               },
@@ -1711,6 +1733,7 @@ export function MoodPickDashboard() {
               ? {
                   ...message,
                   isStreaming: false,
+                  isAwaitingMeta: false,
                   timestamp: completionTime,
                   recommendedContent: recommended,
                 }
@@ -1730,6 +1753,7 @@ export function MoodPickDashboard() {
         setIsSendingMessage(false)
       },
       (error) => {
+        clearAwaitingMetaTimer()
         const completionTime = new Date().toLocaleTimeString("ko-KR", {
           hour: "numeric",
           minute: "2-digit",
@@ -1753,7 +1777,13 @@ export function MoodPickDashboard() {
           }
           return prev.map((message) =>
             message.id === aiMsgId
-              ? { ...message, text: errorMessage, isStreaming: false, timestamp: completionTime }
+              ? {
+                  ...message,
+                  text: errorMessage,
+                  isStreaming: false,
+                  isAwaitingMeta: false,
+                  timestamp: completionTime,
+                }
               : message
           )
         })
@@ -3266,6 +3296,14 @@ const CounselChatBubble = memo(function CounselChatBubble({ message }: { message
             </div>
           </div>
         )}
+        {message.sender === "ai" &&
+          message.isAwaitingMeta &&
+          !message.recommendedContent?.video_id && (
+            <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
+              <span>추천 콘텐츠 찾는 중...</span>
+            </div>
+          )}
         {message.timestamp && (
           <p
             className={`text-xs mt-1 ${
