@@ -95,6 +95,7 @@ import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogContent,
+  AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
@@ -1197,7 +1198,7 @@ export function MoodPickDashboard() {
       return
     }
 
-    let initialCounselingMessage = "안녕하세요, 저는 무드픽 상담사입니다. 오늘 하루 어떠셨나요? 편하게 이야기해 주세요."
+    let initialCounselingMessage = "안녕하세요, 저는 무드픽입니다. 오늘 하루 어떠셨나요? 편하게 이야기해 주세요."
     let createdSessionId: string | null = null
 
     try {
@@ -1359,7 +1360,7 @@ export function MoodPickDashboard() {
         const initialResponse = await getInitialCounselingMessage(sid)
         const text =
           initialResponse?.message ??
-          "안녕하세요, 저는 무드픽 상담사입니다. 오늘 하루 어떠셨나요? 편하게 이야기해 주세요."
+          "안녕하세요, 저는 무드픽입니다. 오늘 하루 어떠셨나요? 편하게 이야기해 주세요."
         restored = [
           {
             id: 1,
@@ -2165,6 +2166,9 @@ export function MoodPickDashboard() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>잠시 멈추고 이 메시지를 읽어 주세요</AlertDialogTitle>
+            <AlertDialogDescription className="sr-only">
+              위기 상황 안내 메시지와 전문 상담 기관 연락처를 안내합니다.
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="py-2">
             <ChatMarkdown source={crisisModalText ?? ""} />
@@ -2895,7 +2899,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
       )}
 
       <div className={cn("mt-6 min-h-0", isFullscreen && "max-w-5xl w-full mx-auto pb-2")}>
-        <h4 className="text-sm font-medium text-foreground mb-3">다음 추천 콘텐츠</h4>
+        <h4 className="text-sm font-medium text-foreground mb-3">관련 추천 콘텐츠</h4>
         <div className="space-y-3">
           {recommendedQueue.map((content, idx) => (
             <div
@@ -3107,7 +3111,7 @@ function CounselingView({
                 <MessageCircle className="w-5 h-5 text-primary-foreground" />
               </div>
               <div>
-                <h3 className="font-semibold text-foreground">무드픽 상담사</h3>
+                <h3 className="font-semibold text-foreground">무드픽</h3>
                 <p className="text-xs text-muted-foreground">AI 심리 상담</p>
               </div>
             </div>
@@ -3411,6 +3415,13 @@ function DashboardView({
                 <div className="w-16 h-2 bg-gradient-to-r from-blue-300 via-sky-300 to-amber-300 rounded-full" />
                 <span className="text-xs text-muted-foreground">😊 높음</span>
               </div>
+            </div>
+            <div className="mt-5 rounded-lg bg-muted/30 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
+              <p className="mb-1 font-medium text-foreground">감정 점수는 이렇게 계산돼요</p>
+              <p>
+                상담 전·후 문진(기분·에너지·스트레스) 응답을 1~5점으로 환산해 평균낸 뒤, 0~100점으로 보여드려요.
+                점수가 높을수록 그날 기분 상태가 더 긍정적이에요.
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -4632,7 +4643,7 @@ function MyPageView({
 const PERSONA_OPTIONS: { value: CounselorPersona; label: string; description: string; emoji: string }[] = [
   { value: "friend", label: "친구", description: "편하게 수다 떠는 친한 친구", emoji: "🧃" },
   { value: "teacher", label: "선생님", description: "차분히 다 받아주는 따뜻한 선생님", emoji: "🌿" },
-  { value: "expert", label: "전문상담사", description: "정중한 존댓말의 임상 상담사", emoji: "🩺" },
+  { value: "expert", label: "상담사", description: "정중한 존댓말의 상담사", emoji: "🩺" },
 ]
 
 function PreSurveyOverlay({

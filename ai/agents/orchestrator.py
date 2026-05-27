@@ -60,8 +60,6 @@ async def orchestrator_agent(state: CounselingState) -> CounselingState:
     result = json.loads(raw)
 
     state.is_crisis = bool(result.get("is_crisis", False))
-    state.is_off_topic = bool(result.get("is_off_topic", False))
-    state.is_injection = bool(result.get("is_injection", False))
     state.intent = result.get("intent", "상담")
     state.needs_recommendation = bool(result.get("needs_recommendation", False))
 
@@ -76,18 +74,8 @@ async def orchestrator_agent(state: CounselingState) -> CounselingState:
     else:
         state.content_query_hints = []
 
-    # Safety: crisis overrides recommendation, off-topic, and injection
+    # Safety: crisis overrides recommendation
     if state.is_crisis:
-        state.needs_recommendation = False
-        state.is_off_topic = False
-        state.is_injection = False
-
-    # Off-topic 주제에는 추천도 불필요
-    if state.is_off_topic:
-        state.needs_recommendation = False
-
-    # Injection/jailbreak 시도에는 추천 차단
-    if state.is_injection:
         state.needs_recommendation = False
 
     return state
