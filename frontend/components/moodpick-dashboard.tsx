@@ -2662,6 +2662,8 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
   const [podcastCurrentTime, setPodcastCurrentTime] = useState(0)
   const [podcastDuration, setPodcastDuration] = useState(0)
   const [podcastRate, setPodcastRate] = useState(1)
+  const [podcastVolume, setPodcastVolume] = useState(70)
+  const [podcastMuted, setPodcastMuted] = useState(false)
 
   useEffect(() => {
     setEmbedOrigin(window.location.origin)
@@ -2699,17 +2701,52 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
     postYoutubeEmbedCommand(youtubeIframeRef.current, "mute")
   }, [youtubeMuted, youtubeVolume])
 
+  const applyPodcastVolume = useCallback((volume: number) => {
+    const clamped = Math.max(0, Math.min(100, Math.round(volume)))
+    setPodcastVolume(clamped)
+    const el = audioRef.current
+    if (!el) return
+    if (clamped === 0) {
+      setPodcastMuted(true)
+      el.muted = true
+      el.volume = 0
+      return
+    }
+    setPodcastMuted(false)
+    el.muted = false
+    el.volume = clamped / 100
+  }, [])
+
+  const togglePodcastMute = useCallback(() => {
+    const el = audioRef.current
+    if (!el) return
+    if (podcastMuted) {
+      const restore = podcastVolume > 0 ? podcastVolume : 70
+      setPodcastVolume(restore)
+      setPodcastMuted(false)
+      el.muted = false
+      el.volume = restore / 100
+      return
+    }
+    setPodcastMuted(true)
+    el.muted = true
+  }, [podcastMuted, podcastVolume])
+
   useEffect(() => {
     if (playback.kind !== "podcast") return
 
     setPodcastPlaying(false)
     setPodcastCurrentTime(0)
     setPodcastDuration(0)
+    setPodcastVolume(70)
+    setPodcastMuted(false)
 
     if (audioRef.current) {
       audioRef.current.pause()
       audioRef.current.currentTime = 0
       audioRef.current.playbackRate = podcastRate
+      audioRef.current.volume = 0.7
+      audioRef.current.muted = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentContent.content_id, playback.kind])
@@ -2918,9 +2955,10 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
                   <div className="absolute inset-0 rounded-full bg-black/70 shadow-2xl" />
                   <div className="absolute inset-[10%] rounded-full bg-neutral-900/90" />
                   <div
-                    className={cn("absolute inset-[18%] rounded-full bg-center bg-cover animate-spin")}
+                    className="absolute inset-[18%] animate-spin rounded-full bg-center bg-cover"
                     style={{
                       animationDuration: "14s",
+                      animationPlayState: podcastPlaying ? "running" : "paused",
                       backgroundImage: currentContent.thumbnail_url ? `url(${currentContent.thumbnail_url})` : undefined,
                     }}
                   />
@@ -3105,9 +3143,39 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
           </p>
 
           {playback.kind === "podcast" ? (
-            <p className="text-xs text-muted-foreground mb-4">
-              팟캐스트 오디오 컨트롤은 위 플레이어에서 조작할 수 있어요.
-            </p>
+            <div className="mb-4 space-y-2">
+              <p className="text-xs text-muted-foreground">
+                재생·일시정지는 위 플레이어에서, 소리는 아래 슬라이더로 조절하세요.
+              </p>
+              <div className="flex items-center gap-3 rounded-xl border border-border bg-muted/40 px-3 py-2.5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9 shrink-0 rounded-lg"
+                  onClick={togglePodcastMute}
+                  aria-label={podcastMuted ? "음소거 해제" : "음소거"}
+                >
+                  {podcastMuted ? (
+                    <VolumeX className="h-4 w-4" />
+                  ) : (
+                    <Volume2 className="h-4 w-4" />
+                  )}
+                </Button>
+                <Slider
+                  value={[podcastMuted ? 0 : podcastVolume]}
+                  min={0}
+                  max={100}
+                  step={1}
+                  className="flex-1"
+                  aria-label="볼륨"
+                  onValueChange={(values) => applyPodcastVolume(values[0] ?? 0)}
+                />
+                <span className="w-8 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                  {podcastMuted ? 0 : podcastVolume}
+                </span>
+              </div>
+            </div>
           ) : isEmbed ? (
             <div className="mb-4 space-y-2">
               <p className="text-xs text-muted-foreground">
