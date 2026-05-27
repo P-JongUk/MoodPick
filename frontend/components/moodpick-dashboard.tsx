@@ -60,7 +60,6 @@ import {
   ChevronDown,
   User,
   LogOut,
-  Trash2,
   Maximize2,
   Minimize2,
   X,
@@ -572,10 +571,6 @@ export function MoodPickDashboard() {
   const [profileSaveMessage, setProfileSaveMessage] = useState<string | null>(null)
   const [isSavingProfile, setIsSavingProfile] = useState(false)
   const [profileDisplayName, setProfileDisplayName] = useState<string | null>(null)
-  const [mypagePrefsMessage, setMypagePrefsMessage] = useState<string | null>(null)
-  const [isSavingMypagePrefs, setIsSavingMypagePrefs] = useState(false)
-  const [isExportingMyData, setIsExportingMyData] = useState(false)
-  const [exportMyDataMessage, setExportMyDataMessage] = useState<string | null>(null)
   const previousUserIdRef = useRef<string | null>(null)
   const lastCounselingActivityRef = useRef<number>(0)
   const counselingActiveSessionIdRef = useRef<string | null>(null)
@@ -1826,63 +1821,6 @@ export function MoodPickDashboard() {
     }
   }
 
-  const handleSaveMypagePreferences = async () => {
-    if (!user?.id) return
-    setIsSavingMypagePrefs(true)
-    setMypagePrefsMessage(null)
-    try {
-      const supabase = getSupabaseClient()
-      const { error } = await supabase.auth.updateUser({
-        data: {
-          moodpick_preferences: {
-            autoplay_enabled: autoPlayEnabled,
-            media_preference: mediaPreference,
-          },
-        },
-      })
-      if (error) throw error
-      setMypagePrefsMessage("맞춤 설정이 계정에 저장되었습니다.")
-    } catch (e) {
-      setMypagePrefsMessage(e instanceof Error ? e.message : "저장에 실패했습니다.")
-    } finally {
-      setIsSavingMypagePrefs(false)
-    }
-  }
-
-  const handleExportMyData = async () => {
-    if (!user?.id) return
-    setIsExportingMyData(true)
-    setExportMyDataMessage(null)
-    try {
-      const [stats, contents, emotions] = await Promise.all([
-        getUserStats(user.id),
-        getContentHistory(user.id, 100),
-        getEmotionRecords(user.id, 365),
-      ])
-      const payload = {
-        exported_at: new Date().toISOString(),
-        user_id: user.id,
-        stats,
-        content_history: contents,
-        emotion_records: emotions,
-      }
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = `moodpick-export-${user.id.slice(0, 8)}.json`
-      a.click()
-      URL.revokeObjectURL(url)
-      setExportMyDataMessage("JSON 파일로 내보냈습니다.")
-    } catch (e) {
-      setExportMyDataMessage(
-        e instanceof Error ? e.message : "내보내기에 실패했습니다. 잠시 후 다시 시도해 주세요."
-      )
-    } finally {
-      setIsExportingMyData(false)
-    }
-  }
-
   const handleCalendarDayClick = async (day: number) => {
     if (!user?.id || !day) return
     const iso = `${calendarYear}-${String(currentMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`
@@ -2357,19 +2295,13 @@ export function MoodPickDashboard() {
           <MyPageView
             autoPlayEnabled={autoPlayEnabled}
             setAutoPlayEnabled={setAutoPlayEnabled}
-            mediaPreference={mediaPreference}
-            setMediaPreference={setMediaPreference}
             onLogout={handleLogout}
             userEmail={user?.email ?? "-"}
             displayName={profileDisplayName ?? (user?.user_metadata?.display_name as string | undefined) ?? null}
             onSaveDisplayName={handleSaveDisplayName}
             profileSaveMessage={profileSaveMessage}
             isSavingProfile={isSavingProfile}
-            onSaveMypagePreferences={handleSaveMypagePreferences}
-            mypagePrefsMessage={mypagePrefsMessage}
-            isSavingMypagePrefs={isSavingMypagePrefs}
             userCreatedAt={user?.created_at ?? null}
-            totalSessions={userStats?.total_sessions ?? 0}
             dailyReminderEnabled={dailyReminderEnabled}
             setDailyReminderEnabled={setDailyReminderEnabled}
             dailyReminderTime={dailyReminderTime}
@@ -2378,9 +2310,6 @@ export function MoodPickDashboard() {
             setDailyReminderTimezone={setDailyReminderTimezone}
             onSaveReminderPreference={handleSaveReminderPreference}
             reminderSaveMessage={reminderSaveMessage}
-            onExportMyData={handleExportMyData}
-            isExportingMyData={isExportingMyData}
-            exportMyDataMessage={exportMyDataMessage}
             setHasCompletedOnboarding={setHasCompletedOnboarding}
             setSurveySave={setSurveySave}
             surveyEnter={surveyEnter}
@@ -4979,19 +4908,13 @@ function Introduce({introduceCheck}: {introduceCheck: () => void}){
 function MyPageView({
   autoPlayEnabled,
   setAutoPlayEnabled,
-  mediaPreference,
-  setMediaPreference,
   onLogout,
   userEmail,
   displayName,
   onSaveDisplayName,
   profileSaveMessage,
   isSavingProfile,
-  onSaveMypagePreferences,
-  mypagePrefsMessage,
-  isSavingMypagePrefs,
   userCreatedAt,
-  totalSessions,
   dailyReminderEnabled,
   setDailyReminderEnabled,
   dailyReminderTime,
@@ -5000,9 +4923,6 @@ function MyPageView({
   setDailyReminderTimezone,
   onSaveReminderPreference,
   reminderSaveMessage,
-  onExportMyData,
-  isExportingMyData,
-  exportMyDataMessage,
   setHasCompletedOnboarding,
   setSurveySave,
   surveyEnter,
@@ -5010,19 +4930,13 @@ function MyPageView({
 }: {
   autoPlayEnabled: boolean
   setAutoPlayEnabled: (value: boolean) => void
-  mediaPreference: ContentMediaPreferenceQuery
-  setMediaPreference: (value: ContentMediaPreferenceQuery) => void
   onLogout: () => void
   userEmail: string
   displayName: string | null
   onSaveDisplayName: (name: string) => Promise<boolean>
   profileSaveMessage: string | null
   isSavingProfile: boolean
-  onSaveMypagePreferences: () => Promise<void>
-  mypagePrefsMessage: string | null
-  isSavingMypagePrefs: boolean
   userCreatedAt: string | null
-  totalSessions: number
   dailyReminderEnabled: boolean
   setDailyReminderEnabled: (value: boolean) => void
   dailyReminderTime: string
@@ -5031,9 +4945,6 @@ function MyPageView({
   setDailyReminderTimezone: (value: string) => void
   onSaveReminderPreference: () => Promise<void>
   reminderSaveMessage: string | null
-  onExportMyData: () => Promise<void>
-  isExportingMyData: boolean
-  exportMyDataMessage: string | null
   setHasCompletedOnboarding: (value: boolean)=>void
   setSurveySave: (value: boolean)=>void
   surveyEnter: boolean
@@ -5179,44 +5090,6 @@ function MyPageView({
             />
           </div>
 
-          <div className="space-y-3">
-            <div>
-              <Label htmlFor="media-preference" className="text-base font-medium text-foreground">
-                선호 콘텐츠 유형
-              </Label>
-              <p className="mt-1 text-sm text-muted-foreground">
-                홈 화면과 추천 후보에 우선 반영할 콘텐츠 유형을 선택합니다.
-              </p>
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <Select
-                value={mediaPreference}
-                onValueChange={(value) => setMediaPreference(normalizeMediaPreference(value))}
-              >
-                <SelectTrigger id="media-preference" className="h-12 flex-1 rounded-xl border-0 bg-muted">
-                  <SelectValue placeholder="콘텐츠 유형 선택" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="youtube">YouTube 위주</SelectItem>
-                  <SelectItem value="podcast">팟캐스트 위주</SelectItem>
-                  <SelectItem value="all">혼합</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button
-                type="button"
-                variant="secondary"
-                className="h-12 rounded-xl px-5 sm:w-auto"
-                disabled={isSavingMypagePrefs}
-                onClick={() => void onSaveMypagePreferences()}
-              >
-                {isSavingMypagePrefs ? "저장 중…" : "저장"}
-              </Button>
-            </div>
-            {mypagePrefsMessage && (
-              <p className="text-xs text-muted-foreground">{mypagePrefsMessage}</p>
-            )}
-          </div>
-
           <div className="hidden rounded-xl border border-border p-4 space-y-3">
             <div className="flex items-center justify-between">
               <div>
@@ -5261,54 +5134,6 @@ function MyPageView({
               리마인더 설정 저장
             </Button>
             {reminderSaveMessage && <p className="text-xs text-muted-foreground">{reminderSaveMessage}</p>}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Data Management Section */}
-      <Card className="mb-6 gap-3 border-0 py-3 shadow-lg md:gap-6 md:py-6">
-        <CardHeader>
-          <CardTitle className="text-lg">데이터 관리</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 bg-muted/50 rounded-xl">
-            <div>
-              <p className="font-medium text-foreground">내 상담 기록</p>
-              <p className="text-sm text-muted-foreground">
-                총 {totalSessions}회의 상담 기록이 저장되어 있습니다
-              </p>
-              {exportMyDataMessage && (
-                <p className="text-xs text-muted-foreground mt-1">{exportMyDataMessage}</p>
-              )}
-            </div>
-            <Button
-              variant="outline"
-              className="rounded-xl shrink-0"
-              type="button"
-              disabled={isExportingMyData}
-              onClick={() => void onExportMyData()}
-            >
-              {isExportingMyData ? "내보내는 중…" : "기록 내보내기 (JSON)"}
-            </Button>
-          </div>
-
-          <div className="hidden items-center justify-between p-4 bg-destructive/5 rounded-xl border border-destructive/20">
-            <div>
-              <p className="font-medium text-foreground">내 상담 기록 초기화</p>
-              <p className="text-sm text-muted-foreground">
-                모든 상담 기록과 감정 데이터가 영구적으로 삭제됩니다
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              type="button"
-              disabled
-              title="준비 중입니다"
-              className="rounded-xl border-destructive text-destructive opacity-60"
-            >
-              <Trash2 className="w-4 h-4 mr-2" />
-              초기화
-            </Button>
           </div>
         </CardContent>
       </Card>
