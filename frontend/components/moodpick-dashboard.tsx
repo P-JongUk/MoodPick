@@ -13,6 +13,7 @@ import {
 import {
   endSession,
   getContentHistory,
+  getContentRecommendations,
   getCounselingHistory,
   cleanupStaleSessionsForUser,
   getCurrentSession,
@@ -29,6 +30,7 @@ import {
   upsertReminderPreference,
   upsertUserProfile,
   type CounselorPersona,
+  type ContentMediaPreferenceQuery,
   type DailySummary,
   type SessionResponse,
 } from "@/lib/api"
@@ -242,6 +244,12 @@ function mapContentHistoryRow(row: Record<string, unknown>): ContentHistoryItem 
     watched_at: String(row.watched_at ?? new Date().toISOString()),
     session_id: row.session_id != null ? String(row.session_id) : null,
   }
+}
+
+function normalizeMediaPreference(value: unknown): ContentMediaPreferenceQuery {
+  if (value === "youtube" || value === "podcast" || value === "all") return value
+  if (value === "mixed") return "all"
+  return "youtube"
 }
 
 function mapRecommendedAlternativeLinks(
@@ -540,6 +548,7 @@ export function MoodPickDashboard() {
 
   // My page settings state
   const [autoPlayEnabled, setAutoPlayEnabled] = useState(true)
+  const [mediaPreference, setMediaPreference] = useState<ContentMediaPreferenceQuery>("youtube")
   const [dailyReminderEnabled, setDailyReminderEnabled] = useState(true)
   const [dailyReminderTime, setDailyReminderTime] = useState("22:00")
   const [dailyReminderTimezone, setDailyReminderTimezone] = useState("Asia/Seoul")
@@ -886,6 +895,7 @@ export function MoodPickDashboard() {
           summaryResult,
           sessionsResult,
           contentsResult,
+          recommendationsResult,
           profileResult,
         ] = await Promise.allSettled([
           getUserStats(user.id),
@@ -893,6 +903,10 @@ export function MoodPickDashboard() {
           getEmotionSummary(user.id, 7),
           getUserSessions(user.id, 10),
           getContentHistory(user.id, 20),
+          getContentRecommendations(user.id, {
+            limit: 10,
+            media: mediaPreference,
+          }),
           getUserProfile(user.id),
         ])
 
@@ -976,14 +990,28 @@ export function MoodPickDashboard() {
         )
 
         const contentsRaw = contentsResult.status === "fulfilled" ? contentsResult.value : []
+        const recommendationsRaw =
+          recommendationsResult.status === "fulfilled" ? recommendationsResult.value : []
         const sessionsRaw = sessionsResult.status === "fulfilled" ? sessionsResult.value : null
 
         const contentItems = ((contentsRaw as unknown[]) ?? []).map((r) =>
           mapContentHistoryRow(r as Record<string, unknown>)
         )
+        const recommendationItems = ((recommendationsRaw as unknown[]) ?? []).map((r) =>
+          mapContentHistoryRow(r as Record<string, unknown>)
+        )
         setContentHistory(contentItems)
         if (!counselingActiveSessionIdRef.current) {
-          applyHistoricalPrimaryContentState(contentItems)
+          const primaryItems = contentItems.length > 0 ? contentItems : recommendationItems
+          applyHistoricalPrimaryContentState(primaryItems)
+          const activeContentId = primaryItems[0]?.content_id
+          const nextQueueSource =
+            recommendationItems.length > 0 ? recommendationItems : contentItems.slice(1)
+          const nextQueue = nextQueueSource
+            .filter((item) => item.content_id && item.content_id !== activeContentId)
+            .slice(0, 3)
+          setRecommendedQueue(nextQueue)
+          setTopCandidates(primaryItems[0] ? [primaryItems[0], ...nextQueue].slice(0, 4) : [])
         }
 
         const contentBySession = new Map<string, string>()
@@ -1029,7 +1057,7 @@ export function MoodPickDashboard() {
     }
 
     void loadDashboardData()
-  }, [currentMonth, calendarYear, user?.id, dashboardRefreshKey, applyHistoricalPrimaryContentState, clearCounselingContentState])
+  }, [currentMonth, calendarYear, user?.id, dashboardRefreshKey, mediaPreference, applyHistoricalPrimaryContentState, clearCounselingContentState])
 
   useEffect(() => {
     const loadReminderPreference = async () => {
@@ -1105,12 +1133,13 @@ export function MoodPickDashboard() {
   useEffect(() => {
     if (!user) return
     const meta = user.user_metadata as {
-      moodpick_preferences?: { autoplay_enabled?: boolean }
+      moodpick_preferences?: { autoplay_enabled?: boolean; media_preference?: unknown }
     }
     const prefs = meta.moodpick_preferences
     if (prefs && typeof prefs.autoplay_enabled === "boolean") {
       setAutoPlayEnabled(prefs.autoplay_enabled)
     }
+    setMediaPreference(normalizeMediaPreference(prefs?.media_preference))
   }, [user])
 
   const handleLogin = async () => {
@@ -1287,7 +1316,7 @@ export function MoodPickDashboard() {
       return
     }
 
-    let initialCounselingMessage = "안녕하세요, 저는 무드픽 상담사입니다. 오늘 하루 어떠셨나요? 편하게 이야기해 주세요."
+    let initialCounselingMessage = "안녕하세요, 저는 무드픽입니다. 오늘 하루 어떠셨나요? 편하게 이야기해 주세요."
     if (preSurveySubmittingRef.current) return
     preSurveySubmittingRef.current = true
 
@@ -1456,7 +1485,7 @@ export function MoodPickDashboard() {
         const initialResponse = await getInitialCounselingMessage(sid)
         const text =
           initialResponse?.message ??
-          "안녕하세요, 저는 무드픽 상담사입니다. 오늘 하루 어떠셨나요? 편하게 이야기해 주세요."
+          "안녕하세요, 저는 무드픽입니다. 오늘 하루 어떠셨나요? 편하게 이야기해 주세요."
         restored = [
           {
             id: 1,
@@ -1774,6 +1803,7 @@ export function MoodPickDashboard() {
         data: {
           moodpick_preferences: {
             autoplay_enabled: autoPlayEnabled,
+            media_preference: mediaPreference,
           },
         },
       })
@@ -2020,7 +2050,7 @@ export function MoodPickDashboard() {
   }  
 
   return (
-    <div className="flex h-screen bg-background">
+    <div className="flex h-[100dvh] bg-background">
       <div
         className={cn(
           "fixed inset-0 z-50 md:hidden",
@@ -2146,7 +2176,7 @@ export function MoodPickDashboard() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 min-w-0 overflow-auto">
+      <main className={cn("min-h-0 flex-1 min-w-0", activeTab === "counseling" ? "overflow-hidden" : "overflow-auto")}>
         {activeTab === "home" && (
           <HomeView
             onStartNewSession={handleStartNewSession}
@@ -2154,8 +2184,9 @@ export function MoodPickDashboard() {
             emotionSummary={emotionSummary}
             currentContent={currentContent}
             onPlayRecommended={() => {
+              setAutoplayContentId(null)
               setIsPlaying(true)
-              setActiveTab("counseling")
+              setDashboardHistoryFullscreenOpen(true)
             }}
             flowMessage={syncWarningMessage}
             onOpenMobileMenu={() => setMobileSidebarOpen(true)}
@@ -2293,6 +2324,8 @@ export function MoodPickDashboard() {
           <MyPageView
             autoPlayEnabled={autoPlayEnabled}
             setAutoPlayEnabled={setAutoPlayEnabled}
+            mediaPreference={mediaPreference}
+            setMediaPreference={setMediaPreference}
             onLogout={handleLogout}
             userEmail={user?.email ?? "-"}
             displayName={profileDisplayName ?? (user?.user_metadata?.display_name as string | undefined) ?? null}
@@ -2378,6 +2411,7 @@ export function MoodPickDashboard() {
             syncWarningMessage={syncWarningMessage}
             onSelectRecommendedContent={handleSelectRecommendedContent}
             onExitFullscreen={() => setDashboardHistoryFullscreenOpen(false)}
+            allowFeedback={false}
           />
         </div>
       )}
@@ -2633,6 +2667,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
   onSelectRecommendedContent,
   onRequestFullscreen,
   onExitFullscreen,
+  allowFeedback = true,
 }: {
   variant: "sidebar" | "fullscreen"
   currentContent: ContentHistoryItem
@@ -2649,6 +2684,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
   onSelectRecommendedContent: (value: ContentHistoryItem) => void
   onRequestFullscreen?: () => void
   onExitFullscreen?: () => void
+  allowFeedback?: boolean
 }) {
   const isFullscreen = variant === "fullscreen"
   const playback = resolvePlayback({
@@ -3103,7 +3139,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
         </CardContent>
       </Card>
 
-      {hasPlayableContent && (
+      {hasPlayableContent && allowFeedback && (
         <div className={cn("mt-4 p-4 rounded-xl bg-secondary/30 shrink-0", isFullscreen && "max-w-5xl w-full mx-auto")}>
           <p className="text-sm text-center text-muted-foreground mb-3">
             {contentFeedbackComplete
@@ -3297,6 +3333,8 @@ function CounselingView({
 }) {
   const [contentFullscreen, setContentFullscreen] = useState(false)
   const [draft, setDraft] = useState("")
+  const [isInputFocused, setIsInputFocused] = useState(false)
+  const [isInputHovered, setIsInputHovered] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -3378,7 +3416,7 @@ function CounselingView({
                 <MessageCircle className="w-5 h-5 text-primary-foreground" />
               </div>
               <div>
-                <h3 className="font-semibold text-foreground">무드픽 상담사</h3>
+                <h3 className="font-semibold text-foreground">무드픽</h3>
                 <p className="text-xs text-muted-foreground">AI 심리 상담</p>
               </div>
             </div>
@@ -3388,16 +3426,21 @@ function CounselingView({
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="rounded-lg lg:hidden"
+                  className="flex h-auto flex-col justify-center rounded-lg py-2.5 lg:hidden"
                   onClick={() => setContentFullscreen(true)}
                 >
-                  <Maximize2 className="h-4 w-4 sm:mr-1" />
-                  <span className="hidden sm:inline">콘텐츠</span>
+                  <Maximize2 className="h-4 w-4" />
+                  <span className="text-xs leading-none">콘텐츠 보기</span>
                 </Button>
               )}
-              <Button onClick={onStartNewSession} variant="outline" size="sm" className="rounded-lg">
-                <Plus className="w-4 h-4 mr-1" />
-                새 채팅
+              <Button
+                onClick={onStartNewSession}
+                variant="outline"
+                size="sm"
+                className="flex h-auto flex-col justify-center rounded-lg py-2.5 lg:h-8 lg:flex-row lg:py-0"
+              >
+                <Plus className="w-4 h-4 lg:mr-1" />
+                <span className="text-xs leading-none lg:text-sm">새 채팅</span>
               </Button>
             </div>
           </div>
@@ -3463,6 +3506,10 @@ function CounselingView({
               placeholder="메시지를 입력하세요..."
               className="flex-1 rounded-xl bg-muted border-0"
               onKeyDown={(e) => e.key === "Enter" && submitDraft()}
+              onFocus={() => setIsInputFocused(true)}
+              onBlur={() => setIsInputFocused(false)}
+              onMouseEnter={() => setIsInputHovered(true)}
+              onMouseLeave={() => setIsInputHovered(false)}
             />
             <Button onClick={submitDraft} size="icon" className="rounded-xl" disabled={isSendingMessage}>
               <Send className={`w-4 h-4 ${isSendingMessage ? "opacity-50" : ""}`} />
@@ -3472,7 +3519,10 @@ function CounselingView({
             <Button
               onClick={onEndSession}
               variant="outline"
-              className="w-full cursor-pointer rounded-xl border-destructive text-destructive hover:border-destructive/70 hover:bg-destructive/10 hover:text-destructive"
+              className={cn(
+                "w-full cursor-pointer rounded-xl border-destructive text-destructive hover:border-destructive/70 hover:bg-destructive/10 hover:text-destructive",
+                (isInputFocused || isInputHovered) && "hidden"
+              )}
             >
               오늘의 상담 종료하기
             </Button>
@@ -3603,7 +3653,17 @@ function DashboardView({
         <Card className="border-0 shadow-lg">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg">감정 캘린더</CardTitle>
+              <button
+                type="button"
+                className="flex items-center gap-2 text-left md:pointer-events-none"
+                onClick={() => toggleSection("calendar")}
+                aria-expanded={openSections.calendar}
+              >
+                <span className="text-lg font-semibold leading-none tracking-tight">감정 캘린더</span>
+                <span className="md:hidden">
+                  {openSections.calendar ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </span>
+              </button>
               <div className="hidden items-center gap-2 md:flex">
                 <Button variant="ghost" size="icon" className="h-8 w-8" onClick={goCalendarPrev}>
                   <ChevronLeft className="w-4 h-4" />
@@ -3615,16 +3675,6 @@ function DashboardView({
                   <ChevronRight className="w-4 h-4" />
                 </Button>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 md:hidden"
-                onClick={() => toggleSection("calendar")}
-                aria-label="감정 캘린더 열기"
-              >
-                {openSections.calendar ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </Button>
             </div>
           </CardHeader>
           <CardContent className={cn(openSections.calendar ? "block" : "hidden", "md:block")}>
@@ -3674,9 +3724,9 @@ function DashboardView({
             </div>
             <div className="mt-4 flex justify-center gap-4">
               <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">낮음</span>
+                <span className="text-xs text-muted-foreground">😔 낮음</span>
                 <div className="w-16 h-2 bg-gradient-to-r from-blue-300 via-sky-300 to-amber-300 rounded-full" />
-                <span className="text-xs text-muted-foreground">높음</span>
+                <span className="text-xs text-muted-foreground">😊 높음</span>
               </div>
             </div>
           </CardContent>
@@ -3685,19 +3735,17 @@ function DashboardView({
         {/* Emotion Trend Graph */}
         <Card className="border-0 shadow-lg">
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg">최근 30일 감정 변화 추이</CardTitle>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 md:hidden"
-                onClick={() => toggleSection("graph")}
-                aria-label="감정 그래프 열기"
-              >
+            <button
+              type="button"
+              className="flex w-full items-center justify-between text-left md:pointer-events-none"
+              onClick={() => toggleSection("graph")}
+              aria-expanded={openSections.graph}
+            >
+              <span className="text-lg font-semibold leading-none tracking-tight">최근 30일 감정 변화 추이</span>
+              <span className="md:hidden">
                 {openSections.graph ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </Button>
-            </div>
+              </span>
+            </button>
           </CardHeader>
           <CardContent className={cn(openSections.graph ? "block" : "hidden", "md:block")}>
             <div className="h-64">
@@ -3771,19 +3819,17 @@ function DashboardView({
       {/* Comforting Media History */}
       <Card className="border-0 shadow-lg mb-8">
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-lg">내가 위로받은 콘텐츠</CardTitle>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 md:hidden"
-              onClick={() => toggleSection("media")}
-              aria-label="콘텐츠 기록 열기"
-            >
+          <button
+            type="button"
+            className="flex w-full items-center justify-between text-left md:pointer-events-none"
+            onClick={() => toggleSection("media")}
+            aria-expanded={openSections.media}
+          >
+            <span className="text-lg font-semibold leading-none tracking-tight">내가 위로받은 콘텐츠</span>
+            <span className="md:hidden">
               {openSections.media ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            </Button>
-          </div>
+            </span>
+          </button>
         </CardHeader>
         <CardContent className={cn(openSections.media ? "block" : "hidden", "md:block")}>
           <div className="flex gap-4 overflow-x-auto pb-4 -mx-2 px-2">
@@ -3830,19 +3876,17 @@ function DashboardView({
       {/* Session History */}
       <Card className="border-0 shadow-lg">
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-lg">상담 기록</CardTitle>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 md:hidden"
-              onClick={() => toggleSection("session")}
-              aria-label="상담 기록 열기"
-            >
+          <button
+            type="button"
+            className="flex w-full items-center justify-between text-left md:pointer-events-none"
+            onClick={() => toggleSection("session")}
+            aria-expanded={openSections.session}
+          >
+            <span className="text-lg font-semibold leading-none tracking-tight">상담 기록</span>
+            <span className="md:hidden">
               {openSections.session ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            </Button>
-          </div>
+            </span>
+          </button>
         </CardHeader>
         <CardContent className={cn(openSections.session ? "block" : "hidden", "md:block")}>
           <div className="grid max-h-[220px] grid-cols-1 gap-4 overflow-y-auto pr-1 md:max-h-none md:grid-cols-2 md:overflow-visible md:pr-0 xl:grid-cols-3">
@@ -4804,6 +4848,8 @@ function Introduce({introduceCheck}: {introduceCheck: () => void}){
 function MyPageView({
   autoPlayEnabled,
   setAutoPlayEnabled,
+  mediaPreference,
+  setMediaPreference,
   onLogout,
   userEmail,
   displayName,
@@ -4833,6 +4879,8 @@ function MyPageView({
 }: {
   autoPlayEnabled: boolean
   setAutoPlayEnabled: (value: boolean) => void
+  mediaPreference: ContentMediaPreferenceQuery
+  setMediaPreference: (value: ContentMediaPreferenceQuery) => void
   onLogout: () => void
   userEmail: string
   displayName: string | null
@@ -5000,16 +5048,39 @@ function MyPageView({
             />
           </div>
 
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              className="rounded-xl w-fit"
-              disabled={isSavingMypagePrefs}
-              onClick={() => void onSaveMypagePreferences()}
-            >
-              {isSavingMypagePrefs ? "저장 중…" : "맞춤 설정 계정에 저장"}
-            </Button>
+          <div className="space-y-3">
+            <div>
+              <Label htmlFor="media-preference" className="text-base font-medium text-foreground">
+                선호 콘텐츠 유형
+              </Label>
+              <p className="mt-1 text-sm text-muted-foreground">
+                홈 화면과 추천 후보에 우선 반영할 콘텐츠 유형을 선택합니다.
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Select
+                value={mediaPreference}
+                onValueChange={(value) => setMediaPreference(normalizeMediaPreference(value))}
+              >
+                <SelectTrigger id="media-preference" className="h-12 flex-1 rounded-xl border-0 bg-muted">
+                  <SelectValue placeholder="콘텐츠 유형 선택" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="youtube">YouTube 위주</SelectItem>
+                  <SelectItem value="podcast">팟캐스트 위주</SelectItem>
+                  <SelectItem value="all">혼합</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-12 rounded-xl px-5 sm:w-auto"
+                disabled={isSavingMypagePrefs}
+                onClick={() => void onSaveMypagePreferences()}
+              >
+                {isSavingMypagePrefs ? "저장 중…" : "저장"}
+              </Button>
+            </div>
             {mypagePrefsMessage && (
               <p className="text-xs text-muted-foreground">{mypagePrefsMessage}</p>
             )}

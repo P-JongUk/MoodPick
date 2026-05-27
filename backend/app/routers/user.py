@@ -341,9 +341,7 @@ async def get_daily_summary(
             seen_content_keys.add(key)
             contents.append(row)
 
-        summary_lines = [
-            "상담 대화 원문은 서버에 저장되지 않습니다. 아래는 해당 날짜의 문진·세션·콘텐츠 기록을 바탕으로 한 요약입니다.",
-        ]
+        summary_lines = []
         if pre_first:
             summary_lines.append(f"· 사전 문진(하루 시작) 기분: {_mood_label_ko(pre_first)}")
         else:
