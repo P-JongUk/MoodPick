@@ -1563,10 +1563,8 @@ export function MoodPickDashboard() {
     const aiMsgId = Date.now() + 1
 
     const applyRecommendedContent = (recommended: RecommendedContent | null | undefined) => {
+      // 이번 턴에 새 영상 추천이 없으면 현재 재생·자동재생·후보 목록을 그대로 둔다.
       if (!recommended?.video_id) {
-        setRecommendedQueue([])
-        setTopCandidates([])
-        setAutoplayContentId(null)
         return
       }
 
@@ -2845,7 +2843,7 @@ const ContentMediaPanel = memo(function ContentMediaPanel({
           )}
           {hasPlayableContent && playback.kind === "youtube" && playback.youtubeVideoId && (
             <iframe
-              key={`yt-${playback.youtubeVideoId}-${shouldAutoplay ? "ap" : "noap"}`}
+              key={`yt-${playback.youtubeVideoId}`}
               title={currentContent.content_title}
               className="absolute inset-0 h-full w-full border-0"
               src={youtubeEmbedUrl(playback.youtubeVideoId, { autoplay: shouldAutoplay })}
@@ -3751,7 +3749,7 @@ function DashboardView({
                   </div>
                 ))}
               </div>
-            )}
+            )}
           </CardContent>
         </Card>
       </div>
@@ -3775,39 +3773,63 @@ function DashboardView({
         </CardHeader>
         <CardContent className={cn(openSections.media ? "block" : "hidden", "md:block")}>
           <div className="flex gap-4 overflow-x-auto pb-4 -mx-2 px-2">
-            {contentHistory.map((media) => (
-              <div
-                key={media.id}
-                role="button"
-                tabIndex={0}
-                aria-label={`${media.content_title} 재생`}
-                onClick={() => onPlayContentHistory(media)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault()
-                    onPlayContentHistory(media)
-                  }
-                }}
-                className="flex-shrink-0 w-48 group cursor-pointer rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              >
-                <div className="aspect-video rounded-xl bg-muted mb-2 relative overflow-hidden">
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <Play className="w-10 h-10 text-primary" />
-                  </div>
-                  <div className="absolute inset-0 bg-foreground/0 group-hover:bg-foreground/30 transition-colors flex items-center justify-center">
-                    <div className="w-10 h-10 rounded-full bg-primary/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Play className="w-5 h-5 text-primary-foreground ml-0.5" />
+            {contentHistory.map((media) => {
+              const playback = resolvePlayback({
+                content_id: media.content_id,
+                media_provider: media.media_provider,
+                media_url: media.media_url,
+              })
+
+              const thumbnailUrl =
+                media.thumbnail_url ??
+                (playback.kind === "youtube" && playback.youtubeVideoId
+                  ? youtubeThumbnailUrl(playback.youtubeVideoId, "mqdefault")
+                  : null)
+
+              return (
+                <div
+                  key={media.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${media.content_title} 재생`}
+                  onClick={() => onPlayContentHistory(media)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault()
+                      onPlayContentHistory(media)
+                    }
+                  }}
+                  className="flex-shrink-0 w-48 group cursor-pointer rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                >
+                  <div className="aspect-video rounded-xl bg-muted mb-2 relative overflow-hidden">
+                    {thumbnailUrl ? (
+                      <img
+                        src={thumbnailUrl}
+                        alt=""
+                        loading="lazy"
+                        className="absolute inset-0 h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="absolute inset-0 bg-gradient-to-br from-muted to-muted/40" />
+                    )}
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Play className="w-10 h-10 text-primary" />
                     </div>
+                    <div className="absolute inset-0 bg-foreground/0 group-hover:bg-foreground/30 transition-colors flex items-center justify-center">
+                      <div className="w-10 h-10 rounded-full bg-primary/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Play className="w-5 h-5 text-primary-foreground ml-0.5" />
+                      </div>
+                    </div>
+                    <span className="absolute bottom-2 right-2 px-2 py-0.5 bg-foreground/70 text-primary-foreground text-xs rounded">
+                      {new Date(media.watched_at).toLocaleDateString("ko-KR")}
+                    </span>
                   </div>
-                  <span className="absolute bottom-2 right-2 px-2 py-0.5 bg-foreground/70 text-primary-foreground text-xs rounded">
-                    {new Date(media.watched_at).toLocaleDateString("ko-KR")}
-                  </span>
+                  <p className="text-sm font-medium text-foreground line-clamp-2">
+                    {media.content_title}
+                  </p>
                 </div>
-                <p className="text-sm font-medium text-foreground line-clamp-2">
-                  {media.content_title}
-                </p>
-              </div>
-            ))}
+              )
+            })}
             {contentHistory.length === 0 && (
               <p className="text-sm text-muted-foreground">아직 저장된 콘텐츠 기록이 없습니다.</p>
             )}
