@@ -2021,15 +2021,27 @@ export function MoodPickDashboard() {
 
   return (
     <div className="flex h-screen bg-background">
-      {mobileSidebarOpen && (
-        <div className="fixed inset-0 z-50 md:hidden">
+      <div
+        className={cn(
+          "fixed inset-0 z-50 md:hidden",
+          mobileSidebarOpen ? "pointer-events-auto" : "pointer-events-none"
+        )}
+      >
           <button
             type="button"
             aria-label="메뉴 닫기"
-            className="absolute inset-0 bg-black/40"
+            className={cn(
+              "absolute inset-0 bg-black/40 transition-opacity duration-300 ease-out",
+              mobileSidebarOpen ? "opacity-100" : "opacity-0"
+            )}
             onClick={() => setMobileSidebarOpen(false)}
           />
-          <aside className="relative z-10 flex h-full w-64 max-w-[85vw] flex-col border-r border-sidebar-border bg-sidebar shadow-2xl">
+          <aside
+            className={cn(
+              "relative z-10 flex h-full w-64 max-w-[85vw] flex-col border-r border-sidebar-border bg-sidebar shadow-2xl transition-transform duration-300 ease-out",
+              mobileSidebarOpen ? "translate-x-0" : "-translate-x-full"
+            )}
+          >
             <div className="border-b border-sidebar-border p-6">
               <button
                 type="button"
@@ -2082,7 +2094,6 @@ export function MoodPickDashboard() {
             </div>
           </aside>
         </div>
-      )}
 
       {/* Sidebar */}
       <aside className="hidden w-64 flex-col border-r border-sidebar-border bg-sidebar md:flex">
@@ -2506,9 +2517,10 @@ function HomeView({
       <div className="mb-8 md:mb-10">
         <div className="flex items-start gap-3">
           <MobileMenuButton onClick={onOpenMobileMenu} />
-        <h2 className="mb-3 text-2xl font-bold leading-tight text-foreground text-balance md:text-3xl">
-          오늘 하루, 당신의 마음은 어떤 색인가요?
-        </h2>
+          <h2 className="mb-3 text-2xl font-bold leading-tight text-foreground text-balance md:text-3xl">
+            <span className="block sm:inline">오늘 하루,</span>{" "}
+            <span className="block sm:inline">당신의 마음은 어떤 색인가요?</span>
+          </h2>
         </div>
         {flowMessage && (
           <p className="mt-3 text-sm text-destructive bg-destructive/10 rounded-xl px-4 py-2">{flowMessage}</p>
@@ -5136,9 +5148,9 @@ function PreSurveyOverlay({
   showCounselingTabGateHint?: boolean
 }) {
   return (
-    <ScaledOverlay className="z-[550]">
-      <Card className="relative z-10 w-[32rem] border-0 py-3 shadow-2xl pointer-events-auto md:py-6">
-        <CardContent className="p-4 md:p-8">
+    <ScaledOverlay className="z-[550]" frameWidth={560}>
+      <Card className="relative z-10 w-[35rem] border-0 py-4 shadow-2xl pointer-events-auto md:py-6">
+        <CardContent className="p-5 md:p-8">
           {/* Close Button */}
           <button
             type="button"
@@ -5149,38 +5161,38 @@ function PreSurveyOverlay({
           </button>
 
           {/* Logo */}
-          <div className="text-center mb-8">
-            <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4">
-              <Heart className="w-7 h-7 text-primary-foreground" />
+          <div className="text-center mb-6 md:mb-8">
+            <div className="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4">
+              <Heart className="w-8 h-8 text-primary-foreground" />
             </div>
-            <h2 className="text-2xl font-bold text-foreground mb-2">사전 문진</h2>
+            <h2 className="text-3xl font-bold text-foreground mb-2">사전 문진</h2>
             {showCounselingTabGateHint && (
-              <p className="text-sm text-foreground/90 mb-3 text-balance leading-relaxed">
+              <p className="text-base text-foreground/90 mb-3 text-balance leading-relaxed">
                 상담을 시작하려면 아래 사전 문진을 먼저 완료해 주세요.
               </p>
             )}
-            <p className="text-muted-foreground">상담 시작 전, 지금의 마음 상태를 알려주세요</p>
+            <p className="text-base text-muted-foreground">상담 시작 전, 지금의 마음 상태를 알려주세요</p>
           </div>
 
           {/* Mood */}
-          <div className="mb-8">
-            <h3 className="text-lg font-semibold text-center text-foreground mb-6">
+          <div className="mb-7">
+            <h3 className="text-xl font-semibold text-center text-foreground mb-5">
               지금 마음의 온도는 어떤가요?
             </h3>
-            <div className="flex flex-wrap justify-center gap-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {SURVEY_MOOD_OPTIONS.map((option) => (
                 <button
                   key={option.value}
                   type="button"
                   onClick={() => setSelectedMood(option.value)}
-                  className={`flex flex-col items-center p-4 rounded-2xl transition-all duration-200 min-w-[90px] ${
+                  className={`flex min-h-[104px] flex-col items-center justify-center rounded-2xl p-4 transition-all duration-200 ${
                     selectedMood === option.value
                       ? "bg-primary/10 ring-2 ring-primary scale-105"
                       : "bg-muted hover:bg-muted/80"
                   }`}
                 >
-                  <span className="text-3xl mb-2">{option.emoji}</span>
-                  <span className="text-xs text-foreground font-medium whitespace-nowrap">
+                  <span className="text-4xl mb-2">{option.emoji}</span>
+                  <span className="text-sm text-foreground font-semibold whitespace-nowrap">
                     {option.label}
                   </span>
                 </button>
@@ -5190,28 +5202,28 @@ function PreSurveyOverlay({
 
           {/* Persona */}
           <div className="mb-8">
-            <h3 className="text-lg font-semibold text-center text-foreground mb-2">
+            <h3 className="text-xl font-semibold text-center text-foreground mb-2">
               어떤 상담사와 이야기하고 싶나요?
             </h3>
-            <p className="text-xs text-muted-foreground text-center mb-6">
+            <p className="text-sm text-muted-foreground text-center mb-5">
               이 세션 동안만 적용돼요. 다음 상담에서 다시 고를 수 있어요.
             </p>
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-3">
               {PERSONA_OPTIONS.map((option) => (
                 <button
                   key={option.value}
                   type="button"
                   onClick={() => setSelectedPersona(option.value)}
-                  className={`flex items-center gap-3 p-3 rounded-xl text-left transition-all duration-200 ${
+                  className={`flex items-center gap-4 rounded-2xl p-4 text-left transition-all duration-200 ${
                     selectedPersona === option.value
                       ? "bg-primary/10 ring-2 ring-primary"
                       : "bg-muted hover:bg-muted/80"
                   }`}
                 >
-                  <span className="text-2xl">{option.emoji}</span>
+                  <span className="text-3xl">{option.emoji}</span>
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-foreground">{option.label}</div>
-                    <div className="text-xs text-muted-foreground whitespace-normal">
+                    <div className="text-base font-semibold text-foreground">{option.label}</div>
+                    <div className="text-sm text-muted-foreground whitespace-normal">
                       {option.description}
                     </div>
                   </div>
@@ -5225,7 +5237,7 @@ function PreSurveyOverlay({
             type="button"
             onClick={() => void onStart()}
             className={cn(
-              "w-full h-12 rounded-xl text-base font-medium",
+              "w-full h-14 rounded-xl text-base font-semibold",
               (!selectedMood || !selectedPersona) && "opacity-80"
             )}
           >
