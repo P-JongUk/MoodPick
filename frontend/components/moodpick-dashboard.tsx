@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, memo, useCallback } from "react"
 import { createPortal } from "react-dom"
+import { AdminDashboard } from "@/components/admin-dashboard"
 import { useAuth } from "@/components/auth-provider"
 import { getSupabaseClient } from "@/lib/supabaseClient"
 import {
@@ -27,6 +28,7 @@ import {
   getUserProfile,
   sendCounselingMessageStream,
   getReminderPreference,
+  getAdminMe,
   upsertReminderPreference,
   upsertUserProfile,
   type CounselorPersona,
@@ -507,6 +509,8 @@ export function MoodPickDashboard() {
     signOut,
   } = useAuth()
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(true)
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [isAdminStateLoading, setIsAdminStateLoading] = useState(false)
   const [isOnboardingStateLoading, setIsOnboardingStateLoading] = useState(true)
   const [isSavingOnboarding, setIsSavingOnboarding] = useState(false)
   const [onboardingErrorMessage, setOnboardingErrorMessage] = useState<string | null>(null)
@@ -684,8 +688,43 @@ export function MoodPickDashboard() {
       resetCounselingState({ clearContent: true })
       previousUserIdRef.current = currentUserId
       lastResumePromptForSessionIdRef.current = null
+      setIsAdmin(false)
     }
   }, [user?.id])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const checkAdmin = async () => {
+      if (!isLoggedIn || !user?.id) {
+        setIsAdmin(false)
+        setIsAdminStateLoading(false)
+        return
+      }
+
+      setIsAdminStateLoading(true)
+      try {
+        const admin = await getAdminMe()
+        if (!cancelled) {
+          setIsAdmin(admin.is_admin)
+        }
+      } catch {
+        if (!cancelled) {
+          setIsAdmin(false)
+        }
+      } finally {
+        if (!cancelled) {
+          setIsAdminStateLoading(false)
+        }
+      }
+    }
+
+    void checkAdmin()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isLoggedIn, user?.id])
 
   useEffect(() => {
     setMediaFeedback(null)
@@ -1977,6 +2016,21 @@ export function MoodPickDashboard() {
         clearAuthSuccessMessage={() => setAuthSuccessMessage(null)}
       />
     )
+  }
+
+  if (isAdminStateLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
+        <div className="text-center space-y-3">
+          <div className="mx-auto h-10 w-10 animate-pulse rounded-full bg-primary/20" />
+          <p className="text-sm">관리자 권한을 확인하는 중입니다...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (isAdmin) {
+    return <AdminDashboard />
   }
 
   if (isOnboardingStateLoading) {
