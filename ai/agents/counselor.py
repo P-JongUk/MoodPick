@@ -291,8 +291,9 @@ async def counselor_agent(state: CounselingState) -> CounselingState:
         _t = time.perf_counter()
         response = await client.chat.completions.create(
             model=_MODEL,
-            temperature=0.7,
-            max_tokens=500,
+            temperature=0.8,
+            top_p=0.9,
+            max_tokens=600,
             tools=_TOOL_DEFINITIONS,
             messages=messages,
         )
@@ -405,8 +406,9 @@ async def counselor_agent_stream(state: CounselingState) -> AsyncGenerator[str, 
         _t = time.perf_counter()
         stream = await client.chat.completions.create(
             model=_MODEL,
-            temperature=0.7,
-            max_tokens=500,
+            temperature=0.8,
+            top_p=0.9,
+            max_tokens=600,
             tools=_TOOL_DEFINITIONS,
             messages=messages,
             stream=True,
