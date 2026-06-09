@@ -239,11 +239,19 @@ const defaultContentItem: ContentHistoryItem = {
   watched_at: new Date().toISOString(),
 }
 
+function decodeHtmlEntities(value: string): string {
+  if (typeof window === "undefined") return value
+
+  const textarea = document.createElement("textarea")
+  textarea.innerHTML = value
+  return textarea.value
+}
+
 function mapContentHistoryRow(row: Record<string, unknown>): ContentHistoryItem {
   return {
     id: String(row.id ?? ""),
     content_id: String(row.content_id ?? ""),
-    content_title: String(row.content_title ?? ""),
+    content_title: decodeHtmlEntities(String(row.content_title ?? "")),
     thumbnail_url: row.thumbnail_url != null ? String(row.thumbnail_url) : null,
     media_provider:
       row.media_provider === "youtube" || row.media_provider === "podcast"
