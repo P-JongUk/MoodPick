@@ -3836,7 +3836,7 @@ function DashboardView({
             <div className="flex items-center justify-between">
               <button
                 type="button"
-                className="flex items-center gap-2 text-left md:pointer-events-none"
+                className="flex w-full md:w-auto items-center justify-between text-left md:pointer-events-none"
                 onClick={() => toggleSection("calendar")}
                 aria-expanded={openSections.calendar}
               >
