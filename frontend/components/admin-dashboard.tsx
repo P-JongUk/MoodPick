@@ -289,10 +289,6 @@ export function AdminDashboard() {
                       <p className="mt-1 text-xl font-semibold">{formatNumber(overview?.metrics.completed_sessions)}</p>
                     </div>
                     <div className="rounded-xl bg-muted/50 px-4 py-3">
-                      <p className="text-xs text-muted-foreground">오늘 세션</p>
-                      <p className="mt-1 text-xl font-semibold">{formatNumber(overview?.metrics.today_sessions)}</p>
-                    </div>
-                    <div className="rounded-xl bg-muted/50 px-4 py-3">
                       <p className="text-xs text-muted-foreground">최근 90일 감정 기록</p>
                       <p className="mt-1 text-xl font-semibold">{formatNumber(overview?.metrics.emotion_records_90d ?? overview?.metrics.emotion_records_30d)}</p>
                     </div>
