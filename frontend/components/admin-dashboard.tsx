@@ -218,33 +218,7 @@ export function AdminDashboard() {
                 icon={Heart}
                 tone="rose"
               />
-              <AdminMetricCard
-                title="상담 메시지"
-                value={overview?.metrics.messages_30d ?? 0}
-                helper="최근 30일 저장 메시지"
-                icon={Activity}
-              />
-              <AdminMetricCard
-                title="문진 응답"
-                value={overview?.metrics.survey_responses_30d ?? 0}
-                helper="최근 30일 사전/사후 문진"
-                icon={BarChart3}
-                tone="green"
-              />
-              <AdminMetricCard
-                title="콘텐츠 시청 기록"
-                value={overview?.metrics.watched_content_30d ?? 0}
-                helper="최근 30일 앱 내 재생"
-                icon={Video}
-                tone="amber"
-              />
-              <AdminMetricCard
-                title="AI 추천 로그"
-                value={overview?.metrics.recommendations_30d ?? 0}
-                helper={`감정 기록 ${formatNumber(overview?.metrics.emotion_records_30d)}`}
-                icon={RefreshCw}
-                tone="rose"
-              />
+              {/* Removed: 상담 메시지, 문진 응답, 콘텐츠 시청 기록, AI 추천 로그 per admin request */}
             </section>
 
             <section className="grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
@@ -262,8 +236,7 @@ export function AdminDashboard() {
                           <YAxis tick={{ fontSize: 12 }} />
                           <Tooltip />
                           <Line type="monotone" dataKey="sessions" name="세션" stroke="#2563eb" strokeWidth={3} />
-                          <Line type="monotone" dataKey="messages" name="메시지" stroke="#16a34a" strokeWidth={2} />
-                          <Line type="monotone" dataKey="watched" name="시청" stroke="#f59e0b" strokeWidth={2} />
+                          <Line type="monotone" dataKey="sessions" name="세션" stroke="#2563eb" strokeWidth={3} />
                           <Line type="monotone" dataKey="feedback" name="피드백" stroke="#ef4444" strokeWidth={2} />
                         </LineChart>
                       </ResponsiveContainer>
@@ -274,32 +247,7 @@ export function AdminDashboard() {
                 </CardContent>
               </Card>
 
-              <Card className="border-0 shadow-sm">
-                <CardHeader>
-                  <CardTitle>문진 감정 분포</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {moodData.length ? (
-                    <div className="h-80">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={moodData}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                          <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-                          <Tooltip />
-                          <Bar dataKey="count" name="응답 수" radius={[8, 8, 0, 0]}>
-                            {moodData.map((_, index) => (
-                              <Cell key={index} fill={chartColors[index % chartColors.length]} />
-                            ))}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  ) : (
-                    <EmptyPanel message="문진 감정 데이터가 없습니다." />
-                  )}
-                </CardContent>
-              </Card>
+              {/* 문진 응답(감정 분포) removed per request */}
             </section>
 
             <section className="grid gap-6 lg:grid-cols-3">
