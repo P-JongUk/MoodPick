@@ -70,6 +70,92 @@ export interface SessionResponse {
   persona?: CounselorPersona
 }
 
+// ============ Admin API ============
+
+export interface AdminMeResponse {
+  is_admin: boolean
+  user_id: string
+  email?: string | null
+}
+
+export interface AdminOverview {
+  generated_at: string
+  window_days: number
+  metrics: {
+    total_users: number
+    active_users_30d: number
+    total_sessions: number
+    active_sessions: number
+    completed_sessions: number
+    today_sessions: number
+    messages_30d: number
+    survey_responses_30d: number
+    watched_content_30d: number
+    feedback_30d: number
+    likes_30d: number
+    dislikes_30d: number
+    emotion_records_30d: number
+    recommendations_30d: number
+  }
+  daily_activity: Array<{
+    date: string
+    sessions: number
+    messages: number
+    watched: number
+    feedback: number
+    average_mood: number | null
+  }>
+  mood_distribution: Array<{ key: string; label: string; count: number }>
+  emotion_distribution: Array<{ emotion: string; count: number }>
+  persona_distribution: Array<{ persona: string; count: number }>
+  media_distribution: Array<{ media_provider: string; count: number }>
+  top_content: Array<{
+    content_id: string
+    title: string
+    media_provider: string
+    thumbnail_url?: string | null
+    watched_count: number
+    likes: number
+    dislikes: number
+  }>
+  recent_sessions: Array<{
+    session_id: string
+    user_id: string
+    user_label: string
+    status?: string | null
+    persona: string
+    started_at?: string | null
+    ended_at?: string | null
+    message_count: number
+    watched_count: number
+    latest_mood?: string | null
+  }>
+}
+
+export async function getAdminMe(): Promise<AdminMeResponse> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/admin/me`, {
+    method: "GET",
+  })
+
+  if (!response.ok) {
+    throw new Error(`Admin check failed: ${response.status}`)
+  }
+
+  return response.json()
+}
+
+export async function getAdminOverview(): Promise<AdminOverview> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/admin/overview`, {
+    method: "GET",
+  })
+
+  if (!response.ok) {
+    throw new Error(`Admin overview failed: ${response.status}`)
+  }
+
+  return response.json()
+}
+
 export async function createSession(
   userId: string,
   context?: string,

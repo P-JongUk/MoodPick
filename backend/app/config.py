@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     reminder_feature_enabled: bool = False
     reminder_scheduler_enabled: bool = False
     reminder_scheduler_interval_seconds: int = 300
+    admin_user_ids: str = ""
+    admin_emails: str = ""
 
     @field_validator("debug", mode="before")
     @classmethod

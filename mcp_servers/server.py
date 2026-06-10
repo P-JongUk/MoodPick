@@ -13,6 +13,7 @@ Future:
 """
 
 import asyncio
+import html
 import logging
 import os
 import re
@@ -144,7 +145,7 @@ async def search_youtube(
             continue
         candidates.append({
             "video_id": video_id,
-            "title": item["snippet"]["title"],
+            "title": html.unescape(item["snippet"]["title"]),
             "url": f"https://www.youtube.com/watch?v={video_id}",
             "thumbnail": item["snippet"]["thumbnails"].get("high", {}).get("url", ""),
         })

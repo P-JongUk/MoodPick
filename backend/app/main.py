@@ -19,6 +19,7 @@ from app.routers.survey import router as survey_router
 from app.routers.content import router as content_router
 from app.routers.user import router as user_router
 from app.routers.rag import router as rag_router
+from app.routers.admin import router as admin_router
 from ai.clients import close_clients
 
 
@@ -63,6 +64,7 @@ app.include_router(survey_router)
 app.include_router(content_router)
 app.include_router(user_router)
 app.include_router(rag_router)
+app.include_router(admin_router)
 
 if settings.reminder_feature_enabled:
     from app.routers.reminder import router as reminder_router
