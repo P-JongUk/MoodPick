@@ -1,0 +1,100 @@
+"""
+ai/agents/orchestrator.py
+
+Routes user messages by detecting crisis signals, classifying intent,
+and determining whether content recommendation is needed.
+
+Input:  state.message + 최근 history 슬라이스 (직전 어시스턴트 추천 제안 → 사용자 동의/거절 등 multi-turn 맥락 판정용)
+Output: state.is_crisis, state.intent, state.needs_recommendation
+"""
+
+import json
+import logging
+
+from ai.clients import get_openai
+from ai.state import CounselingState
+from ai.utils import load_prompt
+
+logger = logging.getLogger(__name__)
+
+_MODEL = "gpt-4o-mini"
+_HISTORY_TURNS = 4          # 직전 2턴분 (user/assistant 쌍 2개)
+_HISTORY_CHAR_LIMIT = 400   # 추천 제안 의문형은 응답 끝부분에 위치 → 뒤에서 자르기
+
+
+def _truncate_tail(text: str, limit: int) -> str:
+    if not text or len(text) <= limit:
+        return text
+    return text[-limit:]
+
+
+async def orchestrator_agent(state: CounselingState) -> CounselingState:
+    """
+    Classify a user message into crisis/intent/recommendation flags using
+    recent conversation history as context.
+    Returns the updated state.
+    """
+    system_prompt = load_prompt("orchestrator_prompt.md")
+
+    history_msgs: list[dict] = []
+    for msg in (state.messages or [])[-_HISTORY_TURNS:]:
+        role = msg.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        history_msgs.append({
+            "role": role,
+            "content": _truncate_tail(msg.get("content") or "", _HISTORY_CHAR_LIMIT),
+        })
+
+    client = get_openai()
+    response = await client.chat.completions.create(
+        model=_MODEL,
+        temperature=0,
+        max_tokens=200,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system_prompt},
+            *history_msgs,
+            {"role": "user", "content": state.message},
+        ],
+    )
+
+    raw = response.choices[0].message.content or "{}"
+    try:
+        result = json.loads(raw)
+        if not isinstance(result, dict):
+            raise ValueError("orchestrator JSON root is not an object")
+    except (json.JSONDecodeError, ValueError, TypeError):
+        logger.warning(
+            "Orchestrator JSON parse failed user_id=%s session_id=%s",
+            state.user_id[:8],
+            state.session_id[:8],
+        )
+        result = {
+            "is_crisis": False,
+            "intent": "상담",
+            "needs_recommendation": False,
+            "content_format": "unspecified",
+            "content_query_hints": [],
+        }
+
+    state.is_crisis = bool(result.get("is_crisis", False))
+    state.intent = result.get("intent", "상담")
+    state.needs_recommendation = bool(result.get("needs_recommendation", False))
+
+    fmt = result.get("content_format", "unspecified")
+    if fmt not in ("video", "music", "audio", "unspecified"):
+        fmt = "unspecified"
+    state.content_format = fmt
+
+    hints = result.get("content_query_hints", [])
+    if isinstance(hints, list):
+        state.content_query_hints = [h for h in hints if isinstance(h, str) and h.strip()]
+    else:
+        state.content_query_hints = []
+
+    # Safety: crisis overrides recommendation
+    if state.is_crisis:
+        state.needs_recommendation = False
+
+    return state

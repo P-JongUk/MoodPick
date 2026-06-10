@@ -1,0 +1,89 @@
+import {
+  createSession,
+  endSession,
+  submitSurveyResponse,
+  submitContentFeedback,
+  type CounselorPersona,
+} from "./api"
+
+export type SurveyPhase = "pre" | "post"
+export type ContentFeedbackType = "like" | "dislike"
+
+// Get userId from Supabase auth
+async function getCurrentUserId() {
+  const { getSupabaseClient } = await import("./supabaseClient")
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase.auth.getUser()
+  
+  if (error || !data.user) {
+    throw new Error("User not authenticated")
+  }
+  
+  return data.user.id
+}
+
+/**
+ * 새 상담 세션 시작
+ * @param context 상담 맥락 (선택사항)
+ * @param persona 세션의 상담사 페르소나 (friend | teacher | expert)
+ * @returns 세션 ID
+ */
+export async function startCounselingSession(
+  context?: string,
+  persona: CounselorPersona = "expert",
+): Promise<string> {
+  const userId = await getCurrentUserId()
+
+  const response = await createSession(userId, context, persona)
+  return response.id
+}
+
+/**
+ * 상담 세션 종료
+ * @param sessionId 종료할 세션 ID
+ */
+export async function endCounselingSession(sessionId: string): Promise<void> {
+  await endSession(sessionId)
+}
+
+/**
+ * 문진 응답 저장
+ * @param sessionId 세션 ID
+ * @param phase "pre" 또는 "post"
+ * @param moodValue 감정 이모지 ("great", "good", "neutral", "low", "bad")
+ */
+export async function saveSurveyResponse(
+  sessionId: string,
+  phase: SurveyPhase,
+  moodValue: string
+): Promise<void> {
+  // question_key는 임시로 "mood_general" 사용 (추후 다양한 문항 추가)
+  const questionKey = "mood_general"
+  
+  await submitSurveyResponse(sessionId, phase, questionKey, moodValue)
+}
+
+/**
+ * 콘텐츠 피드백 저장 및 시청 기록 기록
+ * @param params 피드백 정보
+ */
+export async function saveContentFeedback(params: {
+  sessionId: string
+  feedback: ContentFeedbackType
+  contentId: string
+  contentTitle: string
+  thumbnailUrl?: string
+  mediaProvider?: "youtube" | "podcast" | null
+  mediaUrl?: string | null
+}): Promise<void> {
+  const userId = await getCurrentUserId()
+
+  // 1. 피드백 저장
+  await submitContentFeedback(
+    userId,
+    params.contentId,
+    params.feedback,
+    params.sessionId
+  )
+
+}

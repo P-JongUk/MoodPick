@@ -19,11 +19,9 @@ backend/
 ```
 
 ## 주요 API 엔드포인트
-- `POST /auth/register` - 회원가입
-- `POST /auth/login` - 로그인
 - `POST /counseling/message` - 상담 요청
 - `POST /emotion/analyze` - 감정 분석
 - `GET /emotion/records` - 감정 기록 조회
 
 ## 개발 환경 설정
-자세한 내용은 [PLAN.md](../PLAN.md)의 **Phase 2** 섹션을 참고하세요.
+프로젝트 전체 개요와 실행 방법은 [루트 README](../README.md)를 참고하세요.
