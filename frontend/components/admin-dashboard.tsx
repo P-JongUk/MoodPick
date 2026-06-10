@@ -353,7 +353,7 @@ export function AdminDashboard() {
 
               <Card className="border-0 shadow-sm">
                 <CardHeader>
-                  <CardTitle>최근 상담 세션</CardTitle>
+                  <CardTitle>최근 상담 세션 (최대 10건 표시)</CardTitle>
                 </CardHeader>
                 <CardContent className="overflow-x-auto">
                   {(overview?.recent_sessions ?? []).length ? (
@@ -370,7 +370,7 @@ export function AdminDashboard() {
                         </tr>
                       </thead>
                       <tbody>
-                        {overview?.recent_sessions.map((session) => (
+                        { (overview?.recent_sessions ?? []).slice(0, 10).map((session) => (
                           <tr key={session.session_id} className="border-b last:border-b-0">
                             <td className="py-3 pr-4 font-medium">{session.user_label}</td>
                             <td className="py-3 pr-4">{statusLabel(session.status)}</td>
