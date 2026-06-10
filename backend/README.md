@@ -24,4 +24,4 @@ backend/
 - `GET /emotion/records` - 감정 기록 조회
 
 ## 개발 환경 설정
-자세한 내용은 [PLAN.md](../PLAN.md)의 **Phase 2** 섹션을 참고하세요.
+프로젝트 전체 개요와 실행 방법은 [루트 README](../README.md)를 참고하세요.

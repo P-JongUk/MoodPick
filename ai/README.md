@@ -176,7 +176,7 @@ ai/
 
 ## 개발 환경 설정
 
-자세한 내용은 [PLAN.md](../PLAN.md)의 **Phase 3** 섹션을 참고하세요.
+프로젝트 전체 개요와 실행 방법은 [루트 README](../README.md)를 참고하세요.
 
 ### 추가 의존성 (requirements.txt에 추가 필요)
 

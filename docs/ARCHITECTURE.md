@@ -1,6 +1,6 @@
 # MoodPick 아키텍처 / 모듈 구조 (Obsidian용)
 
-> **3-에이전트 + MCP 순환 도식**(예시 그림과 같은 관점)은 `docs/ARCHITECTURE_AI_PIPELINE.md`를 보세요.
+> **3-에이전트 + MCP 순환 도식**의 개요는 이 문서와 [루트 README](../README.md), [AI 모듈 README](../ai/README.md)를 함께 보세요.
 
 ## 1) 시스템 아키텍처(컨테이너/컴포넌트)
 
