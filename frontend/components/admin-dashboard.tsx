@@ -292,7 +292,7 @@ export function AdminDashboard() {
                       <p className="mt-1 text-xl font-semibold">{formatNumber(overview?.metrics.emotion_records_90d ?? overview?.metrics.emotion_records_30d)}</p>
                     </div>
                     <div className="rounded-xl bg-muted/50 px-4 py-3">
-                      <p className="text-xs text-muted-foreground">최근 세션 표시 수</p>
+                      <p className="text-xs text-muted-foreground">최근 상담 세션 표시 행 수</p>
                       <p className="mt-1 text-xl font-semibold">{formatNumber(recentSessionCount)}</p>
                     </div>
                   </div>
@@ -330,9 +330,8 @@ export function AdminDashboard() {
                     <p className="mt-1 text-xs text-muted-foreground">좋아요 {formatNumber(overview?.metrics.likes_30d)} / 싫어요 {formatNumber(overview?.metrics.dislikes_30d)}</p>
                   </div>
                   <div className="rounded-xl bg-muted/50 px-4 py-3">
-                    <p className="text-xs text-muted-foreground">상위 콘텐츠 수</p>
+                    <p className="text-xs text-muted-foreground">상위 콘텐츠 개수</p>
                     <p className="mt-1 text-2xl font-bold tracking-tight">{formatNumber(overview?.top_content.length)}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">가장 많이 시청된 콘텐츠 기준</p>
                   </div>
                 </CardContent>
               </Card>
@@ -352,7 +351,6 @@ export function AdminDashboard() {
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium">{item.title}</p>
-                          <p className="text-xs text-muted-foreground">{item.media_provider}</p>
                         </div>
                         <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
                           <span>재생 {formatNumber(item.watched_count)}</span>
