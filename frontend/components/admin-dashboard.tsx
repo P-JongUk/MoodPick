@@ -134,7 +134,6 @@ export function AdminDashboard() {
 
   const dailyData = overview?.daily_activity ?? []
   const personaData = overview?.persona_distribution ?? []
-  const recentSessionCount = overview?.recent_sessions?.length ?? 0
   const activeSessionRate = overview?.metrics.total_sessions
     ? Math.round((overview.metrics.active_sessions / overview.metrics.total_sessions) * 100)
     : 0
@@ -224,6 +223,13 @@ export function AdminDashboard() {
                 icon={Video}
                 tone="amber"
               />
+              <AdminMetricCard
+                title="활성 세션 비율"
+                value={activeSessionRate}
+                helper={`진행 중 ${formatNumber(overview?.metrics.active_sessions)} / 전체 ${formatNumber(overview?.metrics.total_sessions)}`}
+                icon={Clock}
+                tone="green"
+              />
             </section>
 
             <section className="grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
@@ -275,35 +281,6 @@ export function AdminDashboard() {
 
               <Card className="border-0 shadow-sm">
                 <CardHeader>
-                  <CardTitle>운영 요약</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="rounded-xl bg-muted/50 px-4 py-3">
-                    <p className="text-xs text-muted-foreground">활성 세션 비율</p>
-                    <p className="mt-1 text-2xl font-bold tracking-tight">{activeSessionRate}%</p>
-                    <p className="mt-1 text-xs text-muted-foreground">진행 중 {formatNumber(overview?.metrics.active_sessions)} / 전체 {formatNumber(overview?.metrics.total_sessions)}</p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-xl bg-muted/50 px-4 py-3">
-                      <p className="text-xs text-muted-foreground">완료 세션</p>
-                      <p className="mt-1 text-xl font-semibold">{formatNumber(overview?.metrics.completed_sessions)}</p>
-                    </div>
-                    <div className="rounded-xl bg-muted/50 px-4 py-3">
-                      <p className="text-xs text-muted-foreground">최근 90일 감정 기록</p>
-                      <p className="mt-1 text-xl font-semibold">{formatNumber(overview?.metrics.emotion_records_90d ?? overview?.metrics.emotion_records_30d)}</p>
-                    </div>
-                    <div className="rounded-xl bg-muted/50 px-4 py-3">
-                      <p className="text-xs text-muted-foreground">최근 상담 세션 표시 행 수</p>
-                      <p className="mt-1 text-xl font-semibold">{formatNumber(recentSessionCount)}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </section>
-
-            <section className="grid gap-6 lg:grid-cols-2">
-              <Card className="border-0 shadow-sm">
-                <CardHeader>
                   <CardTitle>대화 방식 선택</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -317,23 +294,6 @@ export function AdminDashboard() {
                   ) : (
                     <EmptyPanel message="대화 방식 데이터가 없습니다." />
                   )}
-                </CardContent>
-              </Card>
-
-              <Card className="border-0 shadow-sm">
-                <CardHeader>
-                  <CardTitle>콘텐츠 반응 요약</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="rounded-xl bg-muted/50 px-4 py-3">
-                    <p className="text-xs text-muted-foreground">최근 30일 피드백</p>
-                    <p className="mt-1 text-2xl font-bold tracking-tight">{formatNumber(overview?.metrics.feedback_30d)}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">좋아요 {formatNumber(overview?.metrics.likes_30d)} / 싫어요 {formatNumber(overview?.metrics.dislikes_30d)}</p>
-                  </div>
-                  <div className="rounded-xl bg-muted/50 px-4 py-3">
-                    <p className="text-xs text-muted-foreground">상위 콘텐츠 개수</p>
-                    <p className="mt-1 text-2xl font-bold tracking-tight">{formatNumber(overview?.top_content.length)}</p>
-                  </div>
                 </CardContent>
               </Card>
             </section>
