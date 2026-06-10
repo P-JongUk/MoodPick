@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react"
 import {
   Activity,
-  BarChart3,
   Clock,
   Heart,
   LogOut,
@@ -15,14 +14,9 @@ import {
   Video,
 } from "lucide-react"
 import {
-  Bar,
-  BarChart,
   CartesianGrid,
-  Cell,
   Line,
   LineChart,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -35,7 +29,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { getAdminOverview, type AdminOverview } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
-const chartColors = ["#2563eb", "#16a34a", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899"]
 
 function formatNumber(value: number | null | undefined) {
   return new Intl.NumberFormat("ko-KR").format(value ?? 0)
@@ -141,10 +134,11 @@ export function AdminDashboard() {
   }, [overview])
 
   const dailyData = overview?.daily_activity ?? []
-  const moodData = overview?.mood_distribution ?? []
-  const emotionData = overview?.emotion_distribution ?? []
   const personaData = overview?.persona_distribution ?? []
-  const mediaData = overview?.media_distribution ?? []
+  const recentSessionCount = overview?.recent_sessions?.length ?? 0
+  const activeSessionRate = overview?.metrics.total_sessions
+    ? Math.round((overview.metrics.active_sessions / overview.metrics.total_sessions) * 100)
+    : 0
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-950">
@@ -274,34 +268,39 @@ export function AdminDashboard() {
                 </CardContent>
               </Card>
 
-              {/* 문진 응답(감정 분포) removed per request */}
-            </section>
-
-            <section className="grid gap-6 lg:grid-cols-3">
               <Card className="border-0 shadow-sm">
                 <CardHeader>
-                  <CardTitle>AI 감정 추정 분포</CardTitle>
+                  <CardTitle>운영 요약</CardTitle>
                 </CardHeader>
-                <CardContent>
-                  {emotionData.length ? (
-                    <div className="h-64">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie data={emotionData} dataKey="count" nameKey="emotion" outerRadius={92} label>
-                            {emotionData.map((_, index) => (
-                              <Cell key={index} fill={chartColors[index % chartColors.length]} />
-                            ))}
-                          </Pie>
-                          <Tooltip />
-                        </PieChart>
-                      </ResponsiveContainer>
+                <CardContent className="space-y-3">
+                  <div className="rounded-xl bg-muted/50 px-4 py-3">
+                    <p className="text-xs text-muted-foreground">활성 세션 비율</p>
+                    <p className="mt-1 text-2xl font-bold tracking-tight">{activeSessionRate}%</p>
+                    <p className="mt-1 text-xs text-muted-foreground">진행 중 {formatNumber(overview?.metrics.active_sessions)} / 전체 {formatNumber(overview?.metrics.total_sessions)}</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="rounded-xl bg-muted/50 px-4 py-3">
+                      <p className="text-xs text-muted-foreground">완료 세션</p>
+                      <p className="mt-1 text-xl font-semibold">{formatNumber(overview?.metrics.completed_sessions)}</p>
                     </div>
-                  ) : (
-                    <EmptyPanel message="AI 감정 기록이 없습니다." />
-                  )}
+                    <div className="rounded-xl bg-muted/50 px-4 py-3">
+                      <p className="text-xs text-muted-foreground">오늘 세션</p>
+                      <p className="mt-1 text-xl font-semibold">{formatNumber(overview?.metrics.today_sessions)}</p>
+                    </div>
+                    <div className="rounded-xl bg-muted/50 px-4 py-3">
+                      <p className="text-xs text-muted-foreground">최근 90일 감정 기록</p>
+                      <p className="mt-1 text-xl font-semibold">{formatNumber(overview?.metrics.emotion_records_90d ?? overview?.metrics.emotion_records_30d)}</p>
+                    </div>
+                    <div className="rounded-xl bg-muted/50 px-4 py-3">
+                      <p className="text-xs text-muted-foreground">최근 세션 표시 수</p>
+                      <p className="mt-1 text-xl font-semibold">{formatNumber(recentSessionCount)}</p>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
+            </section>
 
+            <section className="grid gap-6 lg:grid-cols-2">
               <Card className="border-0 shadow-sm">
                 <CardHeader>
                   <CardTitle>대화 방식 선택</CardTitle>
@@ -320,7 +319,23 @@ export function AdminDashboard() {
                 </CardContent>
               </Card>
 
-              {/* 미디어 유형 패널은 숨김 처리됨 (unknown 항목 노출 방지 요청에 따라) */}
+              <Card className="border-0 shadow-sm">
+                <CardHeader>
+                  <CardTitle>콘텐츠 반응 요약</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="rounded-xl bg-muted/50 px-4 py-3">
+                    <p className="text-xs text-muted-foreground">최근 30일 피드백</p>
+                    <p className="mt-1 text-2xl font-bold tracking-tight">{formatNumber(overview?.metrics.feedback_30d)}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">좋아요 {formatNumber(overview?.metrics.likes_30d)} / 싫어요 {formatNumber(overview?.metrics.dislikes_30d)}</p>
+                  </div>
+                  <div className="rounded-xl bg-muted/50 px-4 py-3">
+                    <p className="text-xs text-muted-foreground">상위 콘텐츠 수</p>
+                    <p className="mt-1 text-2xl font-bold tracking-tight">{formatNumber(overview?.top_content.length)}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">가장 많이 시청된 콘텐츠 기준</p>
+                  </div>
+                </CardContent>
+              </Card>
             </section>
 
             <section className="grid gap-6 xl:grid-cols-2">
