@@ -218,6 +218,12 @@ export function AdminDashboard() {
                 icon={Heart}
                 tone="rose"
               />
+              <AdminMetricCard
+                title="AI 감정 기록"
+                value={overview?.metrics.emotion_records_90d ?? overview?.metrics.emotion_records_30d ?? 0}
+                helper={`최근 ${overview?.window_days ?? 90}일`}
+                icon={Activity}
+              />
               {/* Removed: 상담 메시지, 문진 응답, 콘텐츠 시청 기록, AI 추천 로그 per admin request */}
             </section>
 
