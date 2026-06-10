@@ -84,7 +84,11 @@ async def get_admin_overview(
     require_admin(current_user)
 
     now = datetime.now(timezone.utc)
+    # 하위 호환: 30일 기준 시작 시각
     start_30 = (now - timedelta(days=30)).isoformat()
+    # 확장 윈도우(예: 90일) — 감정 분포 등은 긴 기간을 통해 안정화된 분포를 보여주기 위함
+    window_days = 90
+    start_window = (now - timedelta(days=window_days)).isoformat()
     start_14 = (now - timedelta(days=13)).date()
     today = now.date().isoformat()
 
@@ -131,13 +135,23 @@ async def get_admin_overview(
         order_by="created_at",
         gte=("created_at", start_30),
     )
-    emotion_rows = _safe_table_rows(
+    # emotion_records는 30일(하위호환)과 확장 윈도우(예: 90일) 두 범위로 조회해서
+    # UI에서 둘 중 적절한 값을 선택하여 표시할 수 있게 함.
+    emotion_rows_30 = _safe_table_rows(
         supabase,
         "emotion_records",
         "user_id,session_id,emotion,intensity,created_at",
         limit=5000,
         order_by="created_at",
         gte=("created_at", start_30),
+    )
+    emotion_rows_window = _safe_table_rows(
+        supabase,
+        "emotion_records",
+        "user_id,session_id,emotion,intensity,created_at",
+        limit=10000,
+        order_by="created_at",
+        gte=("created_at", start_window),
     )
     recommendation_rows = _safe_table_rows(
         supabase,
@@ -220,7 +234,8 @@ async def get_admin_overview(
         for row in survey_rows
         if row.get("question_key") == "mood_general" and row.get("emoji_value")
     )
-    emotion_distribution = Counter(row.get("emotion") for row in emotion_rows if row.get("emotion"))
+    # Use the larger window for distribution to surface stable trends
+    emotion_distribution = Counter(row.get("emotion") for row in emotion_rows_window if row.get("emotion"))
     persona_distribution = Counter(row.get("persona") or "미선택" for row in sessions)
     media_distribution = Counter(row.get("media_provider") or "unknown" for row in watched_rows)
 
@@ -276,7 +291,7 @@ async def get_admin_overview(
 
     return {
         "generated_at": now.isoformat(),
-        "window_days": 30,
+        "window_days": window_days,
         "metrics": {
             "total_users": max(len(profiles), len({row.get("user_id") for row in sessions if row.get("user_id")})),
             "active_users_30d": len(active_users_30),
@@ -290,7 +305,8 @@ async def get_admin_overview(
             "feedback_30d": total_feedback,
             "likes_30d": likes,
             "dislikes_30d": dislikes,
-            "emotion_records_30d": len(emotion_rows),
+            "emotion_records_30d": len(emotion_rows_30),
+            "emotion_records_90d": len(emotion_rows_window),
             "recommendations_30d": len(recommendation_rows),
         },
         "daily_activity": list(daily.values()),
