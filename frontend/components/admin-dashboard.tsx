@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react"
 import {
-  Activity,
   Clock,
   Heart,
   LogOut,
@@ -213,12 +212,18 @@ export function AdminDashboard() {
                 tone="rose"
               />
               <AdminMetricCard
-                title="AI 감정 기록"
-                value={overview?.metrics.emotion_records_90d ?? overview?.metrics.emotion_records_30d ?? 0}
-                helper={`최근 ${overview?.window_days ?? 90}일`}
-                icon={Activity}
+                title="상담 메시지"
+                value={overview?.metrics.messages_30d ?? 0}
+                helper="최근 30일 저장 메시지"
+                icon={MessageCircle}
               />
-              {/* Removed: 상담 메시지, 문진 응답, 콘텐츠 시청 기록, AI 추천 로그 per admin request */}
+              <AdminMetricCard
+                title="콘텐츠 시청 기록"
+                value={overview?.metrics.watched_content_30d ?? 0}
+                helper="최근 30일 앱 내 재생"
+                icon={Video}
+                tone="amber"
+              />
             </section>
 
             <section className="grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
