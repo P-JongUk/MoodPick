@@ -234,39 +234,40 @@ export function AdminDashboard() {
                 </CardHeader>
                 <CardContent>
                   {dailyData.length ? (
-                    <div className="h-80">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={dailyData}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                          <YAxis tick={{ fontSize: 12 }} />
-                          <Tooltip />
-                          <Line type="monotone" dataKey="sessions" name="세션" stroke="#2563eb" strokeWidth={3} />
+                    <div>
+                      <div className="h-80">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={dailyData}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                            <YAxis tick={{ fontSize: 12 }} />
+                            <Tooltip />
                             <Line type="monotone" dataKey="sessions" name="세션" stroke="#2563eb" strokeWidth={3} />
                             <Line type="monotone" dataKey="messages" name="메시지" stroke="#16a34a" strokeWidth={2} />
                             <Line type="monotone" dataKey="watched" name="시청" stroke="#f59e0b" strokeWidth={2} />
                             <Line type="monotone" dataKey="feedback" name="피드백" stroke="#ef4444" strokeWidth={2} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                        <div className="mt-3 flex flex-wrap gap-4 text-sm">
-                          <div className="flex items-center gap-2">
-                            <span className="h-3 w-3 rounded-full" style={{ background: "#2563eb" }} />
-                            <span>세션</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="h-3 w-3 rounded-full" style={{ background: "#16a34a" }} />
-                            <span>메시지</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="h-3 w-3 rounded-full" style={{ background: "#f59e0b" }} />
-                            <span>시청</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="h-3 w-3 rounded-full" style={{ background: "#ef4444" }} />
-                            <span>피드백</span>
-                          </div>
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-4 text-sm">
+                        <div className="flex items-center gap-2">
+                          <span className="h-3 w-3 rounded-full" style={{ background: "#2563eb" }} />
+                          <span>세션</span>
                         </div>
+                        <div className="flex items-center gap-2">
+                          <span className="h-3 w-3 rounded-full" style={{ background: "#16a34a" }} />
+                          <span>메시지</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="h-3 w-3 rounded-full" style={{ background: "#f59e0b" }} />
+                          <span>시청</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="h-3 w-3 rounded-full" style={{ background: "#ef4444" }} />
+                          <span>피드백</span>
+                        </div>
+                      </div>
+                    </div>
                   ) : (
                     <EmptyPanel message="표시할 활동 데이터가 없습니다." />
                   )}
