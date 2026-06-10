@@ -313,26 +313,7 @@ export function AdminDashboard() {
                 </CardContent>
               </Card>
 
-              <Card className="border-0 shadow-sm">
-                <CardHeader>
-                  <CardTitle>미디어 유형</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {mediaData.length ? (
-                    mediaData.map((item) => (
-                      <div
-                        key={item.media_provider}
-                        className="flex items-center justify-between rounded-xl bg-muted/50 px-4 py-3"
-                      >
-                        <span className="text-sm font-medium">{item.media_provider}</span>
-                        <span className="text-sm text-muted-foreground">{formatNumber(item.count)}건</span>
-                      </div>
-                    ))
-                  ) : (
-                    <EmptyPanel message="미디어 기록이 없습니다." />
-                  )}
-                </CardContent>
-              </Card>
+              {/* 미디어 유형 패널은 숨김 처리됨 (unknown 항목 노출 방지 요청에 따라) */}
             </section>
 
             <section className="grid gap-6 xl:grid-cols-2">
