@@ -46,14 +46,14 @@ db/
 - `survey_responses` - 사전/사후 문진 응답
 - `content_feedback` - 콘텐츠 피드백(좋아요/아쉬워요)
 - `watched_content_records` - 시청 콘텐츠 기록
-- `emotion_embeddings` - 감정/문맥 임베딩 벡터(예정)
-- `rag_documents` - RAG 문서 메타데이터(예정)
-- `rag_chunks` - RAG 청크 및 임베딩(예정)
+- `emotion_embeddings` - 감정/문맥 임베딩 벡터
+- `rag_documents` - RAG 문서 메타데이터
+- `rag_chunks` - RAG 청크 및 임베딩
 
 ## RAG/벡터 저장소 계획
 - `002_vector_tables.sql`에서 `pgvector` 확장을 활성화합니다.
-- 기본 검색 단위는 `rag_chunks`이며, 코사인 유사도 인덱스를 사용합니다.
-- 서비스 연결 전까지는 마이그레이션 적용 + 샘플 데이터 삽입 + 검색 쿼리 검증까지 수행합니다.
+- 기본 검색 단위는 `rag_chunks`이며, `match_rag_chunks` RPC로 코사인 유사도 검색을 수행합니다.
+- 서비스 연결 전까지는 마이그레이션 적용, 샘플 데이터 삽입, 검색 쿼리 검증을 함께 확인합니다.
 
 ## 개발 환경 설정
 프로젝트 전체 개요와 실행 방법은 [루트 README](../README.md)를 참고하세요.

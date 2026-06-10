@@ -1,7 +1,7 @@
 # MoodPick 백엔드 (FastAPI)
 
 ## 개요
-FastAPI 기반의 MoodPick 백엔드 서버입니다. GPT-4o-mini와 YouTube API를 활용한 AI 상담 및 감정 분석 기능을 제공합니다.
+FastAPI 기반의 MoodPick 백엔드 서버입니다. 상담, 감정 기록, 콘텐츠 추천, RAG 조회를 위한 API를 제공합니다.
 
 ## 폴더 구조
 ```
@@ -20,8 +20,10 @@ backend/
 
 ## 주요 API 엔드포인트
 - `POST /counseling/message` - 상담 요청
-- `POST /emotion/analyze` - 감정 분석
-- `GET /emotion/records` - 감정 기록 조회
+- `POST /emotion/analyze` - 키워드 기반 감정 분석 보조
+- `GET /emotion/records/{user_id}` - 감정 기록 조회
+- `GET /emotion/summary/{user_id}` - 감정 요약 조회
+- `POST /rag/search` - RAG 유사도 검색
 
 ## 개발 환경 설정
 프로젝트 전체 개요와 실행 방법은 [루트 README](../README.md)를 참고하세요.

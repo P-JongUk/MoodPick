@@ -45,8 +45,9 @@
 
 ### 3.3.1 데이터 및 평균
 
-- 대상: 해당 사용자의 상담 세션에 연결된 `survey_responses` 중, 최근 \(N\)일(기본 7일) 구간의 `score`
+- 대상: 해당 사용자의 상담 세션에 연결된 `survey_responses` 중, 최근 \(N\)일(기본 7일) 구간의 `mood_general` 응답을 세션별 대표값으로 정리한 뒤 계산
 - **평균 점수**: 산술평균, 반환 시 소수 둘째 자리 반올림
+- 대표값 규칙: 같은 세션에 pre/post가 모두 있으면 `post`를 우선하고, 없으면 `pre`를 사용함
 
 - 구현: `backend/app/routers/emotion.py` — `GET /emotion/summary/{user_id}`
 
@@ -65,6 +66,8 @@
 
 세션이 없거나 응답이 없으면 `average_score = 3.0`, `trend = "stable"` 등 **기본값**을 반환한다.
 
+> 참고: 이 규칙은 전반적 분위기를 빠르게 보여주기 위한 휴리스틱이며, 통계적 유의성 검정은 아니다.
+
 - 구현: `backend/app/routers/emotion.py` — `get_emotion_summary`
 
 ---
@@ -74,9 +77,9 @@
 `POST /emotion/analyze`는 **학습된 회귀·분류 모델이 아니라**, 입력 문자열에 **한국어 키워드 포함 여부**를 검사하는 규칙 엔진이다.
 
 - 입력과 키워드를 소문자화한 뒤 부분 문자열 매칭
-- **첫 번째로 매칭된 키워드**에 대응하는 `(emotion 라벨, intensity 상수)`를 반환
-- 매칭 실패 시 `emotion = "neutral"`, `intensity = 0.5`
-- `recommendations`는 감정별 **고정 배열**에서 선택
+- **첫 번째로 매칭된 키워드**에 대응하는 감정 라벨과 추천 목록을 선택함
+- 매칭 실패 시 `emotion = "neutral"`과 기본 추천 목록을 반환함
+- 현재 API 응답 스키마는 `emotion`과 `recommendations`만 포함하며, `intensity`는 내부 계산값으로만 사용됨
 
 - 구현: `backend/app/routers/emotion.py` — `analyze_emotion`
 
@@ -104,8 +107,9 @@
 
 ### 3.5.2 백엔드 API
 
-- `POST /rag/search`: 클라이언트가 넘긴 `query_embedding` 길이가 설정값(`rag_embedding_dimensions`, 기본 **1536**)과 일치하는지 검증 후 RPC 호출
+- `POST /rag/search`: 클라이언트가 넘긴 `query_embedding` 길이가 설정값(`rag_embedding_dimensions`, 기본 **1536**)과 일치하는지 검증한 뒤, 현재 로그인 사용자 범위로 RPC 호출
 - `POST /rag/search-by-text`: 텍스트 → 임베딩 생성 후 동일 검색
+- `user_id`는 선택 입력이지만, 서버는 항상 인증된 현재 사용자 기준으로 검색 범위를 고정한다.
 
 - 구현: `backend/app/routers/rag.py`, 차원 기본값 `backend/app/config.py`
 

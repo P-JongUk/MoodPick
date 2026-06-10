@@ -2,8 +2,8 @@
 
 ## 개요
 
-GPT-4o-mini Function Calling 기반 3-에이전트 구조로 심리 상담 대화와 개인화 콘텐츠 추천을 제공합니다.
-사용자의 발화를 분석하여 공감 상담 응답을 생성하고, 감정 상태에 맞는 힐링 콘텐츠를 자율 추천합니다.
+3-에이전트 상담/추천 파이프라인으로 대화, 감정 기록, 개인화 콘텐츠 추천을 제공합니다.
+상담 응답과 감정 저장, YouTube 기반 추천이 하나의 흐름으로 이어집니다.
 
 ---
 
@@ -156,8 +156,10 @@ ai/
 │   └── crisis_response.md      # 위기 대응 안전 응답 템플릿
 ├── tools/                      # Function Calling 도구 실행 모듈
 │   ├── rag_search.py           # RAG 검색 (search_rag_context)
-│   ├── youtube_search.py       # YouTube 검색 (recommend_youtube)
-│   └── user_profile.py         # 사용자 프로필/이력 조회
+│   ├── emotion_record.py       # 감정 기록 저장
+│   ├── content_history.py      # 시청/피드백 이력 조회
+│   ├── user_profile.py         # 사용자 프로필/이력 조회
+│   └── user_taste.py           # 취향 벡터 갱신
 └── README.md                   # 이 파일
 ```
 
@@ -170,7 +172,7 @@ ai/
 | `search_rag_context` | Counselor | 전문 상담 매뉴얼 벡터 검색 |
 | `get_user_profile_and_history` | Counselor | 온보딩 선호도 + 이전 세션 이력 |
 | `save_emotion_record` | Counselor | 감정 분석 결과 DB 저장 |
-| `recommend_youtube` | Content Recommender | 감정/선호도 기반 YouTube 검색 |
+| `recommend_youtube` | Content Recommender | 감정/선호도 기반 YouTube 검색 (MCP 연동) |
 
 ---
 

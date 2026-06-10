@@ -1,12 +1,6 @@
 # MoodPick
 
-![Status](https://img.shields.io/badge/status-production-brightgreen)
-![Python](https://img.shields.io/badge/python-3.10-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
-
-AI 상담과 개인화된 콘텐츠 추천을 결합한 심리 케어 플랫폼 — 지금의 기분에 맞춘 즉각적이고 지속적인 케어.
-
-한줄 요약: 상담 흐름, 감정 기록, 그리고 RAG 기반 추천이 연결된 개인 심리 케어 서비스.
+AI 상담과 개인화된 콘텐츠 추천을 결합한 상담 흐름, 감정 기록, 그리고 RAG 기반 추천이 연결된 개인 심리 케어 서비스.
 
 ## 핵심 포인트
 
