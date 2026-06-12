@@ -535,6 +535,7 @@ export function MoodPickDashboard() {
   const [preSurveyFromCounselingTabNav, setPreSurveyFromCounselingTabNav] = useState(false)
   const [preSurveyMood, setPreSurveyMood] = useState<string | null>(null)
   const [preSurveyPersona, setPreSurveyPersona] = useState<CounselorPersona | null>(null)
+  const [activeCounselorPersona, setActiveCounselorPersona] = useState<CounselorPersona | null>(null)
   const [postSurveyMood, setPostSurveyMood] = useState<string | null>(null)
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
   const [syncWarningMessage, setSyncWarningMessage] = useState<string | null>(null)
@@ -667,6 +668,7 @@ export function MoodPickDashboard() {
     setPreSurveyFromCounselingTabNav(false)
     setPreSurveyMood(null)
     setPreSurveyPersona(null)
+    setActiveCounselorPersona(null)
     setPostSurveyMood(null)
     setCurrentSessionId(null)
     setSyncWarningMessage(null)
@@ -1303,6 +1305,7 @@ export function MoodPickDashboard() {
     setPreSurveyMood(null)
     resetCounselingContentState()
     setPreSurveyPersona(null)
+    setActiveCounselorPersona(null)
     setShowPreSurvey(true)
   }
 
@@ -1319,6 +1322,7 @@ export function MoodPickDashboard() {
       setSyncWarningMessage(null)
       setPreSurveyMood(null)
       setPreSurveyPersona(null)
+      setActiveCounselorPersona(null)
       setShowPreSurvey(true)
       setActiveTab("counseling")
       return
@@ -1372,6 +1376,7 @@ export function MoodPickDashboard() {
     }
 
     setCurrentSessionId(createdSessionId)
+    setActiveCounselorPersona(preSurveyPersona)
     setShowPreSurvey(false)
     setPreSurveyFromCounselingTabNav(false)
     suppressResumeDialogUntilRef.current = 0
@@ -1460,6 +1465,7 @@ export function MoodPickDashboard() {
       setPostSurveyMood(null)
       setPreSurveyMood(null)
       setPreSurveyPersona(null)
+      setActiveCounselorPersona(null)
       setMediaFeedback(null)
       resetCounselingContentState()
       if (shouldRefreshDashboard) {
@@ -1520,6 +1526,7 @@ export function MoodPickDashboard() {
         ]
       }
       setCurrentSessionId(sid)
+      setActiveCounselorPersona(pendingResumeSession.persona ?? null)
       setIsSessionActive(true)
       setMessages(restored)
       setActiveTab("counseling")
@@ -2288,6 +2295,7 @@ export function MoodPickDashboard() {
             onDismissIdleWrapUp={touchCounselingActivity}
             onRequestEndFromIdle={handleEndSession}
             onOpenMobileMenu={() => setMobileSidebarOpen(true)}
+            activePersona={activeCounselorPersona}
           />
         )}
         {activeTab === "dashboard" && (
@@ -3441,6 +3449,7 @@ function CounselingView({
   onDismissIdleWrapUp,
   onRequestEndFromIdle,
   onOpenMobileMenu,
+  activePersona,
 }: {
   messages: Message[]
   onSendMessage: (messageText: string) => boolean
@@ -3466,6 +3475,7 @@ function CounselingView({
   onDismissIdleWrapUp?: () => void
   onRequestEndFromIdle?: () => void
   onOpenMobileMenu: () => void
+  activePersona: CounselorPersona | null
 }) {
   const [contentFullscreen, setContentFullscreen] = useState(false)
   const [draft, setDraft] = useState("")
@@ -3551,7 +3561,17 @@ function CounselingView({
               </div>
               <div>
                 <h3 className="font-semibold text-foreground">무드픽</h3>
-                <p className="text-xs text-muted-foreground">AI 심리 상담</p>
+                <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                  <span>AI 심리 상담</span>
+                  {activePersona && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span className="font-medium text-foreground/80">
+                        {getCounselorPersonaLabel(activePersona)} 페르소나
+                      </span>
+                    </>
+                  )}
+                </p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -5246,6 +5266,10 @@ const PERSONA_OPTIONS: { value: CounselorPersona; label: string; description: st
   { value: "teacher", label: "선생님", description: "차분히 다 받아주는 따뜻한 선생님", emoji: "🌿" },
   { value: "expert", label: "상담사", description: "조금 더 전문적으로 정중하게 들어주는 방식", emoji: "🩺" },
 ]
+
+function getCounselorPersonaLabel(value: CounselorPersona): string {
+  return PERSONA_OPTIONS.find((option) => option.value === value)?.label ?? "상담사"
+}
 
 function PreSurveyOverlay({
   selectedMood,
