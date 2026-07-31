@@ -42,3 +42,21 @@ MoodPick/
 - 비밀번호: test1!
 
 ---
+## 1. 메인화면
+<img width="494" height="245" alt="image" src="https://github.com/user-attachments/assets/c6964ccd-fa8e-4f1a-abbe-07f91281c6c0" />
+
+## 2. 상담 시작화면
+<img width="494" height="245" alt="image" src="https://github.com/user-attachments/assets/765df8dc-a9a7-4166-b830-304b0f60d59a" />
+
+
+## 3. 상담화면
+<img width="495" height="245" alt="image" src="https://github.com/user-attachments/assets/da1b135d-32f6-4a2a-923e-e65842cfac39" />
+
+
+## 4. 상담 기록화면
+<img width="469" height="569" alt="image" src="https://github.com/user-attachments/assets/aeb29fe9-5be3-4c1a-9d57-dea0a20895cf" />
+
+
+## 5. 마이페이지
+<img width="525" height="262" alt="image" src="https://github.com/user-attachments/assets/56f3f353-3724-4201-80f0-aee2c4b265f0" />
+
